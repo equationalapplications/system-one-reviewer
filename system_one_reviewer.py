@@ -210,8 +210,12 @@ def get_laya_router(model=None, loader=None):
     try:
         _LAYA_ROUTER = laya.load(model=model) if model else laya.Router()
     except Exception as exc:
-        sys.exit(f"system-one-reviewer: could not load laya model "
-                 f"{model or '(default)'}: {exc}; fix with: pip install laya")
+        sys.exit(f"system-one-reviewer: could not load the laya model "
+                 f"{model or '(default)'}: {exc}. The laya package is "
+                 f"imported, so this is most likely a missing/invalid "
+                 f"model checkpoint — install the weights for "
+                 f"{model or LAYA_DEFAULT_MODEL} or pass a valid --model. "
+                 f"(If the laya package itself is missing: pip install laya)")
     return _LAYA_ROUTER
 
 
@@ -273,14 +277,15 @@ def package_hunks(diff):
     cluster never crosses an @@ header) and trimmed at the neighbouring
     clusters' changed entries, so one change never dilutes another.
     Anchors: first '+' in the cluster's own run -> else the deletion site
-    (first '-' in the run, at its old-file line) -> else the first context
-    entry with a lineno at/after the run -> else the run's hunk_start (a
-    deletion-only cluster never collapses to line 1). Deletion-only anchors
-    deliberately use OLD-file line numbers: the deletion site is only
-    addressable in the old file (the content no longer exists at any
-    new-file line), and at a pure-deletion site old and new numbering
-    coincide up to the deletion point, so anchors stay comparable with
-    golden lines recorded against HEAD. Deterministic."""
+    (first '-' in the run, at the position in HEAD where the line was
+    removed) -> else the first context entry with a lineno at/after the run
+    -> else the run's hunk_start (a deletion-only cluster never collapses to
+    line 1). Deletion-only clusters anchor at the '-' entry's tracked
+    new_line — the HEAD line before which the content was removed — so the
+    anchor stays comparable with golden lines recorded against HEAD even
+    when earlier lines in the hunk shifted the count (old-file numbering
+    would drift); the old-file line rides along on each '-' entry for
+    display. Deterministic."""
     CTX = 4
     per_file, cur_file, entries = [], None, []
     old_line = new_line = hunk_start = 1
@@ -301,7 +306,8 @@ def package_hunks(diff):
                 entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
             elif line.startswith("-") and not line.startswith("---"):
-                entries.append(("-", old_line, line[1:], hunk_start))
+                entries.append(("-", old_line, line[1:], hunk_start,
+                                new_line))
                 old_line += 1
             elif not line.startswith("\\"):
                 entries.append((" ", new_line, line[1:], hunk_start))
@@ -360,16 +366,21 @@ def package_hunks(diff):
                 anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
                                if e[0] == "+" and e[1] is not None), None)
                 if anchor is None:
-                    # deletion-only cluster: anchor at the deletion site
-                    anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
-                                   if e[0] == "-" and e[1] is not None), None)
+                    # deletion-only cluster: anchor at the position in HEAD
+                    # where the line was removed (M2, r2) — the '-' entry's
+                    # tracked new_line, correct even when earlier lines in
+                    # the hunk shifted the count (the old-file line is kept
+                    # on the entry for display)
+                    anchor = next((e[4] for e in seg[g[0]:g[-1] + 1]
+                                   if e[0] == "-" and e[4] is not None), None)
                 if anchor is None:
                     anchor = next((e[1] for e in seg[g[-1] + 1:hi]
                                    if e[0] == " " and e[1] is not None), None)
                 if anchor is None:
                     anchor = seg_hunk_start
                 lines, n_changed = [], 0
-                for k, n, t, _ in window:
+                for w in window:
+                    k, n, t, _ = (w[0], w[1], w[2], w[3])
                     if k == "+":
                         lines.append(f"{n}: + {t}")
                     elif k == "-":
@@ -455,7 +466,8 @@ def hunk_state(h):
     """Structured before/after state, read from `entries` only (never the
     rendered lines, which can corrupt text containing ': + ')."""
     before, after = [], []
-    for kind, _n, text, _hs in h["entries"]:
+    for w in h["entries"]:
+        kind, _n, text = w[0], w[1], w[2]
         if kind == "+":
             after.append(text)
         elif kind == "-":
@@ -593,6 +605,7 @@ def eval_against_golden(reported, golden_path):
                 if len(parts) >= 2:
                     golden.append((parts[0], int(parts[1]), parts[2] if len(parts) > 2 else ""))
     matched_golden, matched_reported = set(), set()
+    chosen = []  # (reported_idx, golden_idx) pairs the greedy pass kept
     matches = []  # (reported_idx, golden_idx, distance)
     for i, f in enumerate(reported):
         for j, (gfile, gline, gdesc) in enumerate(golden):
@@ -607,6 +620,7 @@ def eval_against_golden(reported, golden_path):
             continue
         matched_reported.add(i)
         matched_golden.add(j)
+        chosen.append((i, j))
     tp = len(matched_reported)
     precision = tp / len(reported) if reported else None
     recall = len(matched_golden) / len(golden) if golden else None
@@ -617,9 +631,13 @@ def eval_against_golden(reported, golden_path):
             "recall": recall, "f1": f1,
             "tp_severities": sorted(sev_level(reported[i].get("severity"))
                                     for i in matched_reported),
-            "matched": [(golden[j][0], golden[j][1]) for _d, i, j in
-                        sorted(matches, key=lambda m: m[1])
-                        if i in matched_reported and j in matched_golden],
+            # m1: only the pairs the greedy selection actually chose — never
+            # more entries than true_positives (display order: reported index)
+            "matched": [(golden[j][0], golden[j][1])
+                        for i, j in sorted(chosen, key=lambda p: p[0])],
+            # indices into `reported` the greedy selection matched (M3, r2:
+            # lets callers derive false positives from this exact matching)
+            "matched_reported": sorted(matched_reported),
             "missed": [g for j, g in enumerate(golden) if j not in matched_golden]}
 
 

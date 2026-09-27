@@ -33,6 +33,19 @@ def test_nearest_golden_wins_and_each_golden_used_once(jr, tmp_path):
     assert res["recall"] == 1.0
 
 
+def test_matched_lists_only_the_pairs_actually_chosen(jr, tmp_path):
+    """m1 (r2): `matched` is built from the greedy selection itself, so it
+    can never list more pairs than there are true positives. Golden 10 and
+    12, findings at 11 and 12: finding 11 takes golden 10, finding 12 takes
+    golden 12 -> exactly 2 chosen pairs (the old code also listed the
+    candidate pair (11, 12) that lost the selection)."""
+    reported = [_rep("a.py", 11), _rep("a.py", 12)]
+    res = jr.eval_against_golden(
+        reported, _golden(tmp_path, [("a.py", 10, "x"), ("a.py", 12, "y")]))
+    assert res["true_positives"] == 2
+    assert res["matched"] == [("a.py", 10), ("a.py", 12)]
+
+
 def test_tie_goes_to_lower_golden_line(jr, tmp_path):
     # reported 10 is distance 1 from both 9 and 11 -> lower line wins
     reported = [_rep("a.py", 10)]

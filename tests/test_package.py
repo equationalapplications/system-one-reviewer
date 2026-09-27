@@ -21,7 +21,13 @@ def test_v01_fixture_anchors(jr):
     assert sum(h["n_changed"] for h in hunks) == 10
 
 
-def test_deletion_anchor_is_not_one(jr):
+def test_deletion_anchor_uses_head_position(jr):
+    """M2 (r2): deletion-only clusters anchor at the position in HEAD where
+    the line was removed (the '-' entry's tracked new_line), not the old
+    file's line number — the two diverge when earlier lines in the hunk
+    changed the count. Hunk `@@ -5,1 +4,0 @@`: HEAD lines 1..3 are shared,
+    the deleted line sat before new line 4, so the anchor is 4. Must never
+    collapse to the top-of-file fallback 1."""
     diff = (
         "diff --git a/src/mid.py b/src/mid.py\n"
         "--- a/src/mid.py\n"
@@ -31,9 +37,35 @@ def test_deletion_anchor_is_not_one(jr):
     )
     hunks = jr.package_hunks(diff)
     assert len(hunks) == 1
-    # anchor must fall at the deletion site, never the top-of-file fallback 1
-    assert hunks[0]["line"] == 5
+    # anchor must fall at the deletion site in HEAD, never fallback 1
+    assert hunks[0]["line"] == 4
     assert any("dead_call" in ln for ln in hunks[0]["lines"])
+
+
+def test_deletion_anchor_after_earlier_insertions(jr):
+    """M2 (r2) traced example: hunk `@@ -1,8 +1,9 @@` with an insertion
+    BEFORE the deletion. The deleted old line 7 sits between new lines 8
+    and 9 in HEAD, so the anchor must be 9 (the '-' entry's new_line), not
+    7 (old-file line). The earlier +n1/+n2 run packs as its own cluster;
+    the deletion cluster is what pins the anchor contract."""
+    diff = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,8 +1,9 @@\n"
+        " l1\n"
+        "+n1\n"
+        "+n2\n"
+        " l2\n"
+        " l3\n"
+        " l4\n"
+        " l5\n"
+        " l6\n"
+        "-l7\n"
+        " l8\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert [h["line"] for h in hunks] == [2, 9]
 
 
 def test_windows_never_cross_hunk_boundary(jr):
