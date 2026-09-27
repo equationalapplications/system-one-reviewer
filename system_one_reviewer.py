@@ -415,6 +415,11 @@ def package_hunks(diff):
                         cur_file = (new_path[2:] if new_path.startswith("b/")
                                     else new_path)
                 continue
+            if line.startswith("diff ") and old_left <= 0 and new_left <= 0:
+                # m1 (r8): `diff -ruN a/x b/x` separators from recursive
+                # plain diffs arrive between files — ignore them; the
+                # following ---/+++ pair does the real work.
+                continue
             # M2 (r5): inside a hunk EVERY +/- prefix is content — real file
             # headers were consumed above (gated on awaiting_hunk).
             if line.startswith("+"):
@@ -610,6 +615,7 @@ def hunk_state(h):
 def judge(hunks, ask):
     """ask is the wired provider's ask(state, questions) (E8 contract)."""
     findings, latencies, failures = [], [], 0
+    parse_failures = 0  # M1 (r8): consecutive shape errors, separate counter
     for h in hunks:
         state = hunk_state(h)
         try:
@@ -637,12 +643,17 @@ def judge(hunks, ask):
                 "latency_ms": round(ms, 1),
             }
             findings.append(rec)
+            parse_failures = 0
         except (KeyError, TypeError, AttributeError):
-            # M1 (r7): shape errors count toward fail-open too — a wrong
+            # M1 (r7/r8): shape errors count toward fail-open — a wrong
             # response shape on every call is a broken/changed API, not a
-            # set of harmless per-hunk misses.
+            # set of harmless per-hunk misses. Their counter is separate
+            # from transport failures: transport success resets `failures`,
+            # so a run of 200-with-garbage responses could otherwise never
+            # reach the limit.
+            parse_failures += 1
             failures += 1
-            if failures >= CALL_FAIL_LIMIT:
+            if parse_failures >= CALL_FAIL_LIMIT or failures >= CALL_FAIL_LIMIT:
                 return None, latencies  # fail-open signal
             findings.append({"hunk": h, "parse_error": True,
                              "raw": payload, "latency_ms": round(ms, 1)})
@@ -651,6 +662,8 @@ def judge(hunks, ask):
 
 def judge_pr_level(findings, ask):
     """One extra round-trip: PR-level risk from the per-hunk digest."""
+    prov = os.environ.get("SOR_PROVIDER") or "jev"
+    prov_name = f"{prov} model"
     digest = "\n".join(
         f"- {f['hunk']['file']}:{f['hunk']['line']} severity={SEV_NAME[sev_level(f.get('severity'))]} "
         f"category={f.get('category')}" for f in findings) or "no per-hunk findings"
@@ -664,7 +677,7 @@ def judge_pr_level(findings, ask):
                 "latency_ms": round(ms, 1)}
     except Exception as exc:
         return {"overall_risk": None, "needs_human_review": None,
-                "error": f"pr-level Jev call failed: {exc!r}"[:300]}
+                "error": f"pr-level model call failed ({prov_name}): {exc!r}"[:300]}
 
 
 def near(v, t, zone=0.03):

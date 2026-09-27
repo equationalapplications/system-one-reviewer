@@ -499,6 +499,49 @@ produces a JEV/system-one-UNAVAILABLE banner, never a clean "Approved".
   **KEEP 0.50**. Merge gate PASS. Benchmark doc + README + committed
   metrics jsonl updated to the v02-r3 generation.
 
+---
+
+# Opus review cycle 8 (r8) — my r7 fix had a hole; closed
+
+Review (session 1ea755cb, $0.72): 0 BLOCKER, 1 MAJOR, 4 MINOR. The
+reviewer re-verified the r7 B1 flag ordering, the tie rules, the gate
+ordering, and the golden lines against HEAD content as clean.
+
+## MAJOR
+
+**M1 — The r7 shape-error fix could never fire: FIXED.** `judge` reset
+`failures = 0` after transport success but BEFORE parsing, so each
+200-with-garbage response reset the counter and it could never reach
+CALL_FAIL_LIMIT — a changed API shape still ended in a silent
+"Approved". Shape errors now use a dedicated consecutive counter
+(`parse_failures`) that only a successful parse resets; transport
+failures keep their own. Regression test: 2 hunks + always-wrong-200
+fake -> judge returns None after exactly CALL_FAIL_LIMIT calls. (My
+first version of the test used 1 hunk — below the limit — and
+correctly failed; the limit semantics are now test-locked too.)
+
+## MINORs
+
+- **m1 `diff -ruN` separators parsed as context: FIXED** — once a
+hunk's counts are exhausted, `diff ...` separator lines are ignored;
+regression test covers a two-file recursive-diff-style input.
+- **m2 PR-level error string said "Jev": FIXED** — provider-aware
+("laya model"); the internal `jev_calls` metrics field name stays for
+log compatibility, documented here.
+- **m3 undocumented origin/main assumption: FIXED** — README --pr line
+now states the base.
+- **m4 inconsistent timestamp formats between builders: FIXED** — both
+use `"2026-09-27T12:00:00 +0000"`; negative fixture SHA verified
+unchanged.
+
+## Verification (r8 fixes)
+
+- Full suite: 70 passed, 0 failed.
+- Negative fixture rebuilds to the committed SHA.
+- No live re-runs needed: r8 M1's fix affects only the failure path;
+the v02-r3 success-path runs are unaffected (all six had
+fail_open=false, judged == n_analyzed, healthy payload shapes).
+
 
 
 

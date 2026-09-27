@@ -51,7 +51,7 @@ Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
 
 ```bash
 system-one-reviewer --repo PATH --range A..B     # commit range
-system-one-reviewer --repo PATH --pr N           # GitHub PR (needs a local pr/N ref: git fetch origin pull/N/head:pr/N)
+system-one-reviewer --repo PATH --pr N           # GitHub PR (needs local refs: git fetch origin pull/N/head:pr/N; base is origin/main)
 system-one-reviewer --repo PATH --staged         # staged changes
 system-one-reviewer --repo PATH --uncommitted    # working tree
 

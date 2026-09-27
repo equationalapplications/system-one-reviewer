@@ -317,3 +317,49 @@ def test_plain_multifile_unified_diff_parses_both_files(jr):
     # ...and the second file must be its own cluster
     assert len(ysql) == 1 and ysql[0]["line"] == 2
     assert any("added" in ln for ln in ysql[0]["lines"])
+
+
+def test_shape_errors_reach_fail_open(jr):
+    """M1 (r8): parse/shape failures must count toward the fail-open
+    limit even when the transport call itself succeeds — an API that
+    returns HTTP 200 with a wrong body must end in fail-open (None),
+    never a silent 'Approved'. Needs 2+ hunks: the limit is 2 consecutive
+    failures."""
+    def mk_hunk(i):
+        return {"file": "f.py", "line": i, "hunk_start": 1, "lines": ["x"],
+                "entries": [(" ", i, "x", 1)], "n_changed": 1, "header": "h",
+                "size": 1, "too_large": False}
+    hunks = [mk_hunk(1), mk_hunk(2)]
+    calls = []
+
+    def bad_ask(state, questions):
+        calls.append(1)
+        return {"answers": {}}, 1.0  # transport OK, answers shape wrong
+
+    findings, _lat = jr.judge(hunks, bad_ask)
+    assert findings is None, "consecutive shape errors must trigger fail-open"
+    assert len(calls) == jr.CALL_FAIL_LIMIT
+
+
+def test_diff_ruN_separator_never_becomes_context(jr):
+    """m1 (r8): after a hunk's counts are exhausted, a `diff -ruN ...`
+    separator line must be ignored, not appended as fake context."""
+    diff = (
+        "--- a/x.txt\n"
+        "+++ b/x.txt\n"
+        "@@ -1,1 +1,2 @@\n"
+        " keep\n"
+        "+added\n"
+        "diff -ruN a/y.txt b/y.txt\n"
+        "--- a/y.txt\n"
+        "+++ b/y.txt\n"
+        "@@ -1,1 +1,2 @@\n"
+        " keep2\n"
+        "+added2\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 2
+    assert all(h["file"] in ("x.txt", "y.txt") for h in hunks)
+    for h in hunks:
+        assert not any("diff -ruN" in ln for ln in h["lines"]), \
+            "separator line leaked into a window"
