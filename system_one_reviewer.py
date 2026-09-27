@@ -91,7 +91,7 @@ def load_api_key() -> str:
                         return line.strip().split("=", 1)[1]
         except OSError:
             continue
-    sys.exit("jev-review: set TYPESAFE_API_KEY (env) or put TYPESAFE_API_KEY=... "
+    sys.exit("system-one-reviewer: set TYPESAFE_API_KEY (env) or put TYPESAFE_API_KEY=... "
              "in ~/.config/jev-review/.env")
 
 
@@ -155,7 +155,7 @@ def set_transport(transport):
 def ask(state, questions):
     """Module-level E8 entry point: dispatch through the wired transport."""
     if _TRANSPORT is None:
-        sys.exit("jev-review: no provider wired — this is a bug")
+        sys.exit("system-one-reviewer: no provider wired — this is a bug")
     return _TRANSPORT(state, questions)
 
 
@@ -163,7 +163,7 @@ def provider_from(provider_arg, model_arg):
     """Resolve (--provider, --model); SOR_PROVIDER env is the default."""
     provider = provider_arg or os.environ.get("SOR_PROVIDER") or "jev"
     if provider not in PROVIDERS:
-        sys.exit(f"jev-review: unknown provider {provider!r} "
+        sys.exit(f"system-one-reviewer: unknown provider {provider!r} "
                  f"(choose from {', '.join(PROVIDERS)})")
     model = model_arg or (LAYA_DEFAULT_MODEL if provider == "laya" else None)
     return provider, model
@@ -205,12 +205,12 @@ def get_laya_router(model=None, loader=None):
     try:
         laya = (loader or __import__)("laya")
     except ImportError as exc:
-        sys.exit(f"jev-review: the laya provider needs the laya package: "
+        sys.exit(f"system-one-reviewer: the laya provider needs the laya package: "
                  f"{exc}; fix with: pip install laya")
     try:
         _LAYA_ROUTER = laya.load(model=model) if model else laya.Router()
     except Exception as exc:
-        sys.exit(f"jev-review: could not load laya model "
+        sys.exit(f"system-one-reviewer: could not load laya model "
                  f"{model or '(default)'}: {exc}; fix with: pip install laya")
     return _LAYA_ROUTER
 
@@ -233,7 +233,7 @@ def laya_ask_or_die(router=None, model=None, loader=None):
 def run_git(repo, *args):
     r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
     if r.returncode != 0:
-        sys.exit(f"jev-review: git {' '.join(args)} failed:\n{r.stderr}")
+        sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{r.stderr}")
     return r.stdout
 
 
@@ -253,7 +253,7 @@ def resolve_diff(repo, args):
         diff = run_git(repo, "diff", f"origin/main...pr/{args.pr}")
         head = run_git(repo, "rev-parse", f"pr/{args.pr}").strip()
         return diff, head, f"pr:{args.pr}"
-    sys.exit("jev-review: pick one of --range/--pr/--staged/--uncommitted")
+    sys.exit("system-one-reviewer: pick one of --range/--pr/--staged/--uncommitted")
 
 
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
