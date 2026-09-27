@@ -48,6 +48,8 @@ METRICS_PATH = os.environ.get(
 MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 REAL_THRESHOLD = 0.50         # is_real_issue noul gate (plateau-safe)
+KNOWN_FIXTURES = {"positive", "negative"}
+PACKAGING_VERSION = "v02"
 def sev_level(v):
     """Nearest integer level, halves round up (2.5 is a BLOCKER)."""
     if v is None:
@@ -526,6 +528,10 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--max-hunks", type=int, default=40)
     ap.add_argument("--golden")
+    ap.add_argument("--negative-golden", dest="negative_golden")
+    ap.add_argument("--fixture", choices=sorted(KNOWN_FIXTURES),
+                    help="which committed fixture this run exercises "
+                         "(recorded in metrics)")
     ap.add_argument("--label", default="")
     ap.add_argument("--json", action="store_true", help="JSON-only stdout")
     args = ap.parse_args()
@@ -577,6 +583,9 @@ def main():
              "fail_open": fail_open, "total_latency_ms": round(total, 1),
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
              "judged": judged,
+             "packaging_version": PACKAGING_VERSION,
+             "fixture": args.fixture,
+             "fixture_head": head,
              "findings": result["findings"], "jitter": jitter,
              "pr_level": result["pr_level"], "golden_eval": golden_eval})
 
