@@ -126,9 +126,11 @@ def replay(jr, run, t):
 def negative_fp(jr, run, t, benign_files=frozenset()):
     """FP census at threshold t on a negative fixture, via the tool's own
     eval_negative: blocker_major + other_fp (minor style notes don't count;
-    E5 formula). When the negative golden is supplied, its file column names
-    changes that deterministic triage MUST skip — a reported finding on one
-    of them is triage leakage and dies loudly."""
+    E5 formula). `benign_files` names files in the negative golden that the
+    tool's deterministic triage MUST skip (docs/lockfile patterns) — a
+    reported finding on one of them is triage leakage and dies loudly.
+    Files the golden names that triage keeps (source files) are judged on
+    purpose and are NOT leakage."""
     reported = replay(jr, run, t)
     for f in reported:
         if f["hunk"]["file"] in benign_files:
@@ -139,8 +141,10 @@ def negative_fp(jr, run, t, benign_files=frozenset()):
     return counts["blocker_major"] + counts["other_fp"]
 
 
-def benign_files_from_negative_golden(path):
-    """Files named in the negative golden TSV (must-skip content checks)."""
+def benign_files_from_negative_golden(path, jr=None):
+    """Files named in the negative golden TSV that deterministic triage
+    must skip (docs extensions / skip patterns). Golden lines for kept
+    source files are benign-content checks, not must-skip markers."""
     if not path:
         return frozenset()
     files = set()
@@ -148,7 +152,10 @@ def benign_files_from_negative_golden(path):
         line = line.rstrip("\n")
         if line and not line.startswith("#"):
             files.add(line.split("\t")[0])
-    return frozenset(files)
+    if jr is None:
+        return frozenset(files)
+    return frozenset(f for f in files
+                     if jr.SKIP_PATTERNS.search(f) or jr.DOC_EXT.search(f))
 
 
 # ---------- golden eval + curve ----------
@@ -186,7 +193,7 @@ def _load_golden_lines(golden_path):
 
 
 def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
-    benign = benign_files_from_negative_golden(neg_golden_path)
+    benign = benign_files_from_negative_golden(neg_golden_path, jr)
     rows = []
     for t in threshold_grid():
         evals = [_eval(jr, run, t, golden_path) for run in pos_runs]
