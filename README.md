@@ -58,12 +58,35 @@ jev-review.py --repo PATH --uncommitted    # working tree
 # scored run against planted issues (TSV: file, line, description)
 jev-review.py --repo PATH --range A..B --golden golden.tsv --label run1
 
+# negative (all-benign) fixture: FP census instead of precision/recall
+jev-review.py --repo PATH --range A..B --negative-golden negative.tsv --label run2
+
+# declare which committed fixture a run exercises (recorded in metrics;
+# the threshold sweep refuses runs whose head SHA doesn't match it)
+jev-review.py --repo PATH --range A..B --fixture positive --label run3
+
 --json      machine-readable output to stdout
 --out FILE  write full JSON report (all scores) to a file
 ```
 
 Metrics append to `$XDG_STATE_HOME/jev-review/metrics.jsonl` (default
-`~/.local/state/...`). Nothing leaves your machine except the Jev calls.
+`~/.local/state/...`). Nothing leaves your machine except the model calls.
+
+## Providers: hosted Jev or local Laya
+
+Every judgment goes through one contract — `ask(state, questions) ->
+(payload, latency_ms)` — with two interchangeable providers:
+
+| provider | flag | backend | status |
+|---|---|---|---|
+| `jev` | `--provider jev` (default; `SOR_PROVIDER` env also works) | hosted TypeSafe System One, `TYPESAFE_API_KEY` | live-tested (all published numbers) |
+| `laya` | `--provider laya`, checkpoint via `--model` (default `convaiinnovations/rl-agent`) | local inference via the `laya` package (`pip install laya`) | **tested-by-fake**: contract covered by `tests/test_providers.py`; no live run yet (no local weights at publish time) |
+
+`laya` imports lazily, so the tool keeps zero hard dependencies; a missing
+package or checkpoint exits with a one-line fix hint. Metrics records carry
+additive `provider` and `model` fields, and the threshold sweep
+(`scripts/sweep-thresholds.py`) only compares runs within one
+(provider, model) group — mixing providers is a hard error.
 
 ## The example fixture
 
@@ -75,9 +98,21 @@ jev-review.py --repo /tmp/jev-review-test --range HEAD~1..HEAD \
 
 Five planted issues (silent-None return, unguarded division, duplicate
 import, redundant argument, O(n²) loop). Current published numbers from
-this fixture: recall 2/5, precision 2/3, F1 0.50 — with the two misses being
-genuine nits the model deliberately scores below threshold. Thresholds and
-question phrasing are meant to be tuned; the jsonl gives you the data.
+this fixture (runs `v02-final-baseline-1..3`, 2026-09-27, provider `jev`):
+recall 3/5, **raw precision** 3/4 (0.75), F1 0.67 — identical across all
+three fresh runs. "Raw precision" counts reported-findings on the positive
+fixture only; on the negative fixture the same runs report **zero**
+blocker/major and zero other FPs (`v02-final-negative-1..3`). The two
+misses are the O(n²) loop nit and the duplicate import — the model scores
+both below threshold on purpose, and the sweep confirms lowering it buys
+nothing (it only imports negative-run FPs below 0.40). Full sweep table,
+merge-gate evaluation, and the exact metrics lines:
+[docs/benchmarks/2026-09-27-threshold-sweep.md](docs/benchmarks/2026-09-27-threshold-sweep.md).
+
+Note: severity levels now round halves **up** (`sev_level(2.5)` is a
+BLOCKER; previously banker's rounding made it a MAJOR). A fractional
+severity of 2.5+ can flip a verdict from Approved to Changes requested, so
+v0.2 verdicts are not directly comparable with v0.1 logs.
 
 ## Status
 
