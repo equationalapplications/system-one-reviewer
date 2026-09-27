@@ -160,12 +160,19 @@ def ask(state, questions):
 
 
 def provider_from(provider_arg, model_arg):
-    """Resolve (--provider, --model); SOR_PROVIDER env is the default."""
+    """Resolve (--provider, --model); SOR_PROVIDER env is the default.
+
+    r4 m2: `--model` is a laya-only knob — for jev it is dropped (not
+    logged) so a stray --model cannot split identical jev runs into
+    different (provider, model) sweep groups.
+    """
     provider = provider_arg or os.environ.get("SOR_PROVIDER") or "jev"
     if provider not in PROVIDERS:
         sys.exit(f"system-one-reviewer: unknown provider {provider!r} "
                  f"(choose from {', '.join(PROVIDERS)})")
-    model = model_arg or (LAYA_DEFAULT_MODEL if provider == "laya" else None)
+    if provider == "jev":
+        return provider, None
+    model = model_arg or LAYA_DEFAULT_MODEL
     return provider, model
 
 
@@ -290,23 +297,51 @@ def package_hunks(diff):
     per_file, cur_file, entries = [], None, []
     old_line = new_line = hunk_start = hunk_end = 1
     for line in diff.splitlines():
-        if line.startswith("+++ b/"):
+        if line.startswith("diff --git "):
+            # M3 (r4): the `diff --git a/X b/X` header names the NEXT file —
+            # flush the previous file here so no header lines (index/,
+            # mode/rename lines) of the new file can leak into the old
+            # file's last window as fake context.
             if cur_file is not None:
                 per_file.append((cur_file, entries))
-            cur_file, entries = line[6:], []
-        elif line.startswith("---") or line.startswith("diff "):
+            cur_file, entries = None, []
             continue
-        elif line.startswith("@@"):
+        if line.startswith("--- "):
+            # M3 (r4): old-side path. For a whole-file deletion this is the
+            # ONLY place the real file name appears (new side is /dev/null).
+            old_path = line[4:]
+            if old_path != "/dev/null" and cur_file is None:
+                cur_file = old_path[2:] if old_path.startswith("a/") else old_path
+            continue
+        if line.startswith("+++ "):
+            # M3 (r4): `+++ /dev/null` marks a whole-file deletion — the
+            # hunks that follow belong to the file named on the old side
+            # (set above), not to /dev/null. Never flush the previous file
+            # here: `diff --git` already did that.
+            new_path = line[4:]
+            if new_path != "/dev/null" and cur_file is None:
+                cur_file = new_path[2:] if new_path.startswith("b/") else new_path
+            continue
+        if line.startswith(("index ", "old mode ", "new mode ",
+                            "new file mode", "deleted file mode",
+                            "similarity index", "rename from",
+                            "rename to", "copy from", "copy to",
+                            "Binary files", "GIT binary patch")):
+            continue
+        if line.startswith("@@"):
             m = HUNK_RE.match(line)
             old_line = int(m.group(1)) if m else 1
             new_line = int(m.group(3)) if m else 1
             hunk_start = new_line
-            # m5 (r3): where the hunk's new side ends. Omitted count
-            # means 1; count 0 (pure-deletion hunk) ends at start-1.
-            # Deletions never anchor past this line.
+            # m5 (r3)/M3 (r4): where the hunk's new side ends. Omitted
+            # count means 1; count 0 (pure-deletion hunk) means git's
+            # start N is "after line N", i.e. the file ends at N — the
+            # clamp target for trailing deletions. Deletions never
+            # anchor past this line.
             if m:
                 new_count = int(m.group(4)) if m.group(4) else 1
-                hunk_end = new_line + new_count - 1 if new_count > 0 else new_line - 1
+                hunk_end = new_line if new_count == 0 else new_line + new_count - 1
+                hunk_end = max(1, hunk_end)
             else:
                 hunk_end = new_line
         elif cur_file is not None:
@@ -318,7 +353,7 @@ def package_hunks(diff):
                 # new-side end — a trailing deletion's raw new_line is
                 # len(HEAD)+1, which doesn't exist.
                 entries.append(("-", old_line, line[1:], hunk_start,
-                                min(new_line, hunk_end)))
+                                max(1, min(new_line, hunk_end))))
                 old_line += 1
             elif not line.startswith("\\"):
                 entries.append((" ", new_line, line[1:], hunk_start))
@@ -617,11 +652,9 @@ def eval_against_golden(reported, golden_path):
                     golden.append((parts[0], int(parts[1]), parts[2] if len(parts) > 2 else ""))
     matched_golden, matched_reported = set(), set()
     chosen = []  # (reported_idx, golden_idx) pairs the greedy pass kept
-    matches = []  # (reported_idx, golden_idx, distance)
+    matches = []  # (distance, reported_idx, golden_idx)
     for i, f in enumerate(reported):
         for j, (gfile, gline, gdesc) in enumerate(golden):
-            if j in matched_golden:
-                continue
             if f["hunk"]["file"] == gfile and abs(f["hunk"]["line"] - gline) <= 1:
                 matches.append((abs(f["hunk"]["line"] - gline), i, j))
     matches.sort(key=lambda m: (m[0], golden[m[2]][1], m[1]))

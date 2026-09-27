@@ -22,12 +22,13 @@ def test_v01_fixture_anchors(jr):
 
 
 def test_deletion_anchor_uses_head_position(jr):
-    """M2 (r2) + m5 (r3): deletion-only clusters anchor at the position in
-    HEAD where the line was removed, clamped to the last existing HEAD
-    line. For `@@ -5,1 +4,0 @@` the new side claims zero lines, so the
-    file ends at line 3 and the deletion site (between 3 and a
-    nonexistent 4) anchors at 3 — never the old-file line 5, never
-    top-of-file fallback 1, never past-EOF 4."""
+    """M2 (r2) + m5 (r3)/M3 (r4): deletion-only clusters anchor at the
+    position in HEAD where the line was removed. Git semantics: for
+    `@@ -5,1 +4,0 @@` the new start 4 with count 0 means "the file's 4
+    lines end, deletion after line 4" — so the anchor is 4, the last
+    existing HEAD line (verified against real `git diff -U0` output).
+    Never the old-file line 5, never top-of-file fallback 1, never
+    past-EOF 5."""
     diff = (
         "diff --git a/src/mid.py b/src/mid.py\n"
         "--- a/src/mid.py\n"
@@ -37,8 +38,8 @@ def test_deletion_anchor_uses_head_position(jr):
     )
     hunks = jr.package_hunks(diff)
     assert len(hunks) == 1
-    # last existing HEAD line: the raw tracked position (4) is past EOF
-    assert hunks[0]["line"] == 3
+    # git semantics: +4,0 = deletion after HEAD line 4 (the last existing)
+    assert hunks[0]["line"] == 4
     assert any("dead_call" in ln for ln in hunks[0]["lines"])
 
 
@@ -119,17 +120,85 @@ def test_package_is_deterministic(jr):
 
 
 def test_trailing_deletion_anchors_inside_file(jr):
-    # m5 (r3): a deletion at end of file must not anchor past EOF.
-    # HEAD ends at line 2; the hunk deletes old lines 3-4 entirely
-    # (@@ +3,0 @@), so the raw tracked new_line (3) is past EOF.
+    # m5 (r3)/M3 (r4): a deletion at end of file must not anchor past
+    # EOF. HEAD has 2 lines; the hunk deletes old lines 3-4 entirely
+    # and git emits `@@ -3,2 +2,0 @@` (new start 2, count 0 = "file
+    # ends at line 2, deletion after it") — verified against real
+    # `git diff -U0` output. Anchor = 2, the last existing line.
     diff = (
         "diff --git a/src/tail.py b/src/tail.py\n"
         "--- a/src/tail.py\n"
         "+++ b/src/tail.py\n"
-        "@@ -3,2 +3,0 @@\n"
+        "@@ -3,2 +2,0 @@\n"
         "-    dead_one()\n"
         "-    dead_two()\n"
     )
     hunks = jr.package_hunks(diff)
     assert len(hunks) == 1
     assert hunks[0]["line"] == 2  # last existing HEAD line, not 3
+
+
+def test_multifile_headers_never_leak_into_windows(jr):
+    """M3 (r4): git header lines of the SECOND file (index/new file mode/
+    deleted file mode/rename...) must not leak into the first file's last
+    cluster window as context."""
+    diff = (
+        "diff --git a/src/one.py b/src/one.py\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/src/one.py\n"
+        "+++ b/src/one.py\n"
+        "@@ -1,3 +1,4 @@\n"
+        " keep_a\n"
+        "+added_a\n"
+        " keep_a2\n"
+        " keep_a3\n"
+        "diff --git a/src/two.py b/src/two.py\n"
+        "index 3333333..4444444 100644\n"
+        "--- a/src/two.py\n"
+        "+++ b/src/two.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " keep_b\n"
+        "+added_b\n"
+        " keep_b2\n"
+    )
+    hunks = jr.package_hunks(diff)
+    one = [h for h in hunks if h["file"] == "src/one.py"]
+    two = [h for h in hunks if h["file"] == "src/two.py"]
+    assert len(one) == 1 and len(two) == 1
+    window_text = " ".join(one[0]["lines"])
+    assert "index" not in window_text and "diff --git" not in window_text
+    assert all("keep_b" not in ln and "added_b" not in ln
+               for ln in one[0]["lines"])
+
+
+def test_whole_file_deletion_attributed_and_anchored(jr):
+    """M3 (r4): a deleted file's hunks must belong to the deleted file
+    (+++ /dev/null must not keep the previous file), and anchors must be
+    sane (>= 1), never 0 or negative from a +0,0 hunk."""
+    diff = (
+        "diff --git a/src/gone.py b/src/gone.py\n"
+        "deleted file mode 100644\n"
+        "index abcdef0..0000000\n"
+        "--- a/src/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,3 +0,0 @@\n"
+        "-import os\n"
+        "-x = 1\n"
+        "-y = 2\n"
+        "diff --git a/src/stays.py b/src/stays.py\n"
+        "index abcdef1..abcdef2 100644\n"
+        "--- a/src/stays.py\n"
+        "+++ b/src/stays.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " keep\n"
+        "+added\n"
+    )
+    hunks = jr.package_hunks(diff)
+    gone = [h for h in hunks if h["file"] == "src/gone.py"]
+    stays = [h for h in hunks if h["file"] == "src/stays.py"]
+    assert len(gone) == 1, "deleted file's cluster is missing or misfiled"
+    assert gone[0]["line"] >= 1, "anchor must never be 0/negative"
+    assert all("import os" in ln or "x = 1" in ln or "y = 2" in ln
+               for ln in gone[0]["lines"] if ln.strip().startswith(("-", "0", "1", "2", "3")))
+    assert len(stays) == 1
+    assert all("gone" not in ln for ln in stays[0]["lines"])
