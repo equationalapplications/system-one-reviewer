@@ -20,7 +20,7 @@ Fail-open: 2 consecutive Jev failures -> report ships with a JEV-UNAVAILABLE
 banner, never dies.
 
 Usage:
-  jev-review --repo <path> (--range A..B | --pr N | --staged | --uncommitted)
+  system-one-reviewer --repo <path> (--range A..B | --pr N | --staged | --uncommitted)
              [--out f.json] [--max-hunks N] [--golden f] [--label s] [--json]
              [--negative-golden f] [--fixture NAME]
 """
@@ -238,7 +238,15 @@ def run_git(repo, *args):
 
 
 def resolve_diff(repo, args):
-    """Return (diff_text, head_sha, mode)."""
+    """Return (diff_text, head_sha, mode).
+
+    fixture_head semantics (m2 disposition): the logged `fixture_head` is
+    the checkout HEAD (git rev-parse HEAD), not the tip of --range and not
+    the reviewed commit itself. For a committed fixture this is exactly the
+    SHA the sweep gates on (--staged/--uncommitted review HEAD's tree, so
+    the same value is correct there); only a range that does not END at
+    HEAD would diverge, which the committed fixtures never do.
+    """
     if args.range:
         diff = run_git(repo, "diff", args.range)
         head = run_git(repo, "rev-parse", "HEAD").strip()

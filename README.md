@@ -42,7 +42,7 @@ Verdict: Changes requested
 
 ```bash
 export TYPESAFE_API_KEY=...        # or ~/.config/jev-review/.env
-cp system-one-reviewer ~/.local/bin/     # any PATH dir works
+cp system_one_reviewer.py ~/.local/bin/system-one-reviewer   # any PATH dir works
 ```
 
 Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
@@ -91,8 +91,8 @@ additive `provider` and `model` fields, and the threshold sweep
 ## The example fixture
 
 ```bash
-examples/build-fixture.sh           # builds /tmp/jev-review-test
-system-one-reviewer --repo /tmp/jev-review-test --range HEAD~1..HEAD \
+examples/build-fixture.sh           # builds /tmp/jev-review-pos
+system-one-reviewer --repo /tmp/jev-review-pos --range HEAD~1..HEAD \
     --golden examples/fixture-golden.tsv --label first-run
 ```
 
