@@ -1,5 +1,5 @@
 # Deterministic fixture head SHAs (full 40-char, from the build scripts'
 # fixed GIT_AUTHOR/COMMITTER_DATE + identity). Format: name=full40sha.
 # The build scripts assert their output against these; the sweep gates on them.
-positive=5ddacab7f18fef9b82d8c76d0647913235fd31da
-negative=332bd13e025bd967514af66b9ac6e825d8c5708e
+positive=ea5df10e1624b095fecd657b12ee23b46e808386
+negative=e7de08b239982e896d9d57981fa07d83aab7cb65

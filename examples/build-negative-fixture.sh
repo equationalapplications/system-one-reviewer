@@ -1,8 +1,10 @@
 #!/bin/bash
-# Build the jev-review v0.2 NEGATIVE test fixture: base->HEAD touches only
-# benign changes (rename a local, reorder imports, whitespace, one comment,
-# one docstring) plus a README.md change that deterministic triage MUST skip
-# (asserted by tests/test_negative.py from the built diff — never judged).
+# Build the system-one-reviewer v0.2 NEGATIVE test fixture: base->HEAD is
+# behavior-preserving per spec E1 — a whitespace-only reformat, one
+# innocuous comment, and a README.md change that deterministic triage MUST
+# skip (asserted by tests/test_negative.py from the built diff — never
+# judged). NO renames, NO signature changes, NO docstring rewrites: every
+# source change is either pure whitespace or a comment.
 # Deterministic: fixed dates/identities; tree hash independent of path.
 set -euo pipefail
 ROOT="${JEV_FIXTURE_ROOT:-/tmp/jev-review-neg}"
@@ -45,20 +47,25 @@ EOF
 git add .
 git commit -qm base
 
+# HEAD: same code, whitespace-only reformat + one innocuous comment.
+# The items parameter keeps its name (renaming it would break keyword
+# callers and is NOT behavior-preserving — spec E1 forbids that).
 cat > src/app.py <<'EOF'
 import os
 import json
 
-def render(entries):
-    """Render entries as a comma-separated string."""
+# Render the items as a comma-separated string (innocuous comment).
+def render(items):
     out = ""
-    for e in entries:
-        out += str(e) + ","
+    for i in items:
+        out += str(i) + ","
     return out
+
 
 def load_config(path):
     with open(path) as f:
         return json.load(f)
+
 
 def divide(a, b):
     if b == 0:
@@ -75,7 +82,7 @@ Renders items and loads config.
     python src/app.py
 EOF
 git add .
-git commit -qm "benign cleanup: rename, reorder imports, docs"
+git commit -qm "benign cleanup: whitespace, comment, docs"
 
 HEAD_SHA="$(git rev-parse HEAD)"
 EXPECT="$(grep -E '^negative=' "$SHAS_FILE" | cut -d= -f2)"
