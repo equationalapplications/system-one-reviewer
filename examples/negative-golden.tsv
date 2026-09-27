@@ -1,0 +1,6 @@
+# Negative fixture: no golden ISSUES. Each line instead names a file that
+# MUST appear in the HEAD tree with the given verify-substring — a benign-
+# content check, not an issue list. jev-review never reads this file; it
+# documents what the builder verifies mechanically.
+README.md	## Usage
+src/app.py	Render entries as a comma-separated string

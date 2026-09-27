@@ -427,6 +427,25 @@ def log_run(record):
         f.write(json.dumps(record, default=str) + "\n")
 
 
+def eval_negative(reported):
+    """False-positive census on an all-benign diff (m4: counting never
+    filters on --negative-golden; that flag only triggers/documents this
+    evaluation). minor-note := sev_level(severity)==1 and category=='style'.
+    """
+    counts = {"blocker_major": 0, "minor_notes": 0, "other_fp": 0}
+    for f in reported:
+        if f.get("severity") is None:
+            continue
+        lvl = sev_level(f.get("severity"))
+        if lvl >= 2:
+            counts["blocker_major"] += 1
+        elif lvl == 1 and f.get("category") == "style":
+            counts["minor_notes"] += 1
+        else:
+            counts["other_fp"] += 1
+    return counts
+
+
 def eval_against_golden(reported, golden_path):
     """Precision/recall/F1 of reported findings vs a golden issues file.
 
@@ -575,6 +594,12 @@ def main():
     golden_eval = None
     if args.golden:
         golden_eval = eval_against_golden(reported, args.golden)
+        result["golden_eval"] = golden_eval
+    if args.negative_golden:
+        neg = eval_negative(reported)
+        if golden_eval is None:
+            golden_eval = {}
+        golden_eval["negative_eval"] = neg
         result["golden_eval"] = golden_eval
 
     log_run({"label": args.label, "repo": meta["repo"], "mode": mode,
