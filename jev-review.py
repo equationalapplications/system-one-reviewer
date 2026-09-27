@@ -134,6 +134,100 @@ def jev_ask(state, questions, api_key):
     return payload, (time.perf_counter() - t0) * 1000.0
 
 
+# ---------- provider facade (E8) ----------
+
+# ask(state, questions) -> (payload, latency_ms) with payload["answers"][name]
+# carrying score/noul/choice. judge/judge_pr_level only ever see this
+# contract; the wired provider is injected transport-style so tests can
+# substitute fakes without network or packages.
+_TRANSPORT = None        # set by set_transport / make_provider
+_LAYA_ROUTER = None      # one router per process (one model load per run)
+LAYA_DEFAULT_MODEL = "convaiinnovations/rl-agent"
+PROVIDERS = ("jev", "laya")
+
+
+def set_transport(transport):
+    """Inject the ask transport (the jev client wrapper in production)."""
+    global _TRANSPORT
+    _TRANSPORT = transport
+
+
+def ask(state, questions):
+    """Module-level E8 entry point: dispatch through the wired transport."""
+    if _TRANSPORT is None:
+        sys.exit("jev-review: no provider wired — this is a bug")
+    return _TRANSPORT(state, questions)
+
+
+def provider_from(provider_arg, model_arg):
+    """Resolve (--provider, --model); SOR_PROVIDER env is the default."""
+    provider = provider_arg or os.environ.get("SOR_PROVIDER") or "jev"
+    if provider not in PROVIDERS:
+        sys.exit(f"jev-review: unknown provider {provider!r} "
+                 f"(choose from {', '.join(PROVIDERS)})")
+    model = model_arg or (LAYA_DEFAULT_MODEL if provider == "laya" else None)
+    return provider, model
+
+
+def make_provider(provider, model, api_key=None):
+    """Return the wired ask() for the chosen provider (E8 contract).
+
+    The returned closure is also registered as the module-level `ask`
+    dispatch target (set_transport).
+    """
+    if provider == "jev":
+        key = api_key if api_key is not None else load_api_key()
+
+        def provider_ask(state, questions):
+            return jev_ask(state, questions, key)
+
+        set_transport(provider_ask)
+        return provider_ask
+    # laya: local inference; the router loads lazily on first call and is
+    # kept for the process lifetime.
+    def provider_ask(state, questions):
+        router = get_laya_router(model=model)
+        return laya_ask(router, state, questions)
+
+    set_transport(provider_ask)
+    return provider_ask
+
+
+def get_laya_router(model=None, loader=None):
+    """Import laya lazily; build the router once per process.
+
+    `loader` is the import function (injectable for tests). Missing
+    package or weights -> clean one-line error with the pip line.
+    """
+    global _LAYA_ROUTER
+    if _LAYA_ROUTER is not None:
+        return _LAYA_ROUTER
+    try:
+        laya = (loader or __import__)("laya")
+    except ImportError as exc:
+        sys.exit(f"jev-review: the laya provider needs the laya package: "
+                 f"{exc}; fix with: pip install laya")
+    try:
+        _LAYA_ROUTER = laya.load(model=model) if model else laya.Router()
+    except Exception as exc:
+        sys.exit(f"jev-review: could not load laya model "
+                 f"{model or '(default)'}: {exc}; fix with: pip install laya")
+    return _LAYA_ROUTER
+
+
+def laya_ask(router, state, questions):
+    """One batched laya round-trip over the same answers shape."""
+    t0 = time.perf_counter()
+    payload = router.predict(state, questions)
+    return payload, (time.perf_counter() - t0) * 1000.0
+
+
+def laya_ask_or_die(router=None, model=None, loader=None):
+    """Eager laya check used by main() so a missing local stack fails
+    before any review work happens."""
+    return get_laya_router(model=model, loader=loader)
+
+
 # ---------- deterministic stages ----------
 
 def run_git(repo, *args):
@@ -349,12 +443,13 @@ def hunk_state(h):
     }
 
 
-def judge(hunks, api_key):
+def judge(hunks, ask):
+    """ask is the wired provider's ask(state, questions) (E8 contract)."""
     findings, latencies, failures = [], [], 0
     for h in hunks:
         state = hunk_state(h)
         try:
-            payload, ms = jev_ask(state, HUNK_QUESTIONS, api_key)
+            payload, ms = ask(state, HUNK_QUESTIONS)
             latencies.append(ms)
             failures = 0
         except Exception:
@@ -384,15 +479,15 @@ def judge(hunks, api_key):
     return findings, latencies
 
 
-def judge_pr_level(findings, api_key):
+def judge_pr_level(findings, ask):
     """One extra round-trip: PR-level risk from the per-hunk digest."""
     digest = "\n".join(
         f"- {f['hunk']['file']}:{f['hunk']['line']} severity={SEV_NAME[sev_level(f.get('severity'))]} "
         f"category={f.get('category')}" for f in findings) or "no per-hunk findings"
     try:
-        payload, ms = jev_ask(
+        payload, ms = ask(
             "Change set under review, per-hunk automated digest:\n" + digest,
-            PR_QUESTIONS, api_key)
+            PR_QUESTIONS)
         ans = payload["answers"]
         return {"overall_risk": float(ans["overall_risk"].get("score", 0)),
                 "needs_human_review": ans["needs_human_review"].get("noul"),
@@ -557,22 +652,34 @@ def main():
                     help="which committed fixture this run exercises "
                          "(recorded in metrics)")
     ap.add_argument("--label", default="")
+    ap.add_argument("--provider", choices=list(PROVIDERS),
+                    help="judgment provider: jev (hosted, default) or "
+                         "laya (local); SOR_PROVIDER env is the default")
+    ap.add_argument("--model",
+                    help="model/checkpoint for the laya provider "
+                         f"(default {LAYA_DEFAULT_MODEL})")
     ap.add_argument("--json", action="store_true", help="JSON-only stdout")
     args = ap.parse_args()
 
-    api_key = load_api_key()
+    provider, model = provider_from(args.provider, args.model)
+    if provider == "laya":
+        laya_ask_or_die(model=model)  # fail fast on a missing local stack
+        api_key = None
+    else:
+        api_key = load_api_key()
+    ask = make_provider(provider, model, api_key)
     diff, head, mode = resolve_diff(args.repo, args)
     hunks = package_hunks(diff)
     kept, skipped = triage(hunks)
     kept.sort(key=lambda h: -h["size"])
     kept = kept[: args.max_hunks]
 
-    findings, latencies = judge(kept, api_key)
+    findings, latencies = judge(kept, ask)
     fail_open = findings is None
     if fail_open:
         findings = []
     else:
-        pr_level = judge_pr_level(findings, api_key)
+        pr_level = judge_pr_level(findings, ask)
     reported, jitter, verdict = compose(findings, skipped,
                                         pr_level if not fail_open else None)
 
@@ -614,6 +721,7 @@ def main():
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
              "judged": judged,
              "packaging_version": PACKAGING_VERSION,
+             "provider": provider, "model": model,
              "fixture": args.fixture,
              "fixture_head": head,
              "findings": result["findings"], "jitter": jitter,
