@@ -1,4 +1,4 @@
-"""Shared test harness: isolated, offline import of jev-review.py.
+"""Shared test harness: isolated, offline import of system_one_reviewer.py.
 
 The `jr` fixture loads the single-file tool via spec_from_file_location with
 JEV_REVIEW_METRICS and HOME pointed into a tmp dir and TYPESAFE_API_KEY unset,
@@ -14,7 +14,7 @@ import sys
 import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TOOL_PATH = os.path.join(REPO_ROOT, "jev-review.py")
+TOOL_PATH = os.path.join(REPO_ROOT, "system_one_reviewer.py")
 
 
 @pytest.fixture

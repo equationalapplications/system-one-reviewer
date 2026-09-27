@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jev-review — local PR review powered by deterministic code + TypeSafe Jev.
+"""system-one-reviewer — local PR review powered by deterministic code + a system one model (hosted Jev or local Laya).
 
 Experimental (D1, Kurt 2026-09-27): an ADDITIONAL lightweight reviewer for
 Tessera on the ThinkPad. Runs in seconds, costs fractions of a cent, use

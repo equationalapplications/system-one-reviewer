@@ -6,7 +6,7 @@ System One model) for every judgment. No agent loop, no prompt engineering,
 no cloud CI — one Python file, git, and an API key.
 
 ```
-$ jev-review.py --repo ~/myrepo --range main..HEAD
+$ system-one-reviewer --repo ~/myrepo --range main..HEAD
 JEV REVIEW (experimental local reviewer — advisory only)
 repo=myrepo mode=range:main..HEAD head=13fa9d8a3e
 analyzed=5 hunks, skipped=0, total_latency=785ms, jev_calls=5
@@ -42,7 +42,7 @@ Verdict: Changes requested
 
 ```bash
 export TYPESAFE_API_KEY=...        # or ~/.config/jev-review/.env
-cp jev-review.py ~/.local/bin/     # any PATH dir works
+cp system-one-reviewer ~/.local/bin/     # any PATH dir works
 ```
 
 Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
@@ -50,20 +50,20 @@ Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
 ## Usage
 
 ```bash
-jev-review.py --repo PATH --range A..B     # commit range
-jev-review.py --repo PATH --pr N           # GitHub PR (via gh)
-jev-review.py --repo PATH --staged         # staged changes
-jev-review.py --repo PATH --uncommitted    # working tree
+system-one-reviewer --repo PATH --range A..B     # commit range
+system-one-reviewer --repo PATH --pr N           # GitHub PR (via gh)
+system-one-reviewer --repo PATH --staged         # staged changes
+system-one-reviewer --repo PATH --uncommitted    # working tree
 
 # scored run against planted issues (TSV: file, line, description)
-jev-review.py --repo PATH --range A..B --golden golden.tsv --label run1
+system-one-reviewer --repo PATH --range A..B --golden golden.tsv --label run1
 
 # negative (all-benign) fixture: FP census instead of precision/recall
-jev-review.py --repo PATH --range A..B --negative-golden negative.tsv --label run2
+system-one-reviewer --repo PATH --range A..B --negative-golden negative.tsv --label run2
 
 # declare which committed fixture a run exercises (recorded in metrics;
 # the threshold sweep refuses runs whose head SHA doesn't match it)
-jev-review.py --repo PATH --range A..B --fixture positive --label run3
+system-one-reviewer --repo PATH --range A..B --fixture positive --label run3
 
 --json      machine-readable output to stdout
 --out FILE  write full JSON report (all scores) to a file
@@ -92,7 +92,7 @@ additive `provider` and `model` fields, and the threshold sweep
 
 ```bash
 examples/build-fixture.sh           # builds /tmp/jev-review-test
-jev-review.py --repo /tmp/jev-review-test --range HEAD~1..HEAD \
+system-one-reviewer --repo /tmp/jev-review-test --range HEAD~1..HEAD \
     --golden examples/fixture-golden.tsv --label first-run
 ```
 

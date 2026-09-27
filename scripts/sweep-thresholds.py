@@ -39,12 +39,12 @@ def die(msg):
 
 
 def load_tool():
-    """Load jev-review.py the same way the test suite does (spec loader)."""
+    """Load system_one_reviewer.py the same way the test suite does (spec loader)."""
     import importlib.util
     import os
 
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(os.path.dirname(here), "jev-review.py")
+    path = os.path.join(os.path.dirname(here), "system_one_reviewer.py")
     spec = importlib.util.spec_from_file_location("jev-review-sweep", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

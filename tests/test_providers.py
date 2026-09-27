@@ -124,7 +124,7 @@ def test_make_provider_laya_uses_router(monkeypatch):
 
     REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     spec = importlib.util.spec_from_file_location(
-        "jev-review-laya-test", os.path.join(REPO_ROOT, "jev-review.py"))
+        "system-one-reviewer-laya-test", os.path.join(REPO_ROOT, "system_one_reviewer.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
