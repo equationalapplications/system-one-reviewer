@@ -203,3 +203,64 @@ matching logic left in the sweep.
   committed benchmark doc; the M2/M3 corrections do not change today's
   numbers (as the review itself predicted).
 - Negative fixture rebuilds to the committed SHA under the fixed check.
+
+---
+
+# Opus review cycle 3 (r3) — 7 findings + nits, all dispositioned
+
+Review after the r2 fixes (session 747feed0, $0.69): 0 BLOCKER,
+2 MAJOR, 5 MINOR, 5 nits (no action). MAJOR trajectory 4 -> 3 -> 2.
+
+## MAJORs
+
+**M1 — Sweep accepted fail-open and incomplete runs: FIXED**
+(commit 2ab24ba). `gate_run` now rejects runs where `fail_open` is true
+(a model-unavailable run logs `judged: []`, which reads as valid-looking
+zero-FP / zero-TP garbage) and where `len(judged) != n_analyzed`
+(parse errors and transient judge failures silently drop clusters, and
+the replay treats a missing cluster as "not reported"). Both get the
+loud-skip path; the >=3-per-fixture bar still applies. All six
+committed v02-r2 runs pass the new gate — they were healthy runs, and
+the sweep output is byte-identical.
+
+**M2 — The r2 disposition for m2 was FALSE: FIXED, ledger corrected**
+(commit 2ab24ba). The r2 child never removed the dead 0.75 filter; my
+verification grep used the wrong pattern (`abs(t - 0.80)`) and missed it
+spelled `abs(0.30 + 0.05*k - 0.80)` — a verification failure on my side,
+not just the implementer's. The filter is now genuinely gone (GRID =
+plain range(9), comment updated). Lesson recorded: verify dispositions
+against the described end state, never against a re-statement of the
+fix; grep for the behavior, not for one spelling of it.
+
+## MINORs
+
+- **m1 argparse prog was still `jev-review`: FIXED** (24b24c3-era,
+  commit 2ab24ba set) — `prog="system-one-reviewer"`.
+- **m2 leakage guard silently off without --negative-golden: FIXED**
+  (2ab24ba) — the flag is now required; the published procedure always
+  passes it.
+- **m3 negative fixture header overstated the invariant: FIXED**
+  (aa70c49) — header now names the import reorder; fixture content
+  unchanged (still rebuilds to the committed SHA).
+- **m4 gate_run error text blamed --golden: FIXED** (2ab24ba, inside
+  the M1 rewrite) — a missing `judged` array now says "pre-v0.1 record".
+- **m5 trailing deletion anchored past EOF: FIXED** (24b24c3) —
+  deletion entries clamp the tracked HEAD position to the hunk's
+  new-side end (`HUNK_RE` now captures counts; count 0 = pure-deletion
+  hunk ends at start-1). TDD: failing test written first; the r2-era
+  `@@ -5,1 +4,0 @@` expectation updated from 4 to 3 — with a zero new
+  count the file ends at line 3, so 4 was the past-EOF anchor m5
+  describes. 61 tests pass.
+
+## Nits (no action required, acknowledged)
+
+Dead `if j in matched_golden` guard in the candidate loop; unreachable
+third anchor fallback; `_fp_pos` re-replays what `_eval` computed;
+duplicate `check_single_provider_group` in main; CI double-trigger
+(last one FIXED in aa70c49 anyway — push now fires on main only).
+
+## Verification (r3 fixes)
+
+- Full suite: 61 passed, 0 failed.
+- Sweep over the committed v02-r2 metrics: KEEP 0.50, identical output —
+  the six committed runs pass the new fail-open/completeness gates.
