@@ -202,3 +202,28 @@ def test_whole_file_deletion_attributed_and_anchored(jr):
                for ln in gone[0]["lines"] if ln.strip().startswith(("-", "0", "1", "2", "3")))
     assert len(stays) == 1
     assert all("gone" not in ln for ln in stays[0]["lines"])
+
+
+def test_content_looking_like_headers_inside_hunk_is_judged(jr):
+    """M2 (r5): inside a hunk, a removed line whose text starts with `-- `
+    renders as `--- ...` and an added line starting with `++ ` renders as
+    `+++ ...`. These are CONTENT (SQL/Lua comments, diff-like text), not
+    file headers — the parser must judge them, not swallow them."""
+    diff = (
+        "diff --git a/src/query.sql b/src/query.sql\n"
+        "--- a/src/query.sql\n"
+        "+++ b/src/query.sql\n"
+        "@@ -1,4 +1,4 @@\n"
+        " SELECT 1;\n"
+        "--- drop the audit guard\n"
+        "+++ counter\n"
+        " SELECT 2;\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1, "header-lookalike content must still form a cluster"
+    h = hunks[0]
+    assert h["n_changed"] == 2
+    assert any("drop the audit guard" in ln for ln in h["lines"])
+    assert any("+ counter" in ln or "counter" in ln for ln in h["lines"])
+    # line accounting survived: the context line after both must be line 2
+    assert h["line"] == 2  # first '+' content line, new-file line 2

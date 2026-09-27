@@ -296,6 +296,7 @@ def package_hunks(diff):
     CTX = 4
     per_file, cur_file, entries = [], None, []
     old_line = new_line = hunk_start = hunk_end = 1
+    awaiting_hunk = False  # True between a file's headers and its first @@
     for line in diff.splitlines():
         if line.startswith("diff --git "):
             # M3 (r4): the `diff --git a/X b/X` header names the NEXT file —
@@ -305,15 +306,19 @@ def package_hunks(diff):
             if cur_file is not None:
                 per_file.append((cur_file, entries))
             cur_file, entries = None, []
+            awaiting_hunk = True
             continue
-        if line.startswith("--- "):
+        if awaiting_hunk and line.startswith("--- "):
             # M3 (r4): old-side path. For a whole-file deletion this is the
             # ONLY place the real file name appears (new side is /dev/null).
+            # M2 (r5): header prefixes are ONLY headers here, before the
+            # first @@ — inside a hunk, `--- text` is a removed line whose
+            # content starts with `-- ` (SQL/Lua comments, diff-like text).
             old_path = line[4:]
             if old_path != "/dev/null" and cur_file is None:
                 cur_file = old_path[2:] if old_path.startswith("a/") else old_path
             continue
-        if line.startswith("+++ "):
+        if awaiting_hunk and line.startswith("+++ "):
             # M3 (r4): `+++ /dev/null` marks a whole-file deletion — the
             # hunks that follow belong to the file named on the old side
             # (set above), not to /dev/null. Never flush the previous file
@@ -322,13 +327,14 @@ def package_hunks(diff):
             if new_path != "/dev/null" and cur_file is None:
                 cur_file = new_path[2:] if new_path.startswith("b/") else new_path
             continue
-        if line.startswith(("index ", "old mode ", "new mode ",
-                            "new file mode", "deleted file mode",
-                            "similarity index", "rename from",
-                            "rename to", "copy from", "copy to",
-                            "Binary files", "GIT binary patch")):
+        if awaiting_hunk and line.startswith(("index ", "old mode ", "new mode ",
+                                              "new file mode", "deleted file mode",
+                                              "similarity index", "rename from",
+                                              "rename to", "copy from", "copy to",
+                                              "Binary files", "GIT binary patch")):
             continue
         if line.startswith("@@"):
+            awaiting_hunk = False
             m = HUNK_RE.match(line)
             old_line = int(m.group(1)) if m else 1
             new_line = int(m.group(3)) if m else 1
@@ -345,10 +351,12 @@ def package_hunks(diff):
             else:
                 hunk_end = new_line
         elif cur_file is not None:
-            if line.startswith("+") and not line.startswith("+++"):
+            # M2 (r5): inside a hunk EVERY +/- prefix is content — real file
+            # headers were consumed above (gated on awaiting_hunk).
+            if line.startswith("+"):
                 entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
-            elif line.startswith("-") and not line.startswith("---"):
+            elif line.startswith("-"):
                 # m5 (r3): clamp the tracked HEAD position to the hunk's
                 # new-side end — a trailing deletion's raw new_line is
                 # len(HEAD)+1, which doesn't exist.
