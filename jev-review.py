@@ -169,7 +169,8 @@ def package_hunks(diff):
     """Cluster-level packaging: contiguous changed lines form a cluster, each
     with +/-4 context lines. Windows are clamped at @@ hunk boundaries (a
     cluster never crosses an @@ header), so one change never dilutes another.
-    Anchors: first '+' in the cluster's own run -> else the first context
+    Anchors: first '+' in the cluster's own run -> else the deletion site
+    (first '-' in the run, at its old-file line) -> else the first context
     entry with a lineno at/after the run -> else the run's hunk_start (a
     deletion-only cluster never collapses to line 1). Deterministic."""
     CTX = 4
@@ -192,7 +193,7 @@ def package_hunks(diff):
                 entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
             elif line.startswith("-") and not line.startswith("---"):
-                entries.append(("-", None, line[1:], hunk_start))
+                entries.append(("-", old_line, line[1:], hunk_start))
                 old_line += 1
             elif not line.startswith("\\"):
                 entries.append((" ", new_line, line[1:], hunk_start))
@@ -236,6 +237,10 @@ def package_hunks(diff):
                 # hunk_start
                 anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
                                if e[0] == "+" and e[1] is not None), None)
+                if anchor is None:
+                    # deletion-only cluster: anchor at the deletion site
+                    anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
+                                   if e[0] == "-" and e[1] is not None), None)
                 if anchor is None:
                     anchor = next((e[1] for e in seg[g[-1] + 1:hi]
                                    if e[0] == " " and e[1] is not None), None)
