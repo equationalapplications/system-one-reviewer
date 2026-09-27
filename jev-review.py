@@ -5,11 +5,12 @@ Experimental (D1, Kurt 2026-09-27): an ADDITIONAL lightweight reviewer for
 Tessera on the ThinkPad. Runs in seconds, costs fractions of a cent, use
 freely and often. Posts nothing anywhere; prints a report, optionally JSON.
 
-Design (v0.1, evaluation-first):
+Design (v0.2, evaluation-hardened):
   1. gather   — git plumbing pre-computes merge-base/diff/head (no re-derivation)
   2. triage   — deterministic skip: lockfiles, generated, docs-only
-  3. package  — diff split into hunks with file:line anchors, size-capped
-  4. judge    — Jev ONLY (noul/choice/score), one call per hunk, keep-alive
+  3. package  — diff split into change clusters with file:line anchors,
+                hunk-boundary clamping (windows never cross an @@ header)
+  4. judge    — Jev ONLY (noul/choice/score), one call per cluster, keep-alive
   5. compose  — thresholds in code; plateau rule; jitter flags; fixed verdict
   6. measure  — every run appends raw scores to metrics jsonl; --golden gives
                 precision/recall/F1 so the pattern can be refined as we go
@@ -25,6 +26,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import re
 import ssl
@@ -46,8 +48,12 @@ MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 REAL_THRESHOLD = 0.50         # is_real_issue noul gate (plateau-safe)
 def sev_level(v):
-    """Nearest integer level for a (possibly fractional) score answer."""
-    return max(0, min(3, int(round(v or 0))))
+    """Nearest integer level for a (possibly fractional) score answer.
+
+    Halves round UP (a 2.5 severity is treated as 3 = BLOCKER): Jev's score
+    scale is a judgment of risk, and ties must not silently downgrade.
+    """
+    return max(0, min(3, int(math.floor((v or 0) + 0.5))))
 
 SEV_NAME = {0: "none", 1: "MINOR", 2: "MAJOR", 3: "BLOCKER"}
 CATEGORIES = ["bug-risk", "security", "style", "performance", "test-gap", "other"]
