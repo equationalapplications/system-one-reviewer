@@ -93,8 +93,15 @@ fi
 
 # golden verification: README.md changed but src/app.py diff is all-benign
 GOLDEN="$SCRIPT_DIR/negative-golden.tsv"
-while IFS=$'\t' read -r fname line substr; do
+while IFS=$'\t' read -r fname substr || [ -n "$fname" ]; do
     case "$fname" in \#*) continue;; esac
+    # M1 (r2): the TSV is 2 columns (file, substring). An empty $substr
+    # would make `grep -qF -- ""` match ANY file — a check that can't
+    # fail is not a check — so refuse to run with one.
+    if [ -z "$substr" ]; then
+        echo "golden verify FAIL: $fname has an empty verify-substring" >&2
+        exit 1
+    fi
     git show "HEAD:$fname" | grep -qF -- "$substr" \
         || { echo "golden verify FAIL: $fname missing '$substr'" >&2; exit 1; }
 done < "$GOLDEN"

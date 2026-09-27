@@ -96,7 +96,7 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 # ---------- verify every golden line against actual HEAD content ----------
 i=0
-while IFS=$'\t' read -r gfile gline gdesc gverify gsev; do
+while IFS=$'\t' read -r gfile gline gdesc gverify gsev || [ -n "$gfile" ]; do
   case "$gfile" in \#*) continue ;; esac
   i=$((i+1))
   actual=$(sed -n "${gline}p" "$gfile")
