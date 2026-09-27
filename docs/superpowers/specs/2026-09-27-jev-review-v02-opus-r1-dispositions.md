@@ -131,3 +131,75 @@ e7de08b239982e896d9d57981fa07d83aab7cb65 committed to
 - Merge gate: zero blocker_major in every negative run at 0.50 — PASS.
 - Numbers: docs/benchmarks/2026-09-27-threshold-sweep.md (+ committed
   metrics jsonl), README.md.
+
+---
+
+# Opus review cycle 2 (r2) — 9 findings, all dispositioned
+
+Review of `main..v02-evaluation` after the r1 fixes (session 0a11272d,
+$0.57): 0 BLOCKER, 3 MAJOR, 6 MINOR. Full text:
+`.hermes/cache/scratch/sor-opus-review-r2.md` (transient); findings and
+dispositions below are the durable record.
+
+## MAJORs
+
+**M1 — Negative fixture's content check can never fail: FIXED**
+(commits 48074ee, 914ef29-era test updates). The builder read 3 columns
+from a 2-column TSV, so `$substr` was always empty and
+`grep -qF -- ""` matched any file. Now reads exactly `fname substr`,
+refuses an empty substring with a hard error, and the m6 hardening
+(`|| [ -n "$fname" ]`) covers a missing trailing newline. Negative
+fixture rebuilds deterministically to the committed SHA
+`e7de08b2…` with the real check active.
+
+**M2 — Deletion-only anchors used old-file line numbers: FIXED**
+(commit 914ef29). Each `-` entry now tracks the HEAD (`new_line`)
+position where the content was removed, and deletion-only clusters
+anchor there. Correct even when earlier lines in the hunk shifted the
+count; the old-file line rides on the entry for display. This
+SUPERSEDES the r1 disposition of m1 (old-file numbering) — Opus's
+counterexample (additions before a deletion in one hunk drift the old
+numbering, and the ±1 golden tolerance turns the drift into FP + miss)
+is correct. `tests/test_package.py` locks the new contract with the
+traced hunk shape.
+
+**M3 — Sweep FP_pos used proximity, not one-to-one matching: FIXED**
+(commit ae27e29). `_fp_pos` now derives from `eval_against_golden`'s
+matched set (via the new additive `matched_reported` return): two
+findings on one golden issue count 1 TP + 1 FP_pos. No duplicated
+matching logic left in the sweep.
+
+## MINORs
+
+- **m1 matched list could overcount: FIXED** (914ef29) — `matched` now
+  lists exactly the pairs the greedy selection chose (`chosen`), never
+  more than `true_positives`; new test covers the traced 10/12 vs 11/12
+  case.
+- **m2 dead 0.75 filter: FIXED** (ae27e29) — removed; grid comment now
+  matches the actual `range(9)` grid.
+- **m3 stale mixed-provider run aborted the sweep: FIXED** (ae27e29) —
+  `check_single_provider_group` moved after the stale-run gate; a stale
+  stray with a foreign provider is skipped, not fatal. New test proves
+  the skip; the m7 end-to-end mixed test was reshaped to use a full 3+3
+  complement so the mixed-survivor error still fires.
+- **m4 sev rounding vs `severity >= 1` report gate: REJECTED with
+  reason.** The gate is a deliberate noise floor: findings below
+  severity 1 are below MINOR even after halves-up rounding and are not
+  worth reporting. Empirically a no-op on the v02-r2 runs (minimum
+  judged severity 1.22). Documented here rather than changed; the
+  mismatch is intentional.
+- **m5 laya load error blamed the package: FIXED** (914ef29) — the
+  model-load failure message now names the likely cause (missing/invalid
+  checkpoint, with `--model` guidance) and mentions `pip install laya`
+  only as the alternative cause.
+- **m6 last-line-without-newline hardening: FIXED** (48074ee) — both
+  builders use `|| [ -n … ]`.
+
+## Verification (r2 fixes)
+
+- Full suite: 60 passed, 0 failed, no xfail.
+- Sweep over the committed v02-r2 metrics: candidate 0.40 (tie
+  0.30–0.55), rule 1 FAIL, rule 2 PASS -> KEEP 0.50 — identical to the
+  committed benchmark doc; the M2/M3 corrections do not change today's
+  numbers (as the review itself predicted).
+- Negative fixture rebuilds to the committed SHA under the fixed check.
