@@ -711,6 +711,60 @@ and a render test asserts "provider: laya/m1" for laya meta.
   semantics only affect failure accounting, which is fail-open either
   way).
 
+---
+
+# Opus review cycle 12 (r12) — APPROVE WITH NITS
+
+Review (session 4656f2bd, $0.59): 0 BLOCKER, 0 MAJOR, 7 MINOR.
+Verdict: **Approve with nits.** "There are no correctness blockers, and
+the r11 fixes are real." The dual-review loop is closed at cycle 12.
+
+## The two requested pre-publication fixes
+
+**MINOR 1 — shared-counter comment wrong for one ordering: FIXED
+(reworded).** Transport success resets `failures` before parsing, so the
+shared counter only trips fail-open for parse→transport orderings;
+transport→parse sits at 1+1 and is caught downstream (incomplete
+downgrade / all-parse-failed fail-open). The comment now says exactly
+that.
+
+**MINOR 2 — sweep completeness check missed --max-hunks truncation:
+FIXED.** gate_run now also rejects any record whose verdict contains
+"(incomplete" — the verdict is the completeness authority, since
+n_analyzed counts post-truncation clusters. Verified the committed
+v02-r3 runs still pass the gate and the sweep result is unchanged
+(KEEP 0.50).
+
+## Accepted nits (dispositions)
+
+- **3 judge_pr_level NaN/inf guard: DEFERRED (v0.3)** — same class as
+  the r10 m1 per-hunk guard; the PR-level value is rendered, not used
+  in any gate, so a NaN cannot flip a decision. Tracked for the next
+  hardening pass alongside 4 and 5.
+- **4 golden TSV pre-validation: DEFERRED (v0.3)** — real waste-of-run
+  concern; belongs with a general pre-flight validation of inputs.
+- **5 malformed @@ header counterexample test: DEFERRED (v0.3)** —
+  malformed-input hardening; no committed fixture hits it.
+- **6 rename shim / release note: ACCEPTED-AS-DOCUMENTED** — the README
+  carries the path-continuity note (r11 m5); a release note accompanies
+  the v0.2 PR description instead of a wrapper script.
+- **7 findings sorted largest-first: DEFERRED (v0.3)** — cosmetic;
+  (file, line) render order would read better.
+
+## Verification (r12 fixes)
+
+- Full suite: 76 passed, 0 failed.
+- Sweep over v02-r3: KEEP 0.50, rules FAIL/PASS unchanged — the new
+  verdict gate admits all committed runs.
+
+## Merge authorization
+
+Per Kurt's option-1 directive (fix all findings → one final delta
+review → push → PR → regular merge), r12's approve-with-nits verdict
+closes the review loop. Proceeding: push branch, open PR, watch CI,
+regular merge commit (no squash).
+
+
 
 
 

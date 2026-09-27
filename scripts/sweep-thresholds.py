@@ -58,6 +58,12 @@ def threshold_grid():
 
 
 def gate_run(rec, expected, packaging_version="v02"):
+    """Reject stale, hand-edited, fail-open, or incomplete runs loudly.
+
+    r12 MINOR 2: the verdict is checked too — `n_analyzed` counts
+    post-truncation clusters, so a `--max-hunks`-truncated run passed the
+    judged==n_analyzed check while its verdict said "(incomplete review)".
+    """
     if not isinstance(rec.get("judged"), list):
         die(f"run {rec.get('label')!r}: no judged array (pre-v0.1 record — "
             "re-run with the current tool)")
@@ -73,6 +79,13 @@ def gate_run(rec, expected, packaging_version="v02"):
             f"{len(rec['judged'])} entries but n_analyzed={n_analyzed} "
             "(clusters dropped: parse errors or transient judge failures) "
             "— re-run")
+    # r12 MINOR 2: n_analyzed counts post-truncation clusters, so a
+    # --max-hunks-truncated run passes the check above. The verdict is the
+    # authority on completeness.
+    verdict = rec.get("verdict") or ""
+    if "(incomplete" in verdict:
+        die(f"run {rec.get('label')!r}: incomplete review ({verdict!r}) "
+            "— re-run without truncation")
     if rec.get("packaging_version") != packaging_version:
         die(f"run {rec.get('label')!r}: packaging_version "
             f"{rec.get('packaging_version')!r} != {packaging_version!r} "

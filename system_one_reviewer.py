@@ -702,12 +702,15 @@ def judge(hunks, ask):
             # success resets `failures`, so a run of 200-with-garbage
             # responses could otherwise never reach the limit.
             parse_failures += 1
-            # m3 (r11): `failures` is deliberately SHARED between transport
-            # and parse failures — any repeated failure pattern (mixed
-            # causes included) means the provider is not trustworthy for
-            # this run, so reaching CALL_FAIL_LIMIT by any combination
-            # fails open. `parse_failures` additionally catches consecutive
-            # same-cause shape errors.
+            # m3 (r11), reworded per r12 MINOR 1: `failures` is deliberately
+            # SHARED between transport and parse failures, but transport
+            # success resets it BEFORE parsing starts — so the shared
+            # counter only fails open for parse→transport orderings (1+1),
+            # not transport→parse (each sits at 1). That residual case is
+            # caught downstream instead: a parse_error finding triggers the
+            # incomplete-review downgrade, and all-parse-failed triggers
+            # full fail-open. `parse_failures` catches consecutive
+            # same-cause shape errors in every ordering.
             failures += 1
             if parse_failures >= CALL_FAIL_LIMIT or failures >= CALL_FAIL_LIMIT:
                 return None, latencies  # fail-open signal
