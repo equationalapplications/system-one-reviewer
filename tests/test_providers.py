@@ -180,19 +180,29 @@ def test_metrics_carry_provider_and_model(jr, tmp_path):
 # ---------- sweep grouping is already tested in test_sweep.py ----------
 
 def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
-    """m7: a metrics.jsonl whose selected runs mix providers must make the
-    sweep script's main() die with a hard provider error (end to end)."""
+    """m7: a metrics.jsonl whose SELECTED runs mix providers must make the
+    sweep script's main() die with a hard provider error (end to end).
+    m3 (r2): the check runs after the stale-run gate, so the fixture needs
+    the full 3+3 run complement — a stale stray alone is skipped, not fatal."""
     import json
     golden = tmp_path / "g.tsv"
     golden.write_text("a.py\t10\tx\n")
-    recs = ([{"label": "v02-mix-baseline-1", "fixture": "positive",
-              "fixture_head": "a" * 40, "head": "a" * 10,
-              "packaging_version": "v02", "provider": "jev", "model": None,
-              "judged": []},
-             {"label": "v02-mix-negative-1", "fixture": "negative",
-              "fixture_head": "b" * 40, "head": "b" * 10,
-              "packaging_version": "v02", "provider": "laya",
-              "model": "convaiinnovations/rl-agent", "judged": []}])
+
+    def pos(i):
+        return {"label": f"v02-mix-baseline-{i}", "fixture": "positive",
+                "fixture_head": "a" * 40, "head": "a" * 10,
+                "packaging_version": "v02", "provider": "jev", "model": None,
+                "judged": []}
+
+    def neg(i, provider="laya"):
+        return {"label": f"v02-mix-negative-{i}", "fixture": "negative",
+                "fixture_head": "b" * 40, "head": "b" * 10,
+                "packaging_version": "v02", "provider": provider,
+                "model": "convaiinnovations/rl-agent", "judged": []}
+
+    # 3 positive (jev) + 3 negative, one of which is laya -> mixed survivors.
+    recs = [pos(1), pos(2), pos(3), neg(1), neg(2), neg(3, provider="jev"),
+            neg(4, provider="laya")]
     metrics = tmp_path / "metrics.jsonl"
     metrics.write_text("".join(json.dumps(r) + "\n" for r in recs))
     shas = tmp_path / "shas.txt"
@@ -204,3 +214,42 @@ def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
                        capture_output=True, text=True)
     assert r.returncode != 0
     assert "provider" in (r.stderr + r.stdout).lower()
+
+
+def test_sweep_skips_stale_mixed_provider_run(jr, tmp_path):
+    """m3 (r2): a stale run whose provider differs is EXCLUDED by the
+    stale-run gate, not a hard mixed-provider error."""
+    import json
+    golden = tmp_path / "g.tsv"
+    golden.write_text("a.py\t10\tx\n")
+
+    def rec(label, fixture, sha, provider, model=None):
+        # 5-char seed x 8 = a full 40-char SHA (the shas-file gate requires
+        # the full length even for synthetic runs).
+        return {"label": label, "fixture": fixture,
+                "fixture_head": sha * 8, "head": (sha * 8)[:10],
+                "packaging_version": "v02",
+                "provider": provider, "model": model, "judged": []}
+
+    # negative-3 is stale (wrong fixture SHA) AND laya: must be skipped.
+    recs = [rec("v02-stale-baseline-1", "positive", "a", "jev"),
+            rec("v02-stale-baseline-2", "positive", "a", "jev"),
+            rec("v02-stale-baseline-3", "positive", "a", "jev"),
+            rec("v02-stale-negative-1", "negative", "b", "jev"),
+            rec("v02-stale-negative-2", "negative", "b", "jev"),
+            rec("v02-stale-negative-3", "negative", "c", "laya",
+                "convaiinnovations/rl-agent")]
+    metrics = tmp_path / "metrics.jsonl"
+    metrics.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    shas = tmp_path / "shas.txt"
+    shas.write_text(f"positive={'a' * 40}\nnegative={'b' * 40}\n")
+    sw_path = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
+    r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
+                        "--label", "v02-stale-", "--golden", str(golden),
+                        "--shas", str(shas)],
+                       capture_output=True, text=True)
+    # The laya run is skipped by the SHA gate; survivors are all jev, so the
+    # failure must be the >=3 bar (2 negatives), never a provider error.
+    combined = (r.stderr + r.stdout).lower()
+    assert "provider" not in combined
+    assert "3 runs per fixture" in combined

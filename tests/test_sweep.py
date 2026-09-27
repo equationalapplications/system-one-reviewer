@@ -183,6 +183,33 @@ def test_candidate_that_reduces_negative_fps_passes_rule_2(jr, sw, tmp_path):
     assert res["rule_neg_fp_ok"] is True
 
 
+def test_fp_pos_counts_unmatched_reported_findings(jr, sw, tmp_path):
+    """M3 (r2): FP_pos is derived from the same one-to-one matching
+    eval_against_golden does — reported findings that were not matched,
+    MINOR-style notes exempt. Two findings on one golden line must count 1
+    TP and 1 FP_pos, so the duplicate cannot vanish from tp + fp_pos."""
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    run = _run("r", "positive",
+               [_judged(10, 0.90), _judged(11, 0.85)])
+    reported = sw.replay(jr, run, 0.50)
+    assert len(reported) == 2
+    e = jr.eval_against_golden(reported, golden)
+    assert e["true_positives"] == 1
+    assert sw._fp_pos(jr, run, 0.50, golden) == 1
+
+
+def test_fp_pos_exempts_minor_style_notes(jr, sw, tmp_path):
+    """MINOR-style notes (sev_level 1 AND category style) stay exempt from
+    FP_pos — the same class eval_negative exempts."""
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    run = _run("r", "positive",
+               [_judged(10, 0.90), _judged(50, 0.60, sev=1.0, cat="style")])
+    e = jr.eval_against_golden(sw.replay(jr, run, 0.50), golden)
+    assert e["true_positives"] == 1
+    # the unmatched MINOR-style note does not count as a false positive
+    assert sw._fp_pos(jr, run, 0.50, golden) == 0
+
+
 # ---------- provider grouping (E8) ----------
 
 def test_mixed_providers_are_a_hard_error(sw):

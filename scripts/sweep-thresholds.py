@@ -86,7 +86,6 @@ def select_runs(recs, expected, label_prefix, packaging_version="v02"):
     sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
     if not sel:
         die(f"no runs with label prefix {label_prefix!r}")
-    check_single_provider_group(sel)
     pos, neg = [], []
     for r in sel:
         try:
@@ -104,6 +103,10 @@ def select_runs(recs, expected, label_prefix, packaging_version="v02"):
     if len(pos) < 3 or len(neg) < 3:
         die(f"need >= 3 runs per fixture (found {len(pos)} positive / "
             f"{len(neg)} negative) — make fresh runs first")
+    # m3 (r2): the mixed-provider check runs AFTER the stale-run gate, so a
+    # stale run with a different provider is skipped, not fatal (main
+    # re-checks the survivors).
+    check_single_provider_group(pos + neg)
     return pos, neg
 
 
@@ -165,20 +168,19 @@ def _eval(jr, run, t, golden_path):
 
 
 def _fp_pos(jr, run, t, golden_path):
-    """FP_pos per the spec's definition: reported findings that are not
-    true positives, EXCLUDING MINOR-style notes (sev_level 1, category
+    """FP_pos derived from the same matching eval_against_golden performs
+    (M3, r2): reported findings that were NOT matched one-to-one to a
+    golden issue, EXCLUDING MINOR-style notes (sev_level 1, category
     'style') — the same exemption eval_negative applies on the negative
-    fixture."""
+    fixture. Two findings on one golden issue therefore count 1 TP and
+    1 FP_pos: the duplicate can no longer vanish from tp + fp_pos."""
     reported = replay(jr, run, t)
-    golden = _load_golden_lines(golden_path)
-    fp = 0
-    for f in reported:
-        if jr.sev_level(f.get("severity")) == 1 and f.get("category") == "style":
-            continue
-        if not any(f["hunk"]["file"] == gf and abs(f["hunk"]["line"] - gl) <= 1
-                   for gf, gl in golden):
-            fp += 1
-    return fp
+    e = jr.eval_against_golden(reported, golden_path)
+    matched = set(e["matched_reported"])
+    return sum(1 for i, f in enumerate(reported)
+               if i not in matched
+               and not (jr.sev_level(f.get("severity")) == 1
+                        and f.get("category") == "style"))
 
 
 def _load_golden_lines(golden_path):
