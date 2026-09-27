@@ -246,7 +246,33 @@ point `HOME` at tmp_path for `load_api_key` tests (expanduser).
 `.github/workflows/ci.yml`: pytest on push/PR, Python 3.10 and 3.12. No
 secrets, no network — the suite is offline by design.
 
-## Deliberately does not change
+### E8 — Provider abstraction: hosted or local system one models
+
+The review loop must not be coupled to one vendor's API. `jev_ask` becomes a
+thin facade over pluggable providers behind one interface:
+`ask(state, questions) -> (payload, latency_ms)` where `payload` contains
+`{"answers": {name: {"score"|"noul"|"choice", "probabilities"?,
+"confidence"?}}}` — the shape the judge/compose code already consumes.
+
+- `--provider jev` (default): the current keep-alive HTTPS client against
+  `TYPESAFE_API_KEY` / `api.typesafe.ai/v1/systemone`, unchanged.
+- `--provider laya`: local inference via the `laya` package (imported
+  lazily so the tool keeps zero hard deps): `laya.Router()` (or
+  `laya.load(model)` with `--model`), called as
+  `router.predict(state, questions)` — same questions dict, same
+  `answers` shape. `--model` selects the checkpoint
+  (default `convaiinnovations/rl-agent`; `model=` kwarg passed through).
+- Selection: `--provider` flag; `SOR_PROVIDER` env as default;
+  `--model` for the laya checkpoint. Unknown provider → clean exit with a
+  one-line error. Provider name is recorded additively in metrics
+  (`provider`, `model` fields) so benchmark tables state which model
+  produced them.
+- Measured behavior differs by provider (network vs local GPU); latency
+  columns in reports show per-call ms either way. Threshold tuning is
+  per-provider by default: metrics records are comparable only within the
+  same provider+model, and the sweep groups by `provider`/`model`.
+
+### Deliberately does not change (E8 additions)
 
 - Question phrasing and the batched per-cluster call shape (current tuning
   baseline; the sweep depends on them).

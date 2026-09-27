@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Rev 2 note (Task 12, E8):** provider abstraction added — `--provider jev|laya`, local inference via the `laya` package behind the same answers contract. Task 11 executes after Task 12.
+
 **Goal:** Complete the evaluation story for jev-review: honest fixtures, correct packaging, negative controls, a reproducible threshold sweep, and an offline test suite with CI.
 
 **Architecture:** Single-file tool `jev-review.py` gains structured hunk entries, parameterized `compose`, per-run negative eval, and additive CLI flags/fields. New offline pieces: `tests/` (pytest, monkeypatched `jev_ask`), `scripts/sweep-thresholds.py` (imports the tool, replays `compose`), deterministic fixture builders in `examples/`.
@@ -173,6 +175,34 @@ Golden TSV (`file<TAB>line<TAB>desc<TAB>verify-substring<TAB>severity-class`), l
 ### Task 10: README refresh
 
 - [ ] Correct miss count; refreshed numbers with run labels and "raw precision" labeling; document `--negative-golden`/`--fixture`; note the sev_level behavior change; link the benchmark doc. Commit.
+
+### Task 12: Provider abstraction — hosted Jev or local Laya (E8)
+
+**Files:**
+- Modify: `jev-review.py` (provider facade, flags, metrics fields)
+- Create: `tests/test_providers.py`
+- Modify: `README.md` (providers section)
+
+**Interfaces:**
+- Provider contract: `ask(state, questions) -> (payload, latency_ms)` with
+  `payload["answers"][name]` carrying `score`/`noul`/`choice` (+ optional
+  `probabilities`, `confidence`). Both providers implement it; `judge`,
+  `judge_pr_level`, and the sweep only ever see the contract.
+- CLI: `--provider {jev,laya}` (default from `SOR_PROVIDER` env, else
+  `jev`), `--model` (laya checkpoint). Unknown provider exits with a
+  one-line error. Metrics records gain additive `provider` and `model`.
+- Jev path: existing client unchanged behind the facade.
+- Laya path: lazy `import laya`; `Router()` (or `load(--model)`);
+  `predict(state, questions)`; keep the router instance for the process
+  lifetime (one model load per run). If the package or weights are
+  missing → clean error with the pip line.
+- The sweep groups runs by `(provider, model)`; mixing providers in one
+  table row is a hard error.
+
+- [ ] Step 1: Failing tests — facade dispatch (jev → injected fake transport; laya → injected fake router object); unknown provider exit; `--model` passthrough; metrics carry provider/model; sweep grouping rejects mixed providers.
+- [ ] Step 2: FAIL. Step 3: implement. Step 4: PASS.
+- [ ] Step 5: (optional, if weights are downloadable) one live laya run on the positive fixture for a smoke check; otherwise mark the laya path tested-by-fake in the README table footnote.
+- [ ] Step 6: Commit `feat: provider abstraction — hosted (jev) or local (laya) system one models` (explicit adds).
 
 ### Task 11: PR + dual review of the diff + gated merge
 
