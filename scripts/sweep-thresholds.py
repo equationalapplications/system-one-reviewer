@@ -164,10 +164,11 @@ def benign_files_from_negative_golden(path, jr=None):
     if not path:
         return frozenset()
     files = set()
-    for line in open(path):
-        line = line.rstrip("\n")
-        if line and not line.startswith("#"):
-            files.add(line.split("\t")[0])
+    with open(path) as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line and not line.startswith("#"):
+                files.add(line.split("\t")[0])
     if jr is None:
         return frozenset(files)
     return frozenset(f for f in files
@@ -175,20 +176,12 @@ def benign_files_from_negative_golden(path, jr=None):
 
 
 # ---------- golden eval + curve ----------
+# (r9 m5: `_eval`/`_fp_pos` were folded into sweep()'s single
+# replay+matching per (run, t); `_load_golden_lines` was dead and removed.)
 
-def _eval(jr, run, t, golden_path):
-    return jr.eval_against_golden(replay(jr, run, t), golden_path)
-
-
-def _fp_pos(jr, run, t, golden_path):
-    """FP_pos derived from the same matching eval_against_golden performs
-    (M3, r2): reported findings that were NOT matched one-to-one to a
-    golden issue, EXCLUDING MINOR-style notes (sev_level 1, category
-    'style') — the same exemption eval_negative applies on the negative
-    fixture. Two findings on one golden issue therefore count 1 TP and
-    1 FP_pos: the duplicate can no longer vanish from tp + fp_pos."""
-    reported = replay(jr, run, t)
-    e = jr.eval_against_golden(reported, golden_path)
+def _fp_pos_from_eval(jr, reported, e):
+    """FP_pos from an already-computed eval_against_golden result (M5, r9:
+    no duplicate replay/matching work; TP and FP_pos share one matching)."""
     matched = set(e["matched_reported"])
     return sum(1 for i, f in enumerate(reported)
                if i not in matched
@@ -196,28 +189,23 @@ def _fp_pos(jr, run, t, golden_path):
                         and f.get("category") == "style"))
 
 
-def _load_golden_lines(golden_path):
-    lines = []
-    for line in open(golden_path):
-        line = line.strip()
-        if line and not line.startswith("#"):
-            parts = line.split("\t")
-            if len(parts) >= 2:
-                lines.append((parts[0], int(parts[1])))
-    return lines
-
-
 def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
     benign = benign_files_from_negative_golden(neg_golden_path, jr)
     rows = []
     for t in threshold_grid():
-        evals = [_eval(jr, run, t, golden_path) for run in pos_runs]
+        # m5 (r9): one replay + matching per (run, t), shared by the F1
+        # curve and the FP_pos census.
+        evals, reported_each, fp_pos_each = [], [], []
+        for run in pos_runs:
+            reported = replay(jr, run, t)
+            e = jr.eval_against_golden(reported, golden_path)
+            evals.append(e)
+            reported_each.append(reported)
+            fp_pos_each.append(_fp_pos_from_eval(jr, reported, e))
         # spec R5 / plan Task 7: the published per-run figure is
         # precision_i = TP_i / (TP_i + FP_pos_i + FP_neg_mean), folded into
         # an F1 against recall_i — negative FPs enter the curve.
-        # FP_pos per run at this threshold (spec definition, MINOR-style
-        # notes exempt); FP_neg per negative run, then averaged (E5).
-        fp_pos_each = [_fp_pos(jr, run, t, golden_path) for run in pos_runs]
+        # FP_neg per negative run, then averaged (E5).
         fp_neg_each = [negative_fp(jr, r, t, benign) for r in neg_runs]
         f1s = []
         for e, fp_pos in zip(evals, fp_pos_each):
@@ -288,16 +276,17 @@ def render(res, provider, model):
 
 def load_shas(path):
     expected = {}
-    for line in open(path):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            die(f"{path}: expected `name=<sha>` lines")
-        name, _, sha = line.partition("=")
-        if len(sha) != 40:
-            die(f"{path}: {name}=... is not a full 40-char sha")
-        expected[name.strip()] = sha
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                die(f"{path}: expected `name=<sha>` lines")
+            name, _, sha = line.partition("=")
+            if len(sha) != 40:
+                die(f"{path}: {name}=... is not a full 40-char sha")
+            expected[name.strip()] = sha
     if POSITIVE not in expected or NEGATIVE not in expected:
         die(f"{path}: needs positive= and negative= lines")
     return expected
@@ -317,7 +306,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     expected = load_shas(args.shas)
-    recs = [json.loads(line) for line in open(args.metrics) if line.strip()]
+    with open(args.metrics) as f:
+        recs = [json.loads(line) for line in f if line.strip()]
     pos, neg = select_runs(recs, expected, args.label, args.packaging_version)
     provider, model = check_single_provider_group(pos + neg)
     jr = load_tool()

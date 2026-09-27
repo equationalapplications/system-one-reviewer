@@ -147,6 +147,7 @@ def jev_ask(state, questions, api_key):
 # contract; the wired provider is injected transport-style so tests can
 # substitute fakes without network or packages.
 _TRANSPORT = None        # set by set_transport / make_provider
+_PROVIDER_NAME = "jev"   # set by set_provider_name (r9 m1)
 _LAYA_ROUTER = None      # one router per process (one model load per run)
 _LAYA_SHAPE_VALIDATED = False  # m4 (r7): answers contract checked once
 LAYA_DEFAULT_MODEL = "convaiinnovations/rl-agent"
@@ -157,6 +158,12 @@ def set_transport(transport):
     """Inject the ask transport (the jev client wrapper in production)."""
     global _TRANSPORT
     _TRANSPORT = transport
+
+
+def set_provider_name(name):
+    """Record the wired provider for user-facing messages (r9 m1)."""
+    global _PROVIDER_NAME
+    _PROVIDER_NAME = name
 
 
 def ask(state, questions):
@@ -196,6 +203,7 @@ def make_provider(provider, model, api_key=None):
             return jev_ask(state, questions, key)
 
         set_transport(provider_ask)
+        set_provider_name("jev")
         return provider_ask
     # laya: local inference; the router loads lazily on first call and is
     # kept for the process lifetime.
@@ -204,6 +212,7 @@ def make_provider(provider, model, api_key=None):
         return laya_ask(router, state, questions)
 
     set_transport(provider_ask)
+    set_provider_name(f"laya/{model}" if model else "laya")
     return provider_ask
 
 
@@ -352,7 +361,7 @@ def package_hunks(diff):
             # path. Header prefixes are ONLY headers here, before the first
             # @@ — inside a hunk, `--- text` is a removed line whose content
             # starts with `-- ` (SQL/Lua comments, diff-like text).
-            old_path = line[4:].rstrip("\t")
+            old_path = line[4:].split("\t", 1)[0]
             if old_path != "/dev/null" and cur_file is None:
                 cur_file = old_path[2:] if old_path.startswith("a/") else old_path
             continue
@@ -360,7 +369,7 @@ def package_hunks(diff):
             # M1 (r6): the +++ path is authoritative unless /dev/null (a
             # whole-file deletion has no new side). Never flush the previous
             # file here: `diff --git` already did that.
-            new_path = line[4:].rstrip("\t")
+            new_path = line[4:].split("\t", 1)[0]
             if new_path != "/dev/null":
                 cur_file = new_path[2:] if new_path.startswith("b/") else new_path
             continue
@@ -405,12 +414,12 @@ def package_hunks(diff):
                 awaiting_hunk = True
                 old_left = new_left = 0
                 if line.startswith("--- "):
-                    old_path = line[4:].rstrip("\t")
+                    old_path = line[4:].split("\t", 1)[0]
                     if old_path != "/dev/null":
                         cur_file = (old_path[2:] if old_path.startswith("a/")
                                     else old_path)
                 else:
-                    new_path = line[4:].rstrip("\t")
+                    new_path = line[4:].split("\t", 1)[0]
                     if new_path != "/dev/null":
                         cur_file = (new_path[2:] if new_path.startswith("b/")
                                     else new_path)
@@ -616,6 +625,7 @@ def judge(hunks, ask):
     """ask is the wired provider's ask(state, questions) (E8 contract)."""
     findings, latencies, failures = [], [], 0
     parse_failures = 0  # M1 (r8): consecutive shape errors, separate counter
+    kept_hunks = len(hunks)
     for h in hunks:
         state = hunk_state(h)
         try:
@@ -626,6 +636,11 @@ def judge(hunks, ask):
             failures += 1
             if failures >= CALL_FAIL_LIMIT:
                 return None, latencies  # fail-open signal
+            # M2 (r9): record the failed call so the incomplete-review
+            # downgrade can see it (a 1-cluster diff can never reach the
+            # consecutive limit, but its failure must not vanish).
+            findings.append({"hunk": h, "parse_error": True,
+                             "raw": None, "latency_ms": 0.0})
             continue
         try:
             ans = payload["answers"]
@@ -644,26 +659,31 @@ def judge(hunks, ask):
             }
             findings.append(rec)
             parse_failures = 0
-        except (KeyError, TypeError, AttributeError):
-            # M1 (r7/r8): shape errors count toward fail-open — a wrong
+        except (KeyError, TypeError, AttributeError, ValueError):
+            # M1 (r7)/m2 (r9): shape errors count toward fail-open — a wrong
             # response shape on every call is a broken/changed API, not a
-            # set of harmless per-hunk misses. Their counter is separate
-            # from transport failures: transport success resets `failures`,
-            # so a run of 200-with-garbage responses could otherwise never
-            # reach the limit.
+            # set of harmless per-hunk misses. ValueError covers non-numeric
+            # scores ("high"), which would otherwise kill the whole run.
+            # The counter is separate from transport failures: transport
+            # success resets `failures`, so a run of 200-with-garbage
+            # responses could otherwise never reach the limit.
             parse_failures += 1
             failures += 1
             if parse_failures >= CALL_FAIL_LIMIT or failures >= CALL_FAIL_LIMIT:
                 return None, latencies  # fail-open signal
             findings.append({"hunk": h, "parse_error": True,
                              "raw": payload, "latency_ms": round(ms, 1)})
+    # M2 (r9), the reviewer's stronger option: if EVERY call failed
+    # (nothing was ever judged), that is a dead provider — full fail-open
+    # regardless of the consecutive-counter arithmetic.
+    if kept_hunks and not latencies:
+        return None, latencies
     return findings, latencies
 
 
 def judge_pr_level(findings, ask):
     """One extra round-trip: PR-level risk from the per-hunk digest."""
-    prov = os.environ.get("SOR_PROVIDER") or "jev"
-    prov_name = f"{prov} model"
+    prov_name = _PROVIDER_NAME  # r9 m1: the wired provider, not the env
     digest = "\n".join(
         f"- {f['hunk']['file']}:{f['hunk']['line']} severity={SEV_NAME[sev_level(f.get('severity'))]} "
         f"category={f.get('category')}" for f in findings) or "no per-hunk findings"
@@ -869,8 +889,21 @@ def main():
         findings = []
     else:
         pr_level = judge_pr_level(findings, ask)
+    # M1 (r9): a fail-open run must never carry a clean "Approved" — the
+    # verdict is forced to "Unavailable" and flows into JSON/metrics/last
+    # line, so nothing downstream reads it as a pass.
+    # M2 (r9): on a non-fail-open run, unjudged clusters (parse errors or
+    # dropped over max-hunks) downgrade the verdict so partial reviews are
+    # never mistaken for complete ones.
     reported, jitter, verdict = compose(findings, skipped,
                                         pr_level if not fail_open else None)
+    n_unjudged = sum(1 for f in findings if f.get("parse_error"))
+    n_dropped = len(hunks) - len(kept)
+    if fail_open:
+        verdict = "Unavailable — provider failed (fail-open)"
+    elif n_unjudged or n_dropped:
+        verdict += (f" (incomplete review — {len(kept) - n_unjudged} of "
+                    f"{len(hunks)} clusters judged)")
 
     total = sum(latencies)
     judged = [

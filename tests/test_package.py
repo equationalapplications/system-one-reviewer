@@ -363,3 +363,69 @@ def test_diff_ruN_separator_never_becomes_context(jr):
     for h in hunks:
         assert not any("diff -ruN" in ln for ln in h["lines"]), \
             "separator line leaked into a window"
+
+
+def test_gnu_diff_timestamp_headers_do_not_pollute_filenames(jr):
+    """m3 (r9): GNU diff -u headers carry a tab + timestamp after the path;
+    the path must be split at the first tab, not just right-trimmed."""
+    diff = (
+        "--- a/x.py\t2026-09-27 12:00:00 +0000\n"
+        "+++ b/x.py\t2026-09-27 12:00:00 +0000\n"
+        "@@ -1,1 +1,2 @@\n"
+        " keep\n"
+        "+added\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1
+    assert hunks[0]["file"] == "x.py", "timestamp must not ride on the name"
+
+
+def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
+                                                       monkeypatch):
+    """M1 (r9): end to end through main(), a run whose provider never
+    answers must carry verdict 'Unavailable...', never 'Approved' — in
+    the JSON, the report, and the metrics last line."""
+    import json as _json
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f.py").write_text("x = 1\n")
+    for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                ["config", "user.name", "t"], ["add", "-A"],
+                ["commit", "-qm", "head"]):
+        import subprocess as sp
+        sp.run(["git", "-C", str(repo), *cmd], check=True,
+               capture_output=True)
+
+    def dead_transport(state, questions):
+        raise RuntimeError("provider down")
+
+    jr.set_transport(dead_transport)
+    jr.set_provider_name("jev")
+
+    from types import SimpleNamespace
+    args = SimpleNamespace(
+        repo=str(repo), range="HEAD", pr=None, staged=False,
+        uncommitted=False, out=None, max_hunks=40, golden=None,
+        negative_golden=None, fixture=None, label="unavail-test",
+        provider="jev", model=None, json=True)
+
+    diff_text = (
+        "diff --git a/f.py b/f.py\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " x = 1\n"
+        "+x = 2\n"
+    )
+    monkeypatch.setattr(jr, "resolve_diff",
+                        lambda repo_, a: (diff_text, "0" * 40, "test"))
+    monkeypatch.setattr(jr, "load_api_key", lambda: "test-key")
+    monkeypatch.setenv("JEV_REVIEW_METRICS",
+                       str(tmp_path / "m" / "metrics.jsonl"))
+    monkeypatch.setattr("sys.argv", [
+        "system-one-reviewer", "--repo", str(repo), "--range", "HEAD",
+        "--label", "unavail-test", "--json", "--provider", "jev"])
+    rc = jr.main()
+    out = capsys.readouterr().out
+    assert rc is None  # main() returns None on success
+    assert "Unavailable" in out

@@ -195,7 +195,7 @@ def test_fp_pos_counts_unmatched_reported_findings(jr, sw, tmp_path):
     assert len(reported) == 2
     e = jr.eval_against_golden(reported, golden)
     assert e["true_positives"] == 1
-    assert sw._fp_pos(jr, run, 0.50, golden) == 1
+    assert sw._fp_pos_from_eval(jr, reported, e) == 1
 
 
 def test_fp_pos_exempts_minor_style_notes(jr, sw, tmp_path):
@@ -207,7 +207,8 @@ def test_fp_pos_exempts_minor_style_notes(jr, sw, tmp_path):
     e = jr.eval_against_golden(sw.replay(jr, run, 0.50), golden)
     assert e["true_positives"] == 1
     # the unmatched MINOR-style note does not count as a false positive
-    assert sw._fp_pos(jr, run, 0.50, golden) == 0
+    reported = sw.replay(jr, run, 0.50)
+    assert sw._fp_pos_from_eval(jr, reported, e) == 0
 
 
 # ---------- provider grouping (E8) ----------

@@ -539,8 +539,66 @@ unchanged.
 - Full suite: 70 passed, 0 failed.
 - Negative fixture rebuilds to the committed SHA.
 - No live re-runs needed: r8 M1's fix affects only the failure path;
-the v02-r3 success-path runs are unaffected (all six had
-fail_open=false, judged == n_analyzed, healthy payload shapes).
+  the v02-r3 success-path runs are unaffected (all six had
+  fail_open=false, judged == n_analyzed, healthy payload shapes).
+
+---
+
+# Opus review cycle 9 (r9) — fail-open completeness + sweep cleanups
+
+Review (session e169a514, $0.72): 0 BLOCKER, 2 MAJOR, 5 MINOR. The
+reviewer re-verified the r7 B1 fix and the r8 M1 counter semantics as
+clean.
+
+**Process note:** an initial draft of this section dispositioned
+findings as FIXED before the code existed. It was discarded before
+commit; the dispositions below were written after the implementations
+landed and the tests pass. (The r2 lesson, applied.)
+
+## MAJORs
+
+**M1 — A fail-open run still reported verdict "Approved": FIXED.**
+`judge` returning None raised the banner, but `compose([], ...)` still
+returned "Approved", which flowed into the JSON, the metrics log, and
+the grep-ledger last line. main() now forces the verdict to
+"Unavailable — provider failed (fail-open)" on the fail-open path.
+Regression test drives the full main() with a dead transport and
+asserts "Unavailable" in the JSON output.
+
+**M2 — Fail-open unreachable on small diffs / alternating failures:
+FIXED (both halves of the reviewer's suggestion).** (a) Failed calls
+now record a parse_error finding instead of vanishing via `continue`,
+so nothing is silently dropped; (b) if EVERY kept cluster's call failed
+(no successful call at all), judge returns the fail-open signal
+regardless of the consecutive-counter arithmetic — a dead provider on a
+1-cluster diff is fail-open, not a quiet parse_error; (c) on partial
+failures the verdict is downgraded to "Approved (incomplete review — N
+of M clusters judged)".
+
+## MINORs
+
+- **m1 judge_pr_level read SOR_PROVIDER instead of the CLI flag:
+  FIXED** — `set_provider_name` records the wired provider at
+  make_provider time (jev / laya[/model]); judge_pr_level reads it.
+- **m2 non-numeric score ValueError killed the run: FIXED** —
+  ValueError joined the parse-error except tuple.
+- **m3 GNU diff timestamps left in filenames: FIXED** — header paths
+  are `split("\t", 1)[0]`ed at all four sites; regression test with
+  timestamped headers.
+- **m4 `jev_calls` metrics key: KEPT** — log compatibility (the render
+  shows model_calls; the jsonl key name is documented here).
+- **m5 sweep duplicate replay + bare open()s: FIXED** — one
+  replay+matching per (run, t) shared by curve and FP census
+  (`_fp_pos_from_eval`); dead `_eval`/`_load_golden_lines` removed; all
+  file handles `with`-managed. Sweep output verified identical.
+
+## Verification (r9 fixes)
+
+- Full suite: 72 passed, 0 failed.
+- Sweep over v02-r3: KEEP 0.50 identical.
+- No live re-runs needed: r9 changes touch failure paths and sweep
+  internals; the sweep output on the committed runs is unchanged.
+
 
 
 
