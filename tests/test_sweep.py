@@ -152,12 +152,35 @@ def test_change_rule_needs_margin_and_no_extra_neg_fps(jr, sw, tmp_path):
 
 
 def test_negative_fp_increase_blocks_the_change(jr, sw, tmp_path):
-    # benign-ish negative finding that only crosses at low thresholds
-    golden = _golden(tmp_path, [("a.py", 10, "x")])
-    pos = _pos_runs([_judged(10, 0.45)])
-    neg = _neg_runs([_judged(7, 0.40, sev=2.1)])
+    # candidate threshold (0.35) sits BELOW a negative finding's score
+    # (0.48): at the candidate every negative run has 1 FP, at 0.50 none —
+    # dFP-neg > 0 per run, so rule 2 must block the change
+    golden = _golden(tmp_path, [("a.py", 10, "x"), ("a.py", 20, "y")])
+    pos = _pos_runs([_judged(10, 0.90), _judged(20, 0.45)])
+    neg = _neg_runs([_judged(7, 0.48, sev=2.1)])
     res = sw.sweep(jr, pos, neg, golden)
+    assert res["candidate"] == 0.35
+    assert res["rows"][-1]["t"] == 0.70
+    cand = next(r for r in res["rows"] if r["t"] == res["candidate"])
+    base = next(r for r in res["rows"] if r["t"] == 0.50)
+    assert cand["fp_neg_each"] == [1, 1, 1] and base["fp_neg_each"] == [0, 0, 0]
     assert res["rule_neg_fp_ok"] is False
+    assert res["change"] is False
+
+
+def test_candidate_that_reduces_negative_fps_passes_rule_2(jr, sw, tmp_path):
+    # m3: the rule is dFP-neg <= 0 per run, NOT equality — a candidate
+    # (0.65) that escapes a negative run's FP (scored 0.60, above 0.50)
+    # must NOT be blocked by rule 2
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    pos = _pos_runs([_judged(10, 0.75)])
+    neg = _neg_runs([_judged(7, 0.60, sev=2.1)])
+    res = sw.sweep(jr, pos, neg, golden)
+    cand = next(r for r in res["rows"] if r["t"] == res["candidate"])
+    base = next(r for r in res["rows"] if r["t"] == 0.50)
+    assert res["candidate"] == 0.65  # tied 0.65/0.70 -> lower middle
+    assert cand["fp_neg_each"] == [0, 0, 0] and base["fp_neg_each"] == [1, 1, 1]
+    assert res["rule_neg_fp_ok"] is True
 
 
 # ---------- provider grouping (E8) ----------

@@ -57,12 +57,13 @@ def threshold_grid():
     return list(GRID)
 
 
-def gate_run(rec, expected):
+def gate_run(rec, expected, packaging_version="v02"):
     if "judged" not in rec:
         die(f"run {rec.get('label')!r}: no judged array (run with --golden)")
-    if rec.get("packaging_version") != "v02":
+    if rec.get("packaging_version") != packaging_version:
         die(f"run {rec.get('label')!r}: packaging_version "
-            f"{rec.get('packaging_version')!r} != v02 (stale or pre-E2 run)")
+            f"{rec.get('packaging_version')!r} != {packaging_version!r} "
+            "(stale or pre-E2 run)")
     head = rec.get("fixture_head") or ""
     if not head:
         die(f"run {rec.get('label')!r}: no fixture_head logged")
@@ -81,7 +82,7 @@ def check_single_provider_group(recs):
     return groups.pop()
 
 
-def select_runs(recs, expected, label_prefix):
+def select_runs(recs, expected, label_prefix, packaging_version="v02"):
     sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
     if not sel:
         die(f"no runs with label prefix {label_prefix!r}")
@@ -89,7 +90,7 @@ def select_runs(recs, expected, label_prefix):
     pos, neg = [], []
     for r in sel:
         try:
-            gate_run(r, expected.get(r.get("fixture"), ""))
+            gate_run(r, expected.get(r.get("fixture"), ""), packaging_version)
         except SystemExit as e:
             # Reject = excluded from the sweep, loudly (E5: a stale or
             # hand-edited fixture fails loudly instead of silently
@@ -122,12 +123,32 @@ def replay(jr, run, t):
     return reported
 
 
-def negative_fp(jr, run, t):
+def negative_fp(jr, run, t, benign_files=frozenset()):
     """FP census at threshold t on a negative fixture, via the tool's own
     eval_negative: blocker_major + other_fp (minor style notes don't count;
-    E5 formula)."""
-    counts = jr.eval_negative(replay(jr, run, t))
+    E5 formula). When the negative golden is supplied, its file column names
+    changes that deterministic triage MUST skip — a reported finding on one
+    of them is triage leakage and dies loudly."""
+    reported = replay(jr, run, t)
+    for f in reported:
+        if f["hunk"]["file"] in benign_files:
+            die(f"run {run.get('label')!r}: reported a finding on "
+                f"{f['hunk']['file']} which the negative golden marks "
+                "must-skip (triage leakage)")
+    counts = jr.eval_negative(reported)
     return counts["blocker_major"] + counts["other_fp"]
+
+
+def benign_files_from_negative_golden(path):
+    """Files named in the negative golden TSV (must-skip content checks)."""
+    if not path:
+        return frozenset()
+    files = set()
+    for line in open(path):
+        line = line.rstrip("\n")
+        if line and not line.startswith("#"):
+            files.add(line.split("\t")[0])
+    return frozenset(files)
 
 
 # ---------- golden eval + curve ----------
@@ -136,27 +157,62 @@ def _eval(jr, run, t, golden_path):
     return jr.eval_against_golden(replay(jr, run, t), golden_path)
 
 
-def _f1(res):
-    f1 = res["f1"]
-    return 0.0 if f1 is None else f1
+def _fp_pos(jr, run, t, golden_path):
+    """FP_pos per the spec's definition: reported findings that are not
+    true positives, EXCLUDING MINOR-style notes (sev_level 1, category
+    'style') — the same exemption eval_negative applies on the negative
+    fixture."""
+    reported = replay(jr, run, t)
+    golden = _load_golden_lines(golden_path)
+    fp = 0
+    for f in reported:
+        if jr.sev_level(f.get("severity")) == 1 and f.get("category") == "style":
+            continue
+        if not any(f["hunk"]["file"] == gf and abs(f["hunk"]["line"] - gl) <= 1
+                   for gf, gl in golden):
+            fp += 1
+    return fp
+
+
+def _load_golden_lines(golden_path):
+    lines = []
+    for line in open(golden_path):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                lines.append((parts[0], int(parts[1])))
+    return lines
 
 
 def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
+    benign = benign_files_from_negative_golden(neg_golden_path)
     rows = []
     for t in threshold_grid():
         evals = [_eval(jr, run, t, golden_path) for run in pos_runs]
-        f1s = [_f1(e) for e in evals]
-        # FP_pos: unmatched reported at this threshold; FP_neg: per negative
-        # run, then averaged across the N runs (E5 formula).
-        fp_neg_each = [negative_fp(jr, r, t) for r in neg_runs]
-        fp_pos_lo = min(e["reported"] - e["true_positives"] for e in evals)
-        fp_pos_hi = max(e["reported"] - e["true_positives"] for e in evals)
+        # spec R5 / plan Task 7: the published per-run figure is
+        # precision_i = TP_i / (TP_i + FP_pos_i + FP_neg_mean), folded into
+        # an F1 against recall_i — negative FPs enter the curve.
+        # FP_pos per run at this threshold (spec definition, MINOR-style
+        # notes exempt); FP_neg per negative run, then averaged (E5).
+        fp_pos_each = [_fp_pos(jr, run, t, golden_path) for run in pos_runs]
+        fp_neg_each = [negative_fp(jr, r, t, benign) for r in neg_runs]
+        f1s = []
+        for e, fp_pos in zip(evals, fp_pos_each):
+            tp = e["true_positives"]
+            golden_n = e["golden_issues"]
+            recall = tp / golden_n if golden_n else 0.0
+            denom = tp + fp_pos + (sum(fp_neg_each) / len(fp_neg_each))
+            precision = tp / denom if denom > 0 else (1.0 if recall == 1.0 else 0.0)
+            f1s.append(2 * precision * recall / (precision + recall)
+                       if precision + recall > 0 else 0.0)
         tp_lo = min(e["true_positives"] for e in evals)
         tp_hi = max(e["true_positives"] for e in evals)
         fp_neg_mean = sum(fp_neg_each) / len(fp_neg_each)
         rows.append({"t": t,
                      "tp": (tp_lo, tp_hi), "tp_range": f"{tp_lo}-{tp_hi}",
-                     "fp_pos_range": f"{fp_pos_lo}-{fp_pos_hi}",
+                     "fp_pos_each": fp_pos_each,
+                     "fp_pos_range": f"{min(fp_pos_each)}-{max(fp_pos_each)}",
                      "fp_neg_each": fp_neg_each, "fp_neg_mean": fp_neg_mean,
                      "f1s": f1s,
                      "f1_range": f"{min(f1s):.2f}-{max(f1s):.2f}",
@@ -175,7 +231,9 @@ def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
     margin_ok = (candidate != SHIPPED_THRESHOLD
                  and len(base_f1s) == len(cand["f1s"])
                  and all(c - b >= MARGIN_FLOOR for c, b in zip(cand["f1s"], base_f1s)))
-    neg_fp_ok = cand["fp_neg_each"] == base["fp_neg_each"]
+    # change rule 2 per spec: Delta-FP-neg <= 0 per run (a candidate that
+    # REDUCES negative FPs must not be blocked)
+    neg_fp_ok = all(c <= b for c, b in zip(cand["fp_neg_each"], base["fp_neg_each"]))
 
     return {"rows": rows, "candidate": candidate, "tied": tied,
             "rule_margin_ok": margin_ok, "rule_neg_fp_ok": neg_fp_ok,
@@ -235,7 +293,7 @@ def main(argv=None):
 
     expected = load_shas(args.shas)
     recs = [json.loads(line) for line in open(args.metrics) if line.strip()]
-    pos, neg = select_runs(recs, expected, args.label)
+    pos, neg = select_runs(recs, expected, args.label, args.packaging_version)
     provider, model = check_single_provider_group(pos + neg)
     jr = load_tool()
     res = sweep(jr, pos, neg, args.golden, args.negative_golden)
