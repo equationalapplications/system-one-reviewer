@@ -1,7 +1,10 @@
-# Golden issues for the jev-review fixture (file<TAB>line<TAB>desc)
-# Line numbers are HEAD line numbers of the planted issue.
-src/app.py	13	silent None return, callers cannot distinguish missing user
-src/app.py	17	zero division risk, no guard on b
-src/app.py	20	duplicate import of json
-src/app.py	24	redundant open mode argument
-src/app.py	29	O(n^2) string concatenation in loop
+# Golden issues for the system-one-reviewer v0.2 POSITIVE fixture.
+# TSV: file<TAB>HEAD-line<TAB>desc<TAB>verify-substring<TAB>severity-class
+# Verify-substring must appear in the actual HEAD line (checked mechanically
+# by the build script). Severity class is golden metadata, never in the diff.
+# Labels are label-blind: the planted content carries no markers.
+src/app.py	6	config loader opens the file in write mode, truncating its input	open(path, "w")	BLOCKER
+src/app.py	13	find_user drops the missing sentinel, returning None even for explicit missing values	return None	MAJOR
+src/app.py	16	divide lost its zero guard, ZeroDivisionError on b == 0	return a / b	MAJOR
+src/app.py	20	render loops with string concatenation, O(n^2) out += per item	for item in items	MINOR
+src/app.py	27	duplicate import of json	import json	MINOR

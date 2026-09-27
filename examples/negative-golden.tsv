@@ -1,0 +1,7 @@
+# Negative fixture: no golden ISSUES. Each line instead names a file that
+# MUST appear in the HEAD tree with the given verify-substring — a benign-
+# content check, not an issue list. The tool never reads this file; it
+# documents what the builder verifies mechanically, and the sweep uses the
+# file column as the must-skip (triage-leakage) guard.
+README.md	## Usage
+src/app.py	# Render the items as a comma-separated string (innocuous comment).

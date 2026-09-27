@@ -1,0 +1,30 @@
+diff --git a/src/app.py b/src/app.py
+index ca91189..ee2f6ca 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -8,20 +8,20 @@ def find_user(users, uid):
+     for u in users:
+         if u.id == uid:
+             return u
+-    return None
++    return None  # PLANT 1: silent failure — callers can't distinguish missing user
+ 
+ def divide(a, b):
+-    return a / b
++    return a / b  # PLANT 2: zero-division risk, no guard on b
+ 
+ import json
+-import json
++import json  # PLANT 3: duplicate import
+ 
+ def load_config(path):
+-    with open(path) as f:
++    with open(path, "r") as f:  # PLANT 4 (minor): redundant mode arg
+         return json.load(f)
+ 
+ def render(items):
+     out = ""
+     for i in range(len(items)):
+-        out += str(items[i]) + ","
++        out += str(items[i]) + ","  # PLANT 5 (minor): O(n^2) string concat
+     return out

@@ -6,10 +6,10 @@ System One model) for every judgment. No agent loop, no prompt engineering,
 no cloud CI — one Python file, git, and an API key.
 
 ```
-$ jev-review.py --repo ~/myrepo --range main..HEAD
-JEV REVIEW (experimental local reviewer — advisory only)
+$ system-one-reviewer --repo ~/myrepo --range main..HEAD
+SYSTEM-ONE REVIEW (experimental local reviewer — advisory only, provider: jev)
 repo=myrepo mode=range:main..HEAD head=13fa9d8a3e
-analyzed=5 hunks, skipped=0, total_latency=785ms, jev_calls=5
+analyzed=5 hunks, skipped=0, total_latency=785ms, model_calls=5
 
 [MAJOR] src/app.py:11 (bug-risk, is_real=0.61)
   hunk: @@ src/app.py around line 11 (4 changed lines) @@
@@ -42,7 +42,7 @@ Verdict: Changes requested
 
 ```bash
 export TYPESAFE_API_KEY=...        # or ~/.config/jev-review/.env
-cp jev-review.py ~/.local/bin/     # any PATH dir works
+cp system_one_reviewer.py ~/.local/bin/system-one-reviewer   # any PATH dir works
 ```
 
 Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
@@ -50,34 +50,85 @@ Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
 ## Usage
 
 ```bash
-jev-review.py --repo PATH --range A..B     # commit range
-jev-review.py --repo PATH --pr N           # GitHub PR (via gh)
-jev-review.py --repo PATH --staged         # staged changes
-jev-review.py --repo PATH --uncommitted    # working tree
+system-one-reviewer --repo PATH --range A..B     # commit range
+system-one-reviewer --repo PATH --pr N           # GitHub PR (needs local refs: git fetch origin pull/N/head:pr/N; base is origin/main)
+system-one-reviewer --repo PATH --staged         # staged changes
+system-one-reviewer --repo PATH --uncommitted    # working tree
 
 # scored run against planted issues (TSV: file, line, description)
-jev-review.py --repo PATH --range A..B --golden golden.tsv --label run1
+system-one-reviewer --repo PATH --range A..B --golden golden.tsv --label run1
+
+# negative (all-benign) fixture: FP census instead of precision/recall
+system-one-reviewer --repo PATH --range A..B --negative-golden negative.tsv --label run2
+
+# declare which committed fixture a run exercises (recorded in metrics;
+# the threshold sweep refuses runs whose head SHA doesn't match it)
+system-one-reviewer --repo PATH --range A..B --fixture positive --label run3
 
 --json      machine-readable output to stdout
 --out FILE  write full JSON report (all scores) to a file
 ```
 
 Metrics append to `$XDG_STATE_HOME/jev-review/metrics.jsonl` (default
-`~/.local/state/...`). Nothing leaves your machine except the Jev calls.
+`~/.local/state/...`). Nothing leaves your machine except the model calls.
+
+**Path continuity (deliberate):** the tool was renamed from
+`jev-review` to `system-one-reviewer`, but the on-disk paths keep the
+old name — the metrics path (`jev-review/metrics.jsonl`), the
+`JEV_REVIEW_METRICS` env var, and `~/.config/jev-review/.env`. This
+preserves existing metrics logs and API-key setups across the rename.
+
+## Providers: hosted Jev or local Laya
+
+Every judgment goes through one contract — `ask(state, questions) ->
+(payload, latency_ms)` — with two interchangeable providers:
+
+| provider | flag | backend | status |
+|---|---|---|---|
+| `jev` | `--provider jev` (default; `SOR_PROVIDER` env also works) | hosted TypeSafe System One, `TYPESAFE_API_KEY` | live-tested (all published numbers) |
+| `laya` | `--provider laya`, checkpoint via `--model` (default `convaiinnovations/rl-agent`) | local inference via the `laya` package (`pip install laya`) | **tested-by-fake**: contract covered by `tests/test_providers.py`; no live run yet (no local weights at publish time) |
+
+`laya` imports lazily, so the tool keeps zero hard dependencies; a missing
+package or checkpoint exits with a one-line fix hint. Metrics records carry
+additive `provider` and `model` fields, and the threshold sweep
+(`scripts/sweep-thresholds.py`) only compares runs within one
+(provider, model) group — mixing providers is a hard error.
 
 ## The example fixture
 
 ```bash
-examples/build-fixture.sh           # builds /tmp/jev-review-test
-jev-review.py --repo /tmp/jev-review-test --range HEAD~1..HEAD \
+examples/build-fixture.sh           # builds /tmp/jev-review-pos
+system-one-reviewer --repo /tmp/jev-review-pos --range HEAD~1..HEAD \
     --golden examples/fixture-golden.tsv --label first-run
 ```
 
 Five planted issues (silent-None return, unguarded division, duplicate
-import, redundant argument, O(n²) loop). Current published numbers from
-this fixture: recall 2/5, precision 2/3, F1 0.50 — with the two misses being
-genuine nits the model deliberately scores below threshold. Thresholds and
-question phrasing are meant to be tuned; the jsonl gives you the data.
+import, redundant argument, O(n²) loop, missing-sentinel drop). Current published numbers from
+this fixture (runs `v02-r3-baseline-1..3`, 2026-09-27, provider `jev`):
+**recall 5/5, raw precision 5/6 (0.83), F1 0.91** — identical across all
+three fresh runs. "Raw precision" counts reported-findings on the positive
+fixture only; on the negative fixture the same runs report **zero**
+findings of any kind (`v02-r3-negative-1..3`). All five plants were
+found and matched; the single unmatched finding is the model flagging
+the sentinel plant's leftover `return None` line (a 6th, unlisted
+change). Earlier published readings (4/5 "with one miss", then 5/5 at
+1.00) were golden-placement artifacts — see the benchmark doc's
+correction history. Caveat honesty: a 5-plant fixture's ceiling is
+1.00; these numbers measure this fixture, not general recall. The sweep
+confirms lowering the gate buys nothing: the whole 0.30–0.50 region
+ties at F1 0.91, and raising it starts losing the sentinel cluster
+(scored 0.57–0.59). Threshold stays at 0.50. Full sweep table,
+merge-gate evaluation, and the exact metrics lines:
+[docs/benchmarks/2026-09-27-threshold-sweep.md](docs/benchmarks/2026-09-27-threshold-sweep.md).
+
+(Supersedes the earlier `v02-final-*` numbers, which were a packaging
+artifact: the old fixture packed two plants into one change cluster, so
+they were never judged separately.)
+
+Note: severity levels now round halves **up** (`sev_level(2.5)` is a
+BLOCKER; previously banker's rounding made it a MAJOR). A fractional
+severity of 2.5+ can flip a verdict from Approved to Changes requested, so
+v0.2 verdicts are not directly comparable with v0.1 logs.
 
 ## Status
 
