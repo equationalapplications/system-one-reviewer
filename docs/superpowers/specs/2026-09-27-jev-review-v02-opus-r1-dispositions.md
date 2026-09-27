@@ -599,6 +599,61 @@ of M clusters judged)".
 - No live re-runs needed: r9 changes touch failure paths and sweep
   internals; the sweep output on the committed runs is unchanged.
 
+---
+
+# Opus review cycle 10 (r10) — downgrade noise + a test that lied
+
+Review (session ed7e2d14, $0.74): 0 BLOCKER, 2 MAJOR, 5 MINOR. Both
+MAJORs were defects in the r9 round itself; both verified against the
+code/data before fixing.
+
+## MAJORs
+
+**M1 — "incomplete review" downgrade fired on deliberate triage skips:
+FIXED.** `n_dropped = len(hunks) - len(kept)` counted docs/lockfile
+skips as drops — the committed negative runs (n_hunks 6, n_analyzed 5,
+README skipped) would all have been downgraded. Now: triage skips are
+counted separately (`n_triaged`); only `--max-hunks` truncation counts
+as dropped; the "of N clusters judged" denominator excludes triaged
+hunks. New test: a diff with a skipped .md + one judged cluster stays a
+clean "Approved" with no "incomplete" anywhere in the output.
+
+**M2 — the r9 e2e fail-open test hit the REAL API: FIXED.**
+`main()` calls `make_provider()`, which overwrites the module transport
+set by the test — the fake never ran, and the test passed via DNS
+failure or a real 401. Now the fake is injected by monkeypatching
+`make_provider` itself (and `set_provider_name`); the test also asserts
+the metrics record's `fail_open`/`verdict`, per its docstring promise.
+(Two subsidiary test bugs found while fixing: `METRICS_PATH` is
+captured at import time so `setenv` was a no-op — patch the constant;
+the ask contract returns `(payload, ms)` — the bare payload raised and
+counted as a transport failure.)
+
+## MINORs
+
+- **m1 NaN/inf/non-numeric values crash later stages: FIXED** —
+  `judge()` validates `math.isfinite` on the severity score and numeric
+  noul up front; bad values become shape errors (fail-open path).
+- **m2 PR digest showed failed calls as severity=none: FIXED** —
+  parse_error entries are labelled "unjudged (provider call failed)" so
+  the PR-level model can't read them as clean hunks.
+- **m3 grep-ledger last line no longer closed-set: FIXED** — last line
+  is now exactly one of Approved / Changes requested / Unavailable /
+  Incomplete; detail lives on the "Verdict:" line.
+- **m4 laya no-model branch unreachable: DOCUMENTED** — kept (library
+  / test entry point) with a comment; provider_from always resolves a
+  model, so CLI users always get `laya.load(model=...)`.
+- **m5 HTTP 4xx retried: FIXED** — only 5xx retry; 4xx raises
+  immediately on the first attempt.
+
+## Verification (r10 fixes)
+
+- Full suite: 73 passed, 0 failed.
+- Sweep over v02-r3: KEEP 0.50 identical (rules FAIL/PASS unchanged).
+- No live re-runs needed: r10 changes touch failure/downgrade paths,
+  digest text, and render details — no scoring-path change.
+
+
 
 
 
