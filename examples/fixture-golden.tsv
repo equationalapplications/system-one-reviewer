@@ -1,0 +1,7 @@
+# Golden issues for the jev-review fixture (file<TAB>line<TAB>desc)
+# Line numbers are HEAD line numbers of the planted issue.
+src/app.py	13	silent None return, callers cannot distinguish missing user
+src/app.py	17	zero division risk, no guard on b
+src/app.py	20	duplicate import of json
+src/app.py	24	redundant open mode argument
+src/app.py	29	O(n^2) string concatenation in loop
