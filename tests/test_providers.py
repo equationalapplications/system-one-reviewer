@@ -6,7 +6,14 @@ client behind the facade; laya is imported lazily with an injected fake
 router in tests. No network, no laya install, no API key (conftest).
 """
 
+import os
+import subprocess
+import sys
+
 import pytest
+
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _questions():
@@ -114,22 +121,15 @@ def test_make_provider_returns_bound_ask(jr, monkeypatch):
     assert calls == [({"s": 1}, {"q": "?", }, "test-key")]
 
 
-def test_make_provider_laya_uses_router(monkeypatch):
-    # laya wiring without importing the real package: inject a fake router
-    # loader and verify make_provider's closure path (import-level fakes
-    # need a fresh module, so build one here via the jr machinery).
-    import importlib.util
-    import os
-    import sys
-
-    REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    spec = importlib.util.spec_from_file_location(
-        "system-one-reviewer-laya-test", os.path.join(REPO_ROOT, "system_one_reviewer.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+def test_make_provider_laya_uses_router(jr, monkeypatch):
+    """m7: the LAZY-LOAD path through make_provider must be exercised —
+    get_laya_router is called with an injected fake loader (never a
+    pre-seeded _LAYA_ROUTER), and the returned closure dispatches to it."""
+    calls = []
 
     class FakeRouter:
         def predict(self, state, questions):
+            calls.append((state, questions))
             return {"answers": {"q": {"choice": "bug-risk"}}}
 
     def fake_loader(name):
@@ -141,30 +141,66 @@ def test_make_provider_laya_uses_router(monkeypatch):
                 return FakeRouter()
         return laya_mod
 
-    mod._LAYA_ROUTER = None
-    monkeypatch.setattr(mod, "__builtins__", __builtins__, raising=False)
-    ask = mod.make_provider("laya", "ckp-1")
-    # wire the loader into get_laya_router via monkeypatching the global
-    mod._LAYA_ROUTER = fake_loader("laya").load(model="ckp-1")
+    monkeypatch.setattr(jr, "_LAYA_ROUTER", None)  # force the lazy load
+    ask = jr.make_provider("laya", "ckp-1")
+    # first call loads the router through get_laya_router's lazy import;
+    # only the "laya" import is faked, everything else imports normally
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "laya":
+            return fake_loader(name)
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
     payload, ms = ask({"s": 1}, {"q": "?"})
-    assert payload["answers"]["q"]["choice"] == "bug-risk"
-    assert ms >= 0
+    assert payload["answers"]["q"]["choice"] == "bug-risk" and ms >= 0
+    assert calls == [({"s": 1}, {"q": "?"})]
+    # router is cached for the process: second call does NOT reload
+    payload2, _ = ask({"s": 2}, {"q": "??"})
+    assert calls == [({"s": 1}, {"q": "?"}), ({"s": 2}, {"q": "??"})]
 
 
 # ---------- metrics fields ----------
 
-def test_metrics_carry_provider_and_model(jr, tmp_path, monkeypatch):
-    recs = []
-    monkeypatch.setattr(jr, "log_run", lambda record: recs.append(record))
-    jr.log_run({"provider": "jev", "model": None})
-    assert recs[0]["provider"] == "jev" and recs[0]["model"] is None
-    assert jr.METRICS_PATH.endswith("metrics.jsonl")
+def test_metrics_carry_provider_and_model(jr, tmp_path):
+    """m7: call the REAL log_run and assert on the actual record it wrote —
+    provider/model must reach the committed jsonl, not a monkeypatched stub."""
+    metrics = tmp_path / "m" / "metrics.jsonl"
+    jr.METRICS_PATH = str(metrics)
+    jr.log_run({"provider": "jev", "model": None, "label": "m7"})
+    line = metrics.read_text().strip().splitlines()[-1]
+    import json
+    rec = json.loads(line)
+    assert rec["provider"] == "jev" and rec["model"] is None
+    assert rec["label"] == "m7" and "ts" in rec
 
 
 # ---------- sweep grouping is already tested in test_sweep.py ----------
 
-def test_sweep_rejects_mixed_providers_end_to_end(sw=pytest.importorskip("importlib")):
-    # grouping itself lives in tests/test_sweep.py (E8 hard error);
-    # this placeholder keeps the contract visible here.
-    import importlib
-    assert importlib.import_module("json") is not None
+def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
+    """m7: a metrics.jsonl whose selected runs mix providers must make the
+    sweep script's main() die with a hard provider error (end to end)."""
+    import json
+    golden = tmp_path / "g.tsv"
+    golden.write_text("a.py\t10\tx\n")
+    recs = ([{"label": "v02-mix-baseline-1", "fixture": "positive",
+              "fixture_head": "a" * 40, "head": "a" * 10,
+              "packaging_version": "v02", "provider": "jev", "model": None,
+              "judged": []},
+             {"label": "v02-mix-negative-1", "fixture": "negative",
+              "fixture_head": "b" * 40, "head": "b" * 10,
+              "packaging_version": "v02", "provider": "laya",
+              "model": "convaiinnovations/rl-agent", "judged": []}])
+    metrics = tmp_path / "metrics.jsonl"
+    metrics.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    shas = tmp_path / "shas.txt"
+    shas.write_text(f"positive={'a' * 40}\nnegative={'b' * 40}\n")
+    sw_path = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
+    r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
+                        "--label", "v02-mix-", "--golden", str(golden),
+                        "--shas", str(shas)],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "provider" in (r.stderr + r.stdout).lower()
