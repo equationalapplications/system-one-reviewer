@@ -59,6 +59,28 @@ def test_windows_never_cross_hunk_boundary(jr):
     assert second["hunk_start"] == 7
 
 
+def test_cluster_window_excludes_neighbouring_clusters_changed_lines(jr):
+    """E2 / M1: a cluster's ±4 window is trimmed at the neighbouring
+    clusters' changed indices, so no neighbour's +/- entry can enter it
+    (only shared context lines may appear). On v01-fixture.diff cluster 2
+    (anchor 14, the divide plant) must contain no non-space entries of
+    cluster 1 (the find_user plant) or cluster 3 (duplicate import)."""
+    hunks = jr.package_hunks(_read("v01-fixture.diff"))
+    by_line = {h["line"]: h for h in hunks}
+    c2 = by_line[14]
+    for neighbour_text in ("PLANT 1", "PLANT 3"):
+        assert not any(neighbour_text in ln for ln in c2["lines"]), (
+            f"cluster 14's window contains neighbour [{neighbour_text}]: "
+            f"{c2['lines']}")
+    assert c2["n_changed"] == 2
+    # general form: every cluster's window holds only its own changed entries
+    for h in hunks:
+        own = sum(1 for e in h["entries"] if e[0] != " ")
+        assert own == h["n_changed"], (
+            f"cluster {h['line']}: window has {own} changed entries, "
+            f"cluster owns {h['n_changed']}")
+
+
 def test_package_is_deterministic(jr):
     diff = _read("v01-fixture.diff")
     assert jr.package_hunks(diff) == jr.package_hunks(diff)

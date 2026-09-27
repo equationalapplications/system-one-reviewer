@@ -262,11 +262,17 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 def package_hunks(diff):
     """Cluster-level packaging: contiguous changed lines form a cluster, each
     with +/-4 context lines. Windows are clamped at @@ hunk boundaries (a
-    cluster never crosses an @@ header), so one change never dilutes another.
+    cluster never crosses an @@ header) and trimmed at the neighbouring
+    clusters' changed entries, so one change never dilutes another.
     Anchors: first '+' in the cluster's own run -> else the deletion site
     (first '-' in the run, at its old-file line) -> else the first context
     entry with a lineno at/after the run -> else the run's hunk_start (a
-    deletion-only cluster never collapses to line 1). Deterministic."""
+    deletion-only cluster never collapses to line 1). Deletion-only anchors
+    deliberately use OLD-file line numbers: the deletion site is only
+    addressable in the old file (the content no longer exists at any
+    new-file line), and at a pure-deletion site old and new numbering
+    coincide up to the deletion point, so anchors stay comparable with
+    golden lines recorded against HEAD. Deterministic."""
     CTX = 4
     per_file, cur_file, entries = [], None, []
     old_line = new_line = hunk_start = 1
@@ -322,8 +328,24 @@ def package_hunks(diff):
                     groups.append(run)
                     run = [i]
             groups.append(run)
+            # indices belonging to each cluster's own changed run
+            first_changed = {g[0] for g in groups}
             for g in groups:
-                lo, hi = max(0, g[0] - CTX), min(len(seg), g[-1] + CTX + 1)
+                # E2: expand the window outward from the cluster's own run
+                # over context lines only, within ±CTX and the hunk bounds.
+                # Expansion stops at any neighbouring cluster's +/- entry,
+                # so a neighbour's changed lines never appear — not even as
+                # "context"; only shared context lines may.
+                foreign = set()
+                for g2 in groups:
+                    if g2 is not g:
+                        foreign.update(range(g2[0], g2[-1] + 1))
+                lo = g[0]
+                while lo - 1 >= max(0, g[0] - CTX) and (lo - 1) not in foreign:
+                    lo -= 1
+                hi = g[-1] + 1
+                while hi < min(len(seg), g[-1] + CTX + 1) and hi not in foreign:
+                    hi += 1
                 window = seg[lo:hi]
                 # anchor chain (plan Task 2): first '+' in the cluster's own
                 # run, never a neighbouring cluster's window; then the first
