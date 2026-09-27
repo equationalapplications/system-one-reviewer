@@ -264,3 +264,69 @@ duplicate `check_single_provider_group` in main; CI double-trigger
 - Full suite: 61 passed, 0 failed.
 - Sweep over the committed v02-r2 metrics: KEEP 0.50, identical output —
   the six committed runs pass the new fail-open/completeness gates.
+
+---
+
+# Opus review cycle 4 (r4) — final cycle under the code cap
+
+Review after the r3 fixes (session aab8fad6, $0.97): 0 BLOCKER,
+3 MAJOR, 5 MINOR, nits. MAJOR trajectory 4 -> 3 -> 2 -> 3. Kurt chose
+(option 1) to fix all MAJORs + trivial minors before merge rather than
+cap out. Full text: `.hermes/cache/scratch/sor-opus-review-r4.md`
+(transient); dispositions below are the durable record.
+
+## MAJORs
+
+**M1 — Positive golden for the O(n²) plant could never match: FIXED**
+(commit 2915748). The golden pointed at HEAD line 19 while the plant's
+cluster anchors at 17 (first changed line of the run) — distance 2,
+outside the ±1 tolerance, so a finding the model made (is_real 0.71-0.72)
+was scored miss + FP. Golden moved to line 18 (the `for item in items:`
+loop line — the defect's home), substring verify still passes
+mechanically in the build script. The SAME committed runs replay to
+**TP 5/5, raw precision 5/5, F1 1.00** (flat 0.30-0.55).
+
+**M2 — Benchmark doc had the 17/24 cluster rows swapped: FIXED**
+(commit d9d4a24). Doc rewritten: correct cluster table, corrected sweep
+(1.00 plateau), an explicit "Corrected in place (r4)" section naming the
+error and why the raw metrics' embedded `golden_eval` fields are
+superseded by the replay, and an honesty caveat (5-plant fixture; 1.00
+is the fixture's ceiling). The "one genuine miss is the O(n²) nit"
+claim is withdrawn — the model found it.
+
+**M3 — Header lines leaked into windows; whole-file deletions
+misattributed: FIXED** (commit 2915748). `diff --git` now flushes the
+previous file before the next file's headers can leak as fake context;
+`index`/mode/rename/binary header lines are skipped explicitly;
+`+++ /dev/null` no longer hijacks attribution (the real name comes from
+the `--- a/<path>` side); `+0,0` hunks floor the deletion clamp at 1.
+Deletion anchors corrected to git semantics — verified against real
+`git diff -U0` output: `@@ -5,1 +4,0 @@` anchors at 4 (new start N with
+count 0 means "file ends at line N, deletion after it"), superseding
+the r3 off-by-one reading. Two new tests: multi-file leak and
+whole-file deletion attribution/anchor sanity. 63 tests pass.
+
+## MINORs
+
+- **m1 line-number prefixes polluting the benchmark markdown: FIXED**
+  (d9d4a24 — doc rewritten clean).
+- **m2 stray `--model` split jev runs into different sweep groups:
+  FIXED** (d9d4a24) — `--model` is now laya-only; jev always logs
+  `model: null`.
+- **m3 0.5-0.99 severities never reported (sev>=1 gate): REJECTED with
+  reason** — same deliberate noise floor as r2's m4; no change.
+- **m4 laya tested only against fakes: ACKNOWLEDGED / DEFERRED to
+  v0.3** — package not installed here; tested-by-fake is documented in
+  the README table footnote; a guarded integration check belongs to the
+  v0.3 tuning pass.
+- **m5 wrong tuple comment + dead check in eval_against_golden: FIXED**
+  (d9d4a24).
+
+## Verification (r4 fixes)
+
+- Full suite: 63 passed, 0 failed.
+- Sweep with corrected golden over the committed runs: TP 5/5, F1 1.00
+  plateau 0.30-0.55, candidate 0.40, rules FAIL/PASS -> KEEP 0.50.
+- Merge gate: unchanged PASS (negative runs untouched).
+- Both fixtures rebuild byte-identical to the committed SHAs.
+
