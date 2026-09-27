@@ -161,15 +161,19 @@ def resolve_diff(repo, args):
     sys.exit("jev-review: pick one of --range/--pr/--staged/--uncommitted")
 
 
-HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 def package_hunks(diff):
     """Cluster-level packaging: group changed lines into clusters separated by
-    <=2 unchanged lines, each with +/-4 context lines. Each cluster is judged
-    independently so one change never dilutes another. Deterministic."""
+    <=2 unchanged lines, each with +/-4 context lines. Windows are clamped at
+    hunk boundaries (a cluster never crosses an @@ header), and anchors fall
+    back old-line -> preceding-context -> hunk start so deletion-only clusters
+    never collapse to line 1. Each cluster is judged independently so one
+    change never dilutes another. Deterministic."""
     GAP, CTX = 0, 4  # merge only contiguous changed lines; isolate the rest
-    per_file, cur_file, entries, new_line = [], None, [], 1
+    per_file, cur_file, entries = [], None, []
+    old_line = new_line = hunk_start = 1
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             if cur_file is not None:
@@ -179,53 +183,81 @@ def package_hunks(diff):
             continue
         elif line.startswith("@@"):
             m = HUNK_RE.match(line)
-            new_line = int(m.group(1)) if m else 1
+            old_line = int(m.group(1)) if m else 1
+            new_line = int(m.group(2)) if m else 1
+            hunk_start = new_line
         elif cur_file is not None:
             if line.startswith("+") and not line.startswith("+++"):
-                entries.append(("+", new_line, line[1:]))
+                entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
             elif line.startswith("-") and not line.startswith("---"):
-                entries.append(("-", None, line[1:]))
+                entries.append(("-", old_line, line[1:], hunk_start))
+                old_line += 1
             elif not line.startswith("\\"):
-                entries.append((" ", new_line, line[1:]))
+                entries.append((" ", new_line, line[1:], hunk_start))
                 new_line += 1
+                old_line += 1
     if cur_file is not None:
         per_file.append((cur_file, entries))
 
     hunks = []
     for fname, ents in per_file:
-        changed = [i for i, (k, _, _) in enumerate(ents) if k != " "]
-        if not changed:
-            continue
-        # group changed indices into runs, merging runs with <=GAP between
-        groups, run = [], [changed[0]]
-        for i in changed[1:]:
-            if i - run[-1] <= GAP + 1:
-                run.append(i)
-            else:
-                groups.append(run)
-                run = [i]
-        groups.append(run)
-        for g in groups:
-            lo, hi = max(0, g[0] - CTX), min(len(ents), g[-1] + CTX + 1)
-            anchor = next((n for k, n, _ in ents[lo:hi] if k == "+" and n),
-                          ents[g[0]][1] or 1)
-            lines, n_changed = [], 0
-            for k, n, t in ents[lo:hi]:
-                if k == "+":
-                    lines.append(f"{n}: + {t}")
-                    n_changed += 1
-                elif k == "-":
-                    lines.append("    - " + t)
-                    n_changed += 1
+        # split into hunk-boundary segments: no cluster/window crosses an @@
+        segments, cur_seg, cur_hs = [], [], None
+        for e in ents:
+            if cur_seg and e[3] != cur_hs:
+                segments.append((cur_hs, cur_seg))
+                cur_seg = []
+            cur_hs = e[3]
+            cur_seg.append(e)
+        if cur_seg:
+            segments.append((cur_hs, cur_seg))
+
+        for seg_hunk_start, seg in segments:
+            changed = [i for i, e in enumerate(seg) if e[0] != " "]
+            if not changed:
+                continue
+            # group changed indices into runs, merging runs with <=GAP between
+            groups, run = [], [changed[0]]
+            for i in changed[1:]:
+                if i - run[-1] <= GAP + 1:
+                    run.append(i)
                 else:
-                    lines.append(f"{n}:   {t}")
-            hunks.append({
-                "file": fname, "line": anchor,
-                "header": f"@@ {fname} around line {anchor} "
-                          f"({n_changed} changed lines) @@",
-                "lines": lines, "n_changed": n_changed,
-            })
+                    groups.append(run)
+                    run = [i]
+            groups.append(run)
+            for g in groups:
+                lo, hi = max(0, g[0] - CTX), min(len(seg), g[-1] + CTX + 1)
+                window = seg[lo:hi]
+                # anchor chain: first added line IN the cluster (never bleed
+                # into a neighbouring cluster's window), then the first
+                # changed entry (deletions carry their old-file line), then
+                # the nearest preceding context line, then the hunk start
+                anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
+                               if e[0] == "+" and e[1]), None)
+                if anchor is None:
+                    anchor = seg[g[0]][1]
+                if anchor is None:
+                    anchor = next((e[1] for e in reversed(seg[:g[0]])
+                                   if e[1]), seg_hunk_start) or 1
+                lines = []
+                for k, n, t, _ in window:
+                    if k == "+":
+                        lines.append(f"{n}: + {t}")
+                    elif k == "-":
+                        lines.append("    - " + t)
+                    else:
+                        lines.append(f"{n}:   {t}")
+                # count only THIS cluster's changed lines: a neighbour's
+                # changed lines may appear as context but are not ours
+                n_changed = len(g)
+                hunks.append({
+                    "file": fname, "line": anchor,
+                    "hunk_start": seg_hunk_start,
+                    "header": f"@@ {fname} around line {anchor} "
+                              f"({n_changed} changed lines) @@",
+                    "lines": lines, "n_changed": n_changed,
+                })
     for h in hunks:
         h["size"] = len(h["lines"])
         h["too_large"] = h["size"] > MAX_HUNK_LINES
