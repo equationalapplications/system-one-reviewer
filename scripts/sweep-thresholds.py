@@ -30,8 +30,8 @@ NEGATIVE = "negative"
 SHIPPED_THRESHOLD = 0.50
 MARGIN_FLOOR = 0.20
 
-# 0.30 + 0.05*k, k = 0..8; 0.75 excluded by the plateau rule (|t-0.80|<=0.05).
-GRID = [round(0.30 + 0.05 * k, 2) for k in range(9) if abs(0.30 + 0.05 * k - 0.80) > 0.05 + 1e-9]
+# 0.30 + 0.05*k, k = 0..8 (top of grid: 0.70; 0.75+ excluded by the plateau rule).
+GRID = [round(0.30 + 0.05 * k, 2) for k in range(9)]
 
 
 def die(msg):
@@ -58,8 +58,21 @@ def threshold_grid():
 
 
 def gate_run(rec, expected, packaging_version="v02"):
-    if "judged" not in rec:
-        die(f"run {rec.get('label')!r}: no judged array (run with --golden)")
+    if not isinstance(rec.get("judged"), list):
+        die(f"run {rec.get('label')!r}: no judged array (pre-v0.1 record — "
+            "re-run with the current tool)")
+    # M1 (r3): fail-open and incomplete runs must not enter the sweep.
+    # A fail-open run (model unavailable) logs judged: [] and would read as
+    # zero FPs (negative) / zero TPs (positive) — valid-looking garbage.
+    if rec.get("fail_open"):
+        die(f"run {rec.get('label')!r}: fail_open=true (model unavailable "
+            "during the run) — re-run")
+    n_analyzed = rec.get("n_analyzed")
+    if isinstance(n_analyzed, int) and len(rec["judged"]) != n_analyzed:
+        die(f"run {rec.get('label')!r}: incomplete — judged has "
+            f"{len(rec['judged'])} entries but n_analyzed={n_analyzed} "
+            "(clusters dropped: parse errors or transient judge failures) "
+            "— re-run")
     if rec.get("packaging_version") != packaging_version:
         die(f"run {rec.get('label')!r}: packaging_version "
             f"{rec.get('packaging_version')!r} != {packaging_version!r} "
@@ -295,7 +308,10 @@ def main(argv=None):
     ap.add_argument("--metrics", required=True)
     ap.add_argument("--label", required=True, help="run label prefix")
     ap.add_argument("--golden", required=True, help="positive golden TSV")
-    ap.add_argument("--negative-golden")
+    ap.add_argument("--negative-golden", required=True,
+                    help="negative golden TSV — drives the must-skip "
+                         "triage-leakage guard; required so the guard "
+                         "cannot silently turn off (r3 m2)")
     ap.add_argument("--shas", required=True, help="expected fixture SHA file")
     ap.add_argument("--packaging-version", default="v02")
     args = ap.parse_args(argv)

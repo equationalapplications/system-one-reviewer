@@ -210,6 +210,7 @@ def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
     sw_path = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
     r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
                         "--label", "v02-mix-", "--golden", str(golden),
+                        "--negative-golden", str(golden),
                         "--shas", str(shas)],
                        capture_output=True, text=True)
     assert r.returncode != 0
@@ -246,6 +247,7 @@ def test_sweep_skips_stale_mixed_provider_run(jr, tmp_path):
     sw_path = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
     r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
                         "--label", "v02-stale-", "--golden", str(golden),
+                        "--negative-golden", str(golden),
                         "--shas", str(shas)],
                        capture_output=True, text=True)
     # The laya run is skipped by the SHA gate; survivors are all jev, so the

@@ -233,7 +233,8 @@ def test_main_end_to_end_on_synthetic_metrics(jr, sw, tmp_path, capsys):
     shas = tmp_path / "shas.txt"
     shas.write_text(f"positive={POS_SHA}\nnegative={NEG_SHA}\n")
     rc = sw.main(["--metrics", str(metrics), "--label", "v02-test-",
-                  "--golden", golden, "--shas", str(shas)])
+                  "--golden", golden, "--negative-golden", golden,
+                  "--shas", str(shas)])
     out = capsys.readouterr().out
     assert rc == 0
     assert "candidate" in out and "0.50" in out
