@@ -336,8 +336,6 @@ def package_hunks(diff):
                     groups.append(run)
                     run = [i]
             groups.append(run)
-            # indices belonging to each cluster's own changed run
-            first_changed = {g[0] for g in groups}
             for g in groups:
                 # E2: expand the window outward from the cluster's own run
                 # over context lines only, within ±CTX and the hunk bounds.
