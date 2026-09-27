@@ -97,21 +97,22 @@ system-one-reviewer --repo /tmp/jev-review-pos --range HEAD~1..HEAD \
 ```
 
 Five planted issues (silent-None return, unguarded division, duplicate
-import, redundant argument, O(n²) loop). Current published numbers from
-this fixture (runs `v02-r2-baseline-1..3`, 2026-09-27, provider `jev`):
-**recall 5/5, raw precision 5/5 (1.00), F1 1.00** — identical across all
+import, redundant argument, O(n²) loop, missing-sentinel drop). Current published numbers from
+this fixture (runs `v02-r3-baseline-1..3`, 2026-09-27, provider `jev`):
+**recall 5/5, raw precision 5/6 (0.83), F1 0.91** — identical across all
 three fresh runs. "Raw precision" counts reported-findings on the positive
 fixture only; on the negative fixture the same runs report **zero**
-findings of any kind (`v02-r2-negative-1..3`). All five plants were
-found and matched, including the O(n²) loop nit (scored 0.71–0.72) —
-an earlier "4/5 with one miss" reading was a golden-placement artifact,
-not a model miss (see the benchmark doc's correction note). Caveat
-honesty: a 5-plant fixture's ceiling is 1.00; the number measures this
-fixture, not general recall. The sweep confirms lowering the gate buys
-nothing: the whole 0.30–0.55 region ties at F1 1.00, and raising it
-starts losing the silent-None cluster (scored 0.57–0.59). Threshold
-stays at 0.50. Full sweep table, merge-gate
-evaluation, and the exact metrics lines:
+findings of any kind (`v02-r3-negative-1..3`). All five plants were
+found and matched; the single unmatched finding is the model flagging
+the sentinel plant's leftover `return None` line (a 6th, unlisted
+change). Earlier published readings (4/5 "with one miss", then 5/5 at
+1.00) were golden-placement artifacts — see the benchmark doc's
+correction history. Caveat honesty: a 5-plant fixture's ceiling is
+1.00; these numbers measure this fixture, not general recall. The sweep
+confirms lowering the gate buys nothing: the whole 0.30–0.50 region
+ties at F1 0.91, and raising it starts losing the sentinel cluster
+(scored 0.57–0.59). Threshold stays at 0.50. Full sweep table,
+merge-gate evaluation, and the exact metrics lines:
 [docs/benchmarks/2026-09-27-threshold-sweep.md](docs/benchmarks/2026-09-27-threshold-sweep.md).
 
 (Supersedes the earlier `v02-final-*` numbers, which were a packaging

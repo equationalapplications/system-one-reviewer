@@ -489,7 +489,15 @@ produces a JEV/system-one-UNAVAILABLE banner, never a clean "Approved".
 
 - Full suite: 68 passed, 0 failed.
 - Both fixtures rebuild; positive SHA updated to the sentinel fixture.
-- Live v02-r3 runs: results recorded after completion (see below).
+- Live v02-r3 runs: **complete and healthy.** 3x positive: TP 5/5,
+  recall 1.00, raw precision 5/6 (0.83), F1 0.91 (the 6th finding is
+  the model flagging the sentinel plant's leftover `return None` line —
+  a real sixth change, honestly unlisted in the golden); 3x negative:
+  zero findings of any kind. All six pass the fail-open/completeness
+  gates (`judged 6 of 6`, `fail_open false`). Sweep on v02-r3: flat
+  0.91 plateau 0.30-0.50, candidate 0.40, rules FAIL/PASS ->
+  **KEEP 0.50**. Merge gate PASS. Benchmark doc + README + committed
+  metrics jsonl updated to the v02-r3 generation.
 
 
 
