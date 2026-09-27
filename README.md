@@ -7,9 +7,9 @@ no cloud CI — one Python file, git, and an API key.
 
 ```
 $ system-one-reviewer --repo ~/myrepo --range main..HEAD
-JEV REVIEW (experimental local reviewer — advisory only)
+SYSTEM-ONE REVIEW (experimental local reviewer — advisory only, provider: jev)
 repo=myrepo mode=range:main..HEAD head=13fa9d8a3e
-analyzed=5 hunks, skipped=0, total_latency=785ms, jev_calls=5
+analyzed=5 hunks, skipped=0, total_latency=785ms, model_calls=5
 
 [MAJOR] src/app.py:11 (bug-risk, is_real=0.61)
   hunk: @@ src/app.py around line 11 (4 changed lines) @@

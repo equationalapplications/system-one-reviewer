@@ -262,3 +262,58 @@ def test_plain_unified_diff_without_git_header_still_parses(jr):
     hunks = jr.package_hunks(diff)
     assert len(hunks) == 1
     assert hunks[0]["file"] == "a/x.py" or hunks[0]["file"] == "x.py"
+
+
+def test_run_git_diff_flags_produce_parseable_output(jr, tmp_path):
+    """B1 (r7): run_git's pinned diff invocation must actually run — flags
+    after the subcommand — and its output must parse with real anchors.
+    Runs against a real throwaway git repo (the r7 blocker was invisible
+    to string-diff tests because nothing executed run_git)."""
+    import subprocess as sp
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def g(*a, cwd=None):
+        return sp.run(["git", "-C", str(cwd or repo), *a], capture_output=True,
+                      text=True, check=True).stdout
+    g("init", "-q", "-b", "main")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    (repo / "app.py").write_text("one\ntwo\nthree\n")
+    g("add", "-A"); g("commit", "-qm", "base")
+    (repo / "app.py").write_text("one\nTWO!\nthree\nfour\n")
+    g("add", "-A"); g("commit", "-qm", "head")
+    diff = jr.run_git(str(repo), "diff", "HEAD~1..HEAD")
+    hunks = jr.package_hunks(diff)
+    # two separate change runs: the edit at line 2 and the addition at line 4
+    assert [h["line"] for h in hunks] == [2, 4]
+    assert all(h["file"] == "app.py" for h in hunks)  # a/ b/ prefixes stripped
+    assert any("TWO!" in ln for h in hunks for ln in h["lines"])
+    assert any("four" in ln for h in hunks for ln in h["lines"])
+
+
+def test_plain_multifile_unified_diff_parses_both_files(jr):
+    """m1 (r7): a plain multi-file unified diff (no `diff --git` lines)
+    must attribute each file's hunks correctly — content-lookalike
+    headers INSIDE a hunk's declared counts stay content (r5 case)."""
+    diff = (
+        "--- a/x.sql\n"
+        "+++ b/x.sql\n"
+        "@@ -1,3 +1,3 @@\n"
+        " SELECT 1;\n"
+        "--- drop the audit guard\n"
+        "+++ counter\n"
+        " SELECT 2;\n"
+        "--- a/y.py\n"
+        "+++ b/y.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " keep\n"
+        "+added\n"
+    )
+    hunks = jr.package_hunks(diff)
+    xsql = [h for h in hunks if h["file"] == "x.sql"]
+    ysql = [h for h in hunks if h["file"] == "y.py"]
+    # the r5 content case must remain content of x.sql...
+    assert xsql and any("audit guard" in ln for h in xsql for ln in h["lines"])
+    # ...and the second file must be its own cluster
+    assert len(ysql) == 1 and ysql[0]["line"] == 2
+    assert any("added" in ln for ln in ysql[0]["lines"])

@@ -32,14 +32,18 @@ git config user.name jev-fixture
 cat > src/app.py <<'EOF'
 import json
 
+_MISSING = object()
+
 def load_config(path):
     with open(path) as f:
         return json.load(f)
 
-def find_user(users, uid, missing=None):
+def find_user(users, uid, missing=_MISSING):
     for u in users:
         if u.id == uid:
             return u
+    if missing is _MISSING:
+        return None
     return missing
 
 def divide(a, b):
@@ -67,6 +71,8 @@ git commit -qm "base"
 # change clusters.
 cat > src/app.py <<'EOF'
 import json
+
+_MISSING = object()
 
 def load_config(path):
     with open(path, "w") as f:

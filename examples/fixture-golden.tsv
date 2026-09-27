@@ -3,8 +3,8 @@
 # Verify-substring must appear in the actual HEAD line (checked mechanically
 # by the build script). Severity class is golden metadata, never in the diff.
 # Labels are label-blind: the planted content carries no markers.
-src/app.py	4	config loader opens the file in write mode, truncating its input	open(path, "w")	BLOCKER
-src/app.py	11	find_user returns None instead of the missing sentinel, silently breaking the caller's contract	return None	MAJOR
-src/app.py	14	divide lost its zero guard, ZeroDivisionError on b == 0	return a / b	MAJOR
-src/app.py	18	render loops with string concatenation, O(n^2) out += per item	for item in items	MINOR
-src/app.py	25	duplicate import of json	import json	MINOR
+src/app.py	6	config loader opens the file in write mode, truncating its input	open(path, "w")	BLOCKER
+src/app.py	13	find_user drops the missing sentinel, returning None even for explicit missing values	return None	MAJOR
+src/app.py	16	divide lost its zero guard, ZeroDivisionError on b == 0	return a / b	MAJOR
+src/app.py	20	render loops with string concatenation, O(n^2) out += per item	for item in items	MINOR
+src/app.py	27	duplicate import of json	import json	MINOR

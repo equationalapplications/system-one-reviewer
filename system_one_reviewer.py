@@ -125,7 +125,13 @@ def jev_ask(state, questions, api_key):
             conn = _get_conn()
             conn.request("POST", _url.path, body=body, headers=headers)
             resp = conn.getresponse()
-            payload = json.loads(resp.read())
+            raw = resp.read()
+            # M1 (r7): an HTTP error (401/403/429/5xx) often carries a JSON
+            # body that parses fine — treat any >= 400 as a call failure so
+            # the fail-open counter sees it, never a silent "Approved".
+            if resp.status >= 400:
+                raise RuntimeError(f"HTTP {resp.status}: {raw[:200]!r}")
+            payload = json.loads(raw)
             break
         except Exception:
             _drop_conn()
@@ -142,6 +148,7 @@ def jev_ask(state, questions, api_key):
 # substitute fakes without network or packages.
 _TRANSPORT = None        # set by set_transport / make_provider
 _LAYA_ROUTER = None      # one router per process (one model load per run)
+_LAYA_SHAPE_VALIDATED = False  # m4 (r7): answers contract checked once
 LAYA_DEFAULT_MODEL = "convaiinnovations/rl-agent"
 PROVIDERS = ("jev", "laya")
 
@@ -227,15 +234,32 @@ def get_laya_router(model=None, loader=None):
 
 
 def laya_ask(router, state, questions):
-    """One batched laya round-trip over the same answers shape."""
+    """One batched laya round-trip over the same answers shape.
+
+    m4 (r7): the response shape is validated once on the first call —
+    a shape mismatch raises so the fail-open path reports it instead of
+    quietly turning every cluster into a parse_error "Approved"."""
+    global _LAYA_SHAPE_VALIDATED
     t0 = time.perf_counter()
     payload = router.predict(state, questions)
+    # m4 (r7): validate the answers contract on the first response. The
+    # judge's parse_error path would otherwise mask a shape mismatch as
+    # "Approved / no findings".
+    if not _LAYA_SHAPE_VALIDATED:
+        answers = (payload or {}).get("answers")
+        if not isinstance(answers, dict) or not answers:
+            raise RuntimeError(
+                "laya response shape mismatch: expected "
+                '{"answers": {name: {score|noul|choice}}}, got '
+                f"{type(payload).__name__}: {str(payload)[:200]!r}")
+        _LAYA_SHAPE_VALIDATED = True
     return payload, (time.perf_counter() - t0) * 1000.0
 
 
-def laya_ask_or_die(router=None, model=None, loader=None):
+def laya_ask_or_die(model=None, loader=None):
     """Eager laya check used by main() so a missing local stack fails
-    before any review work happens."""
+    before any review work happens. (r7 nit: the never-used router
+    parameter is gone.)"""
     return get_laya_router(model=model, loader=loader)
 
 
@@ -245,8 +269,10 @@ def run_git(repo, *args):
     if args and args[0] == "diff":
         # m1 (r6): pin the output format — user config (mnemonicPrefix,
         # color.ui, diff.external, quotePath) would break parsing.
-        args = ("--no-color", "--no-ext-diff", "--src-prefix=a/",
-                "--dst-prefix=b/",) + args
+        # B1 (r7): the flags belong AFTER the `diff` subcommand; git
+        # rejects top-level unknown options with exit 129.
+        args = ("diff", "--no-color", "--no-ext-diff", "--src-prefix=a/",
+                "--dst-prefix=b/") + tuple(args[1:])
         r = subprocess.run(["git", "-C", repo, "-c", "core.quotePath=false",
                             *args], capture_output=True, text=True)
     else:
@@ -306,6 +332,7 @@ def package_hunks(diff):
     old_line = new_line = hunk_start = hunk_end = 1
     awaiting_hunk = True  # m2 (r6): plain unified diffs start at `--- `
                           # with no `diff --git` line before them
+    old_left = new_left = 0  # m1 (r7): remaining hunk content counts
     for line in diff.splitlines():
         if line.startswith("diff --git "):
             # M3 (r4): the `diff --git a/X b/X` header names the NEXT file —
@@ -325,7 +352,7 @@ def package_hunks(diff):
             # path. Header prefixes are ONLY headers here, before the first
             # @@ — inside a hunk, `--- text` is a removed line whose content
             # starts with `-- ` (SQL/Lua comments, diff-like text).
-            old_path = line[4:]
+            old_path = line[4:].rstrip("\t")
             if old_path != "/dev/null" and cur_file is None:
                 cur_file = old_path[2:] if old_path.startswith("a/") else old_path
             continue
@@ -333,7 +360,7 @@ def package_hunks(diff):
             # M1 (r6): the +++ path is authoritative unless /dev/null (a
             # whole-file deletion has no new side). Never flush the previous
             # file here: `diff --git` already did that.
-            new_path = line[4:]
+            new_path = line[4:].rstrip("\t")
             if new_path != "/dev/null":
                 cur_file = new_path[2:] if new_path.startswith("b/") else new_path
             continue
@@ -348,6 +375,11 @@ def package_hunks(diff):
             m = HUNK_RE.match(line)
             old_line = int(m.group(1)) if m else 1
             new_line = int(m.group(3)) if m else 1
+            # m1 (r7): remaining content counts from the @@ header. When
+            # both hit 0, a following `--- `/`+++ ` line is the next file's
+            # header (plain multi-file unified diffs), never content.
+            old_left = (int(m.group(2)) if (m and m.group(2)) else 1) if m else 0
+            new_left = (int(m.group(4)) if (m and m.group(4)) else 1) if m else 0
             hunk_start = new_line
             # m5 (r3)/M3 (r4): where the hunk's new side ends. Omitted
             # count means 1; count 0 (pure-deletion hunk) means git's
@@ -361,11 +393,34 @@ def package_hunks(diff):
             else:
                 hunk_end = new_line
         elif cur_file is not None:
+            # m1 (r7): once a hunk's declared content counts are exhausted,
+            # a `--- `/`+++ ` line is the NEXT file's header (plain
+            # multi-file unified diffs) — flush and re-enter header state.
+            # Checked FIRST: it outranks the +/- content handlers.
+            if (line.startswith(("--- ", "+++ "))
+                    and old_left <= 0 and new_left <= 0):
+                if entries:
+                    per_file.append((cur_file, entries))
+                cur_file, entries = None, []
+                awaiting_hunk = True
+                old_left = new_left = 0
+                if line.startswith("--- "):
+                    old_path = line[4:].rstrip("\t")
+                    if old_path != "/dev/null":
+                        cur_file = (old_path[2:] if old_path.startswith("a/")
+                                    else old_path)
+                else:
+                    new_path = line[4:].rstrip("\t")
+                    if new_path != "/dev/null":
+                        cur_file = (new_path[2:] if new_path.startswith("b/")
+                                    else new_path)
+                continue
             # M2 (r5): inside a hunk EVERY +/- prefix is content — real file
             # headers were consumed above (gated on awaiting_hunk).
             if line.startswith("+"):
                 entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
+                new_left -= 1
             elif line.startswith("-"):
                 # m5 (r3): clamp the tracked HEAD position to the hunk's
                 # new-side end — a trailing deletion's raw new_line is
@@ -373,10 +428,15 @@ def package_hunks(diff):
                 entries.append(("-", old_line, line[1:], hunk_start,
                                 max(1, min(new_line, hunk_end))))
                 old_line += 1
-            elif not line.startswith("\\"):
+                old_left -= 1
+            elif line.startswith("\\"):
+                pass  # "\ No newline at end of file" markers never count
+            else:
                 entries.append((" ", new_line, line[1:], hunk_start))
                 new_line += 1
                 old_line += 1
+                old_left -= 1
+                new_left -= 1
     if cur_file is not None:
         per_file.append((cur_file, entries))
 
@@ -578,6 +638,12 @@ def judge(hunks, ask):
             }
             findings.append(rec)
         except (KeyError, TypeError, AttributeError):
+            # M1 (r7): shape errors count toward fail-open too — a wrong
+            # response shape on every call is a broken/changed API, not a
+            # set of harmless per-hunk misses.
+            failures += 1
+            if failures >= CALL_FAIL_LIMIT:
+                return None, latencies  # fail-open signal
             findings.append({"hunk": h, "parse_error": True,
                              "raw": payload, "latency_ms": round(ms, 1)})
     return findings, latencies
