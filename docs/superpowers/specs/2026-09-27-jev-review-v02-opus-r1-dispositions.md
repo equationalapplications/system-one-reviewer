@@ -432,5 +432,65 @@ only for the /dev/null case — the reviewer's reading was right.)
   new config pinning.
 - Sweep over the committed runs: KEEP 0.50, TP 5/5, F1 1.00 — unchanged.
 
+---
+
+# Opus review cycle 7 (r7) — a BLOCKER of my own making
+
+Review (session b2a75889, $0.78): 1 BLOCKER, 1 MAJOR, 5 MINOR. The
+reviewer could not execute git and flagged B1 from reading alone;
+verified true on this machine before fixing.
+
+## BLOCKER
+
+**B1 — My r6 flag-pinning broke every diff call: FIXED.** I put the
+pinned flags BEFORE the `diff` subcommand (`git -C repo --no-color ...
+diff`), which git rejects with `unknown option` (verified live: exit
+129-equivalent error before the fix). `--range/--staged/--uncommitted/
+--pr` all died before any review. Flags now go after the subcommand.
+The reviewer's structural point stands: nothing executed `run_git`, so
+no string-diff test could catch this. NEW regression test runs
+`run_git` against a real throwaway repo and parses the result —
+anchors [2, 4] on a two-run diff.
+
+## MAJOR
+
+**M1 — HTTP errors and shape errors never reached fail-open: FIXED.**
+`jev_ask` now raises on `resp.status >= 400` (a 401/429 JSON body parses
+fine and was silently swallowed), and `judge` counts shape errors
+(`KeyError` on `answers`) toward the fail-open counter instead of
+recording them as harmless per-hunk parse_errors. A dead API key now
+produces a JEV/system-one-UNAVAILABLE banner, never a clean "Approved".
+
+## MINORs
+
+- **m1 plain multi-file unified diffs parsed wrongly: FIXED** — the
+  parser tracks remaining old/new counts from each `@@` header; when
+  both hit 0, `--- `/`+++ ` is the next file's header. The r5
+  content-lookalike case is preserved (counts not yet exhausted ->
+  content); regression test covers both files and both behaviors. (An
+  intermediate shortcut broke the r5 case and was replaced by the
+  count-tracking fix — TDD caught it.)
+- **m2 trailing tab on spaced paths: FIXED** — both header paths are
+  `.rstrip("\t")`ed.
+- **m3 stale README sample output: FIXED** — shows the provider-aware
+  banner and `model_calls=`.
+- **m4 laya shape validated on first call: FIXED** — `laya_ask` raises
+  on a non-`{"answers": ...}` payload, so a wrong API fails loudly via
+  fail-open instead of "Approved".
+- **m5 plant #2 was not really a MAJOR bug: FIXED** — `missing` now
+  defaults to a `_MISSING` sentinel, so dropping it is a real behavior
+  change for explicit-`missing=` callers. This changed the fixture ->
+  SHA gate caught it (it works!) -> fixture SHAs updated -> **6 fresh
+  live runs (v02-r3-*) re-run against the corrected fixture.**
+- **nits (triple replay, unclosed files, unused param): the unused
+  `router` param FIXED; replay/file-handle cleanups deferred to v0.3.**
+
+## Verification (r7 fixes)
+
+- Full suite: 68 passed, 0 failed.
+- Both fixtures rebuild; positive SHA updated to the sentinel fixture.
+- Live v02-r3 runs: results recorded after completion (see below).
+
+
 
 
