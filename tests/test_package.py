@@ -22,12 +22,12 @@ def test_v01_fixture_anchors(jr):
 
 
 def test_deletion_anchor_uses_head_position(jr):
-    """M2 (r2): deletion-only clusters anchor at the position in HEAD where
-    the line was removed (the '-' entry's tracked new_line), not the old
-    file's line number — the two diverge when earlier lines in the hunk
-    changed the count. Hunk `@@ -5,1 +4,0 @@`: HEAD lines 1..3 are shared,
-    the deleted line sat before new line 4, so the anchor is 4. Must never
-    collapse to the top-of-file fallback 1."""
+    """M2 (r2) + m5 (r3): deletion-only clusters anchor at the position in
+    HEAD where the line was removed, clamped to the last existing HEAD
+    line. For `@@ -5,1 +4,0 @@` the new side claims zero lines, so the
+    file ends at line 3 and the deletion site (between 3 and a
+    nonexistent 4) anchors at 3 — never the old-file line 5, never
+    top-of-file fallback 1, never past-EOF 4."""
     diff = (
         "diff --git a/src/mid.py b/src/mid.py\n"
         "--- a/src/mid.py\n"
@@ -37,8 +37,8 @@ def test_deletion_anchor_uses_head_position(jr):
     )
     hunks = jr.package_hunks(diff)
     assert len(hunks) == 1
-    # anchor must fall at the deletion site in HEAD, never fallback 1
-    assert hunks[0]["line"] == 4
+    # last existing HEAD line: the raw tracked position (4) is past EOF
+    assert hunks[0]["line"] == 3
     assert any("dead_call" in ln for ln in hunks[0]["lines"])
 
 
@@ -116,3 +116,20 @@ def test_cluster_window_excludes_neighbouring_clusters_changed_lines(jr):
 def test_package_is_deterministic(jr):
     diff = _read("v01-fixture.diff")
     assert jr.package_hunks(diff) == jr.package_hunks(diff)
+
+
+def test_trailing_deletion_anchors_inside_file(jr):
+    # m5 (r3): a deletion at end of file must not anchor past EOF.
+    # HEAD ends at line 2; the hunk deletes old lines 3-4 entirely
+    # (@@ +3,0 @@), so the raw tracked new_line (3) is past EOF.
+    diff = (
+        "diff --git a/src/tail.py b/src/tail.py\n"
+        "--- a/src/tail.py\n"
+        "+++ b/src/tail.py\n"
+        "@@ -3,2 +3,0 @@\n"
+        "-    dead_one()\n"
+        "-    dead_two()\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1
+    assert hunks[0]["line"] == 2  # last existing HEAD line, not 3

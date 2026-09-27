@@ -268,7 +268,7 @@ def resolve_diff(repo, args):
     sys.exit("system-one-reviewer: pick one of --range/--pr/--staged/--uncommitted")
 
 
-HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def package_hunks(diff):
@@ -288,7 +288,7 @@ def package_hunks(diff):
     display. Deterministic."""
     CTX = 4
     per_file, cur_file, entries = [], None, []
-    old_line = new_line = hunk_start = 1
+    old_line = new_line = hunk_start = hunk_end = 1
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             if cur_file is not None:
@@ -299,15 +299,26 @@ def package_hunks(diff):
         elif line.startswith("@@"):
             m = HUNK_RE.match(line)
             old_line = int(m.group(1)) if m else 1
-            new_line = int(m.group(2)) if m else 1
+            new_line = int(m.group(3)) if m else 1
             hunk_start = new_line
+            # m5 (r3): where the hunk's new side ends. Omitted count
+            # means 1; count 0 (pure-deletion hunk) ends at start-1.
+            # Deletions never anchor past this line.
+            if m:
+                new_count = int(m.group(4)) if m.group(4) else 1
+                hunk_end = new_line + new_count - 1 if new_count > 0 else new_line - 1
+            else:
+                hunk_end = new_line
         elif cur_file is not None:
             if line.startswith("+") and not line.startswith("+++"):
                 entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
             elif line.startswith("-") and not line.startswith("---"):
+                # m5 (r3): clamp the tracked HEAD position to the hunk's
+                # new-side end — a trailing deletion's raw new_line is
+                # len(HEAD)+1, which doesn't exist.
                 entries.append(("-", old_line, line[1:], hunk_start,
-                                new_line))
+                                min(new_line, hunk_end)))
                 old_line += 1
             elif not line.startswith("\\"):
                 entries.append((" ", new_line, line[1:], hunk_start))
@@ -684,7 +695,7 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
 # ---------- main ----------
 
 def main():
-    ap = argparse.ArgumentParser(prog="jev-review")
+    ap = argparse.ArgumentParser(prog="system-one-reviewer")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--range", dest="range")
     ap.add_argument("--pr", type=int)
