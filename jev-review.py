@@ -49,12 +49,10 @@ MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 REAL_THRESHOLD = 0.50         # is_real_issue noul gate (plateau-safe)
 def sev_level(v):
-    """Nearest integer level for a (possibly fractional) score answer.
-
-    Halves round UP (a 2.5 severity is treated as 3 = BLOCKER): Jev's score
-    scale is a judgment of risk, and ties must not silently downgrade.
-    """
-    return max(0, min(3, int(math.floor((v or 0) + 0.5))))
+    """Nearest integer level, halves round up (2.5 is a BLOCKER)."""
+    if v is None:
+        return 0
+    return max(0, min(3, math.floor(v + 0.5)))
 
 SEV_NAME = {0: "none", 1: "MINOR", 2: "MAJOR", 3: "BLOCKER"}
 CATEGORIES = ["bug-risk", "security", "style", "performance", "test-gap", "other"]
