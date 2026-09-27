@@ -72,6 +72,12 @@ system-one-reviewer --repo PATH --range A..B --fixture positive --label run3
 Metrics append to `$XDG_STATE_HOME/jev-review/metrics.jsonl` (default
 `~/.local/state/...`). Nothing leaves your machine except the model calls.
 
+**Path continuity (deliberate):** the tool was renamed from
+`jev-review` to `system-one-reviewer`, but the on-disk paths keep the
+old name — the metrics path (`jev-review/metrics.jsonl`), the
+`JEV_REVIEW_METRICS` env var, and `~/.config/jev-review/.env`. This
+preserves existing metrics logs and API-key setups across the rename.
+
 ## Providers: hosted Jev or local Laya
 
 Every judgment goes through one contract — `ask(state, questions) ->

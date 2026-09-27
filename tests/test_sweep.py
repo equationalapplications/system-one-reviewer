@@ -94,7 +94,7 @@ def test_select_runs_requires_three_per_fixture(sw, tmp_path):
 def test_select_runs_gates_and_splits(sw):
     recs = _pos_runs([_judged(10, 0.9)]) + _neg_runs([])
     stale = _run("v02-test-baseline-9", "positive", [], pv="v01")
-    pos, neg = sw.select_runs(recs + [stale], EXPECTED, "v02-test-")
+    pos, neg = sw.select_runs(recs + [stale], EXPECTED, "v02-test-")[:2]
     assert len(pos) == 3 and len(neg) == 3
 
 

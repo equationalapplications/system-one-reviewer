@@ -117,10 +117,11 @@ def select_runs(recs, expected, label_prefix, packaging_version="v02"):
         die(f"need >= 3 runs per fixture (found {len(pos)} positive / "
             f"{len(neg)} negative) — make fresh runs first")
     # m3 (r2): the mixed-provider check runs AFTER the stale-run gate, so a
-    # stale run with a different provider is skipped, not fatal (main
-    # re-checks the survivors).
-    check_single_provider_group(pos + neg)
-    return pos, neg
+    # stale run with a different provider is skipped, not fatal.
+    # m4 (r11): select_runs returns the (provider, model) of the group so
+    # main doesn't have to run check_single_provider_group a second time.
+    provider, model = check_single_provider_group(pos + neg)
+    return pos, neg, provider, model
 
 
 # ---------- replay through compose ----------
@@ -308,8 +309,8 @@ def main(argv=None):
     expected = load_shas(args.shas)
     with open(args.metrics) as f:
         recs = [json.loads(line) for line in f if line.strip()]
-    pos, neg = select_runs(recs, expected, args.label, args.packaging_version)
-    provider, model = check_single_provider_group(pos + neg)
+    pos, neg, provider, model = select_runs(recs, expected, args.label,
+                                            args.packaging_version)
     jr = load_tool()
     res = sweep(jr, pos, neg, args.golden, args.negative_golden)
     print(render(res, provider, model))

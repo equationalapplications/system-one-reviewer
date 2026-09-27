@@ -494,3 +494,101 @@ def test_triage_skips_do_not_trigger_incomplete_downgrade(jr, tmp_path,
     out = capsys.readouterr().out
     assert '"verdict": "Approved"' in out, out
     assert "incomplete" not in out
+
+
+def test_jev_ask_4xx_costs_exactly_one_request(jr, monkeypatch):
+    """M1 (r11): a 401/403 must NOT be retried. r10's fix raised inside
+    the try whose except swallowed it — the request went out twice. A
+    fake connection counts request() calls; 5xx DOES retry (2 total)."""
+    class FakeResp:
+        def __init__(self, status):
+            self.status = status
+        def read(self):
+            return b'{"error": "nope"}'
+
+    class FakeConn:
+        def __init__(self, status):
+            self.status = status
+            self.calls = 0
+        def request(self, *a, **k):
+            self.calls += 1
+        def getresponse(self):
+            return FakeResp(self.status)
+
+    for status, expected_calls in ((401, 1), (403, 1), (500, 2)):
+        conn = FakeConn(status)
+        monkeypatch.setattr(jr, "_get_conn", lambda c=conn: c)
+        try:
+            jr.jev_ask({"s": 1}, [], "test-key")
+            raise AssertionError(f"HTTP {status} should raise")
+        except Exception:
+            pass
+        assert conn.calls == expected_calls, (
+            f"HTTP {status}: expected {expected_calls} request(s), "
+            f"got {conn.calls}")
+
+
+def test_render_last_line_is_closed_set(jr):
+    """M2 (r11): the grep last line must be exactly one of the four
+    status values for EVERY verdict, including 'Changes requested
+    (incomplete ...)'."""
+    f = {"hunk": {"file": "a.py", "line": 1, "header": "@@ -1 +1,2 @@",
+                  "lines": ["+x = 2"]},
+         "severity": 3.0, "is_real": True, "category": "correctness"}
+    meta = {"repo": "r", "mode": "range", "head": "0" * 40, "provider": "jev",
+            "model": None, "n_analyzed": 1,
+            "total_latency_ms": 0.0, "jev_calls": 1, "fail_open": False}
+    allowed = {"Approved", "Changes requested", "Unavailable", "Incomplete"}
+    for verdict in ("Approved", "Changes requested",
+                    "Approved (incomplete review — 0 of 1 clusters judged)",
+                    "Changes requested (incomplete review — 0 of 2 clusters judged)",
+                    "Unavailable — provider failed (fail-open)"):
+        text = jr.render([f] if verdict.startswith(("Approved", "Changes"))
+                         else [], [], verdict, None, [], meta)
+        last = text.splitlines()[-1]
+        assert last in allowed, f"{verdict!r} -> last line {last!r}"
+
+
+def test_render_and_meta_carry_provider(jr, tmp_path, capsys, monkeypatch):
+    """M3 (r11): meta must carry provider/model, and render() must name
+    the right stack (laya runs were labelled jev). Uses the jev transport
+    stub so no laya package is needed; the provider fields are what's
+    under test."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f.py").write_text("x = 1\n")
+    for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                ["config", "user.name", "t"], ["add", "-A"],
+                ["commit", "-qm", "head"]):
+        import subprocess as sp
+        sp.run(["git", "-C", str(repo), *cmd], check=True,
+               capture_output=True)
+    diff_text = (
+        "diff --git a/f.py b/f.py\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " x = 1\n"
+        "+x = 2\n"
+    )
+    monkeypatch.setattr(jr, "resolve_diff",
+                        lambda repo_, a: (diff_text, "0" * 40, "test"))
+    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _ok_payload)
+    monkeypatch.setattr(jr, "load_api_key", lambda: "test-key")
+    (tmp_path / "m").mkdir()
+    monkeypatch.setattr(jr, "METRICS_PATH",
+                        str(tmp_path / "m" / "metrics.jsonl"))
+    monkeypatch.setattr("sys.argv", [
+        "system-one-reviewer", "--repo", str(repo), "--range", "HEAD",
+        "--label", "meta-test", "--json", "--provider", "jev"])
+    # render() with a laya meta must name the stack, not fall back to jev
+    text = jr.render([], [], "Approved", None, [],
+                     {"repo": "r", "mode": "range", "head": "0" * 40,
+                      "provider": "laya", "model": "m1", "n_analyzed": 0,
+                      "total_latency_ms": 0.0, "jev_calls": 0,
+                      "fail_open": False})
+    assert "provider: laya/m1" in text
+    jr.main()
+    out = capsys.readouterr().out
+    assert '"provider": "jev"' in out
+    assert '"model": null' in out  # JSON null, not Python None

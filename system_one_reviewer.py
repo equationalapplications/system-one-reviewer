@@ -16,8 +16,8 @@ Design (v0.2, evaluation-hardened):
                 precision/recall/F1 so the pattern can be refined as we go
 
 Jev owns go/no-go judgments; deterministic code owns everything else.
-Fail-open: 2 consecutive Jev failures -> report ships with a JEV-UNAVAILABLE
-banner, never dies.
+Fail-open: repeated provider failures -> report ships with an
+"Unavailable" banner, never dies.
 
 Usage:
   system-one-reviewer --repo <path> (--range A..B | --pr N | --staged | --uncommitted)
@@ -113,6 +113,15 @@ def _drop_conn():
     _conn = None
 
 
+class _NoRetry(Exception):
+    """m5 (r10)/M1 (r11): HTTP 4xx must not be retried.
+
+    jev_ask's retry loop catches Exception to retry transport hiccups;
+    this dedicated type is re-raised untouched by the handler so a 401/
+    403/429 costs exactly one request.
+    """
+
+
 def jev_ask(state, questions, api_key):
     """One batched Jev round-trip. Returns (payload, latency_ms)."""
     body = json.dumps({"state": state, "model": "jev-latest",
@@ -130,14 +139,21 @@ def jev_ask(state, questions, api_key):
             # body that parses fine — treat any >= 400 as a call failure so
             # the fail-open counter sees it, never a silent "Approved".
             if resp.status >= 400:
-                # m5 (r10): retry only 5xx — a 401/403 will fail again, and
-                # the wasted retry doubles the failure count behind the
-                # fail-open arithmetic.
-                if resp.status < 500 or attempt == 2:
-                    raise RuntimeError(f"HTTP {resp.status}: {raw[:200]!r}")
-                continue
+                # m5 (r10): 4xx is not worth a retry — raise _NoRetry, which
+                # the handler below re-raises untouched. (r11 M1: a bare
+                # RuntimeError was swallowed by the handler and retried —
+                # the r10 fix never took effect.) 5xx retries once
+                # (transient server errors), then re-raises on attempt 2.
+                # Cost of a retry is one wasted request + latency, nothing
+                # more: jev_ask raises once per call either way.
+                if resp.status < 500:
+                    raise _NoRetry(f"HTTP {resp.status}: {raw[:200]!r}")
+                raise RuntimeError(f"HTTP {resp.status}: {raw[:200]!r}")
             payload = json.loads(raw)
             break
+        except _NoRetry:
+            _drop_conn()
+            raise
         except Exception:
             _drop_conn()
             if attempt == 2:
@@ -686,6 +702,12 @@ def judge(hunks, ask):
             # success resets `failures`, so a run of 200-with-garbage
             # responses could otherwise never reach the limit.
             parse_failures += 1
+            # m3 (r11): `failures` is deliberately SHARED between transport
+            # and parse failures — any repeated failure pattern (mixed
+            # causes included) means the provider is not trustworthy for
+            # this run, so reaching CALL_FAIL_LIMIT by any combination
+            # fails open. `parse_failures` additionally catches consecutive
+            # same-cause shape errors.
             failures += 1
             if parse_failures >= CALL_FAIL_LIMIT or failures >= CALL_FAIL_LIMIT:
                 return None, latencies  # fail-open signal
@@ -693,8 +715,11 @@ def judge(hunks, ask):
                              "raw": payload, "latency_ms": round(ms, 1)})
     # M2 (r9), the reviewer's stronger option: if EVERY call failed
     # (nothing was ever judged), that is a dead provider — full fail-open
-    # regardless of the consecutive-counter arithmetic.
-    if kept_hunks and not latencies:
+    # regardless of the consecutive-counter arithmetic. m1 (r11): a
+    # 200-with-garbage provider never appends a latency either, so
+    # "nothing judged" means no successful parse, not just no transport
+    # success.
+    if kept_hunks and not any(not f.get("parse_error") for f in findings):
         return None, latencies
     return findings, latencies
 
@@ -865,11 +890,12 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
         out.append("Skipped (deterministic triage): " +
                    ", ".join(f"{s['file']} ({s['reason']})" for s in skipped[:10]))
     out.append("Verdict: " + verdict)
-    # m3 (r10): the last line is a CLOSED SET for grep-ledgering — detail
-    # lives on the Verdict: line above, never here.
+    # m3 (r10)/M2 (r11): the last line is a CLOSED SET for grep-ledgering —
+    # detail lives on the Verdict: line above, never here. The incomplete
+    # suffix can ride on "Changes requested" too, so match it anywhere.
     if verdict.startswith("Unavailable"):
         out.append("Unavailable")
-    elif verdict.startswith("Approved (incomplete"):
+    elif "(incomplete" in verdict:
         out.append("Incomplete")
     else:
         out.append(verdict)  # "Approved" / "Changes requested"
@@ -946,6 +972,7 @@ def main():
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
     meta = {"repo": os.path.basename(args.repo), "mode": mode, "head": head,
+            "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks), "n_analyzed": len(kept),
             "total_latency_ms": total, "jev_calls": len(latencies),
             "fail_open": fail_open}
