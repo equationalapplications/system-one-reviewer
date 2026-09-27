@@ -51,7 +51,7 @@ Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
 
 ```bash
 system-one-reviewer --repo PATH --range A..B     # commit range
-system-one-reviewer --repo PATH --pr N           # GitHub PR (via gh)
+system-one-reviewer --repo PATH --pr N           # GitHub PR (needs a local pr/N ref: git fetch origin pull/N/head:pr/N)
 system-one-reviewer --repo PATH --staged         # staged changes
 system-one-reviewer --repo PATH --uncommitted    # working tree
 
@@ -99,14 +99,18 @@ system-one-reviewer --repo /tmp/jev-review-pos --range HEAD~1..HEAD \
 Five planted issues (silent-None return, unguarded division, duplicate
 import, redundant argument, O(n²) loop). Current published numbers from
 this fixture (runs `v02-r2-baseline-1..3`, 2026-09-27, provider `jev`):
-recall 4/5, **raw precision** 4/5 (0.80), F1 0.80 — identical across all
+**recall 5/5, raw precision 5/5 (1.00), F1 1.00** — identical across all
 three fresh runs. "Raw precision" counts reported-findings on the positive
 fixture only; on the negative fixture the same runs report **zero**
-findings of any kind (`v02-r2-negative-1..3`). The one miss is the O(n²)
-loop nit, scored 0.64–0.65 as a MINOR style note. The sweep confirms
-lowering the gate buys nothing: the whole 0.30–0.55 region ties at F1
-0.80, and raising it starts losing the silent-None cluster (scored
-0.57–0.59). Threshold stays at 0.50. Full sweep table, merge-gate
+findings of any kind (`v02-r2-negative-1..3`). All five plants were
+found and matched, including the O(n²) loop nit (scored 0.71–0.72) —
+an earlier "4/5 with one miss" reading was a golden-placement artifact,
+not a model miss (see the benchmark doc's correction note). Caveat
+honesty: a 5-plant fixture's ceiling is 1.00; the number measures this
+fixture, not general recall. The sweep confirms lowering the gate buys
+nothing: the whole 0.30–0.55 region ties at F1 1.00, and raising it
+starts losing the silent-None cluster (scored 0.57–0.59). Threshold
+stays at 0.50. Full sweep table, merge-gate
 evaluation, and the exact metrics lines:
 [docs/benchmarks/2026-09-27-threshold-sweep.md](docs/benchmarks/2026-09-27-threshold-sweep.md).
 

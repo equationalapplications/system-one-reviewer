@@ -330,3 +330,53 @@ whole-file deletion attribution/anchor sanity. 63 tests pass.
 - Merge gate: unchanged PASS (negative runs untouched).
 - Both fixtures rebuild byte-identical to the committed SHAs.
 
+---
+
+# Opus review cycle 5 (r5) — delta verification after the r4 fixes
+
+Review (session 79fc403b, $0.71): 0 BLOCKER, 2 MAJOR, 5 MINOR. The
+reviewer explicitly re-verified the r3/r4 machinery (fail-open gates,
+tie rules, provider-check ordering, CI isolation, no stale
+jev-review.py references) as clean.
+
+## MAJORs
+
+**M1 — README headline numbers were stale after the golden correction:
+FIXED.** README still said 4/5 / 0.80 and called the O(n²) plant a
+genuine miss. Updated to 5/5 / 1.00 with the correction note and an
+explicit small-fixture caveat.
+
+**M2 — Parser swallowed header-lookalike CONTENT inside hunks: FIXED.**
+`--- text` / `+++ text` lines *inside* a hunk are content (a removed
+line whose text starts `-- `, an added line starting `++ ` — SQL/Lua
+comments etc.), but the r4 header handling matched them by prefix
+anywhere in the file, silently dropping the changes (0 clusters —
+TDD-verified RED before the fix). Header prefixes are now recognized
+ONLY between `diff --git` and the first `@@` (`awaiting_hunk` state);
+inside a hunk every `+`/`-` prefix is content. Regression test locks
+the traced SQL case; line accounting verified. 64 tests pass.
+
+## MINORs
+
+- **m3 sev>=1 vs sev_level rounding: REJECTED with reason (again)** —
+  deliberate noise floor; unchanged.
+- **m4 --pr usage line claimed gh: FIXED** — now states the local
+  `pr/N` ref requirement with the fetch command.
+- **m5 dead `_load_golden_lines` + unclosed file handles: ACKNOWLEDGED,
+  deferred to v0.3** — harmless in the CLI; the sweep is being
+  restructured in v0.3 anyway.
+- **m6 double replay per threshold: ACKNOWLEDGED, deferred to v0.3** —
+  same reason; correctness is already guaranteed by M3 (r2) deriving
+  FP from the tool's own matching.
+- **m7 laya shape mismatch would read as "Approved / no findings":
+  PARTIALLY ADDRESSED** — the r3 M1 gate already rejects runs where
+  `len(judged) != n_analyzed`, so a sweep over such a run fails loudly
+  rather than trusting it; the interactive-path loud failure is noted
+  for v0.3.
+
+## Verification (r5 fixes)
+
+- Full suite: 64 passed, 0 failed.
+- Sweep: KEEP 0.50 unchanged.
+
+
