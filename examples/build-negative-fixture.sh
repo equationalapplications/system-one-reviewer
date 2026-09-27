@@ -1,10 +1,11 @@
 #!/bin/bash
 # Build the system-one-reviewer v0.2 NEGATIVE test fixture: base->HEAD is
-# behavior-preserving per spec E1 — a whitespace-only reformat, one
+# behavior-preserving per spec E1 — a whitespace-only reformat, a
+# behavior-preserving import reorder, one
 # innocuous comment, and a README.md change that deterministic triage MUST
 # skip (asserted by tests/test_negative.py from the built diff — never
 # judged). NO renames, NO signature changes, NO docstring rewrites: every
-# source change is either pure whitespace or a comment.
+# source change is whitespace, a comment, or an equivalent-code reorder.
 # Deterministic: fixed dates/identities; tree hash independent of path.
 set -euo pipefail
 ROOT="${JEV_FIXTURE_ROOT:-/tmp/jev-review-neg}"
