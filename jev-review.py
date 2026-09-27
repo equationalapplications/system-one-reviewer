@@ -401,16 +401,16 @@ def near(v, t, zone=0.03):
     return v is not None and abs(v - t) <= zone
 
 
-def compose(findings, skipped, pr_level):
+def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
     """Thresholds in code. Plateau rule: 0.50 sits >=0.05 from 0.80/0.90."""
     reported, jitter = [], []
     for f in findings:
         if f.get("parse_error"):
             continue
         r = f.get("is_real")
-        if near(r, REAL_THRESHOLD):
+        if near(r, threshold):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
-        if r is not None and r >= REAL_THRESHOLD and (f.get("severity") or 0) >= 1:
+        if r is not None and r >= threshold and (f.get("severity") or 0) >= 1:
             reported.append(f)
     blockers = [f for f in reported if sev_level(f.get("severity")) == 3]
     majors = [f for f in reported if sev_level(f.get("severity")) == 2]
