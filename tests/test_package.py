@@ -399,8 +399,12 @@ def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
     def dead_transport(state, questions):
         raise RuntimeError("provider down")
 
-    jr.set_transport(dead_transport)
-    jr.set_provider_name("jev")
+    # M2 (r10): main() calls make_provider(), which OVERWRITES the module
+    # transport — the fake must be injected there, or the test would hit
+    # the real API (it passed for the wrong reason via DNS/401 failure).
+    monkeypatch.setattr(jr, "make_provider",
+                        lambda *a, **k: dead_transport)
+    monkeypatch.setattr(jr, "set_provider_name", lambda name: None)
 
     from types import SimpleNamespace
     args = SimpleNamespace(
@@ -420,8 +424,10 @@ def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
     monkeypatch.setattr(jr, "resolve_diff",
                         lambda repo_, a: (diff_text, "0" * 40, "test"))
     monkeypatch.setattr(jr, "load_api_key", lambda: "test-key")
-    monkeypatch.setenv("JEV_REVIEW_METRICS",
-                       str(tmp_path / "m" / "metrics.jsonl"))
+    (tmp_path / "m").mkdir()
+    # METRICS_PATH is captured at import time; patch the constant itself.
+    monkeypatch.setattr(jr, "METRICS_PATH",
+                        str(tmp_path / "m" / "metrics.jsonl"))
     monkeypatch.setattr("sys.argv", [
         "system-one-reviewer", "--repo", str(repo), "--range", "HEAD",
         "--label", "unavail-test", "--json", "--provider", "jev"])
@@ -429,3 +435,62 @@ def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
     out = capsys.readouterr().out
     assert rc is None  # main() returns None on success
     assert "Unavailable" in out
+    # M2 (r10): also assert the metrics record, per the docstring promise.
+    import json as _json
+    rec = _json.loads(open(str(tmp_path / "m" / "metrics.jsonl")).readlines()[-1])
+    assert rec["fail_open"] is True
+    assert "Unavailable" in rec["verdict"]
+
+
+def _ok_payload(state, questions):
+    """A healthy provider response for any hunk (ask(state, questions))."""
+    return ({"answers": {
+        "severity": {"score": 2, "probabilities": None, "confidence": "high"},
+        "is_real_issue": {"noul": True},
+        "category": {"choice": "correctness", "probabilities": None}}}, 1.0)
+
+
+def test_triage_skips_do_not_trigger_incomplete_downgrade(jr, tmp_path,
+                                                          capsys,
+                                                          monkeypatch):
+    """M1 (r10): a deliberate triage skip (docs/lockfile) is NOT a dropped
+    cluster — a run that judged every kept cluster stays a clean
+    'Approved', with no 'incomplete review' downgrade."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f.py").write_text("x = 1\n")
+    for cmd in (["init", "-q"], ["config", "user.email", "t@t"],
+                ["config", "user.name", "t"], ["add", "-A"],
+                ["commit", "-qm", "head"]):
+        import subprocess as sp
+        sp.run(["git", "-C", str(repo), *cmd], check=True,
+               capture_output=True)
+
+    diff_text = (
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n"
+        "+++ b/README.md\n"
+        "@@ -1,1 +1,2 @@\n"
+        " # docs\n"
+        "+more docs\n"
+        "diff --git a/f.py b/f.py\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " x = 1\n"
+        "+x = 2\n"
+    )
+    monkeypatch.setattr(jr, "resolve_diff",
+                        lambda repo_, a: (diff_text, "0" * 40, "test"))
+    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _ok_payload)
+    monkeypatch.setattr(jr, "load_api_key", lambda: "test-key")
+    (tmp_path / "m").mkdir()
+    monkeypatch.setattr(jr, "METRICS_PATH",
+                        str(tmp_path / "m" / "metrics.jsonl"))
+    monkeypatch.setattr("sys.argv", [
+        "system-one-reviewer", "--repo", str(repo), "--range", "HEAD",
+        "--label", "triage-clean-test", "--json", "--provider", "jev"])
+    jr.main()
+    out = capsys.readouterr().out
+    assert '"verdict": "Approved"' in out, out
+    assert "incomplete" not in out

@@ -130,7 +130,12 @@ def jev_ask(state, questions, api_key):
             # body that parses fine — treat any >= 400 as a call failure so
             # the fail-open counter sees it, never a silent "Approved".
             if resp.status >= 400:
-                raise RuntimeError(f"HTTP {resp.status}: {raw[:200]!r}")
+                # m5 (r10): retry only 5xx — a 401/403 will fail again, and
+                # the wasted retry doubles the failure count behind the
+                # fail-open arithmetic.
+                if resp.status < 500 or attempt == 2:
+                    raise RuntimeError(f"HTTP {resp.status}: {raw[:200]!r}")
+                continue
             payload = json.loads(raw)
             break
         except Exception:
@@ -231,6 +236,9 @@ def get_laya_router(model=None, loader=None):
         sys.exit(f"system-one-reviewer: the laya provider needs the laya package: "
                  f"{exc}; fix with: pip install laya")
     try:
+        # m4 (r10): provider_from always resolves a model (LAYA_DEFAULT_MODEL),
+        # so the no-model branch is only reachable when get_laya_router is
+        # called directly with model=None (tests, library use).
         _LAYA_ROUTER = laya.load(model=model) if model else laya.Router()
     except Exception as exc:
         sys.exit(f"system-one-reviewer: could not load the laya model "
@@ -647,12 +655,22 @@ def judge(hunks, ask):
             sev = ans["severity"]
             real = ans["is_real_issue"]
             cat = ans["category"]
+            score = float(sev.get("score", 0))
+            noul = real.get("noul")
+            # m1 (r10): json.loads accepts NaN/Infinity literals and
+            # non-numeric types slip through float() — check finiteness up
+            # front so sev_level/judge_pr_level can't crash the run later.
+            if not math.isfinite(score):
+                raise ValueError(f"non-finite severity score: {score!r}")
+            if not isinstance(noul, (int, float, bool)) or \
+                    not math.isfinite(float(noul)):
+                raise ValueError(f"non-numeric noul: {noul!r}")
             rec = {
                 "hunk": h,
-                "severity": float(sev.get("score", 0)),
+                "severity": score,
                 "sev_dist": sev.get("probabilities"),
                 "confidence": sev.get("confidence"),
-                "is_real": real.get("noul"),
+                "is_real": noul,
                 "category": cat.get("choice"),
                 "cat_dist": cat.get("probabilities"),
                 "latency_ms": round(ms, 1),
@@ -684,9 +702,16 @@ def judge(hunks, ask):
 def judge_pr_level(findings, ask):
     """One extra round-trip: PR-level risk from the per-hunk digest."""
     prov_name = _PROVIDER_NAME  # r9 m1: the wired provider, not the env
+    # m2 (r10): failed calls must not look like clean hunks — label them
+    # "unjudged" so the PR-level model can't read them as severity=none.
     digest = "\n".join(
-        f"- {f['hunk']['file']}:{f['hunk']['line']} severity={SEV_NAME[sev_level(f.get('severity'))]} "
-        f"category={f.get('category')}" for f in findings) or "no per-hunk findings"
+        (f"- {f['hunk']['file']}:{f['hunk']['line']} unjudged "
+         f"(provider call failed)"
+         if f.get("parse_error") else
+         f"- {f['hunk']['file']}:{f['hunk']['line']} "
+         f"severity={SEV_NAME[sev_level(f.get('severity'))]} "
+         f"category={f.get('category')}")
+        for f in findings) or "no per-hunk findings"
     try:
         payload, ms = ask(
             "Change set under review, per-hunk automated digest:\n" + digest,
@@ -840,7 +865,14 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
         out.append("Skipped (deterministic triage): " +
                    ", ".join(f"{s['file']} ({s['reason']})" for s in skipped[:10]))
     out.append("Verdict: " + verdict)
-    out.append(verdict)  # fixed last line for grep-ledgering
+    # m3 (r10): the last line is a CLOSED SET for grep-ledgering — detail
+    # lives on the Verdict: line above, never here.
+    if verdict.startswith("Unavailable"):
+        out.append("Unavailable")
+    elif verdict.startswith("Approved (incomplete"):
+        out.append("Incomplete")
+    else:
+        out.append(verdict)  # "Approved" / "Changes requested"
     return "\n".join(out)
 
 
@@ -880,8 +912,10 @@ def main():
     diff, head, mode = resolve_diff(args.repo, args)
     hunks = package_hunks(diff)
     kept, skipped = triage(hunks)
+    n_triaged = len(hunks) - len(kept)  # deliberate skips, NOT drops (r10 M1)
     kept.sort(key=lambda h: -h["size"])
     kept = kept[: args.max_hunks]
+    n_dropped = len(hunks) - n_triaged - len(kept)  # --max-hunks truncation only
 
     findings, latencies = judge(kept, ask)
     fail_open = findings is None
@@ -898,12 +932,11 @@ def main():
     reported, jitter, verdict = compose(findings, skipped,
                                         pr_level if not fail_open else None)
     n_unjudged = sum(1 for f in findings if f.get("parse_error"))
-    n_dropped = len(hunks) - len(kept)
     if fail_open:
         verdict = "Unavailable — provider failed (fail-open)"
     elif n_unjudged or n_dropped:
         verdict += (f" (incomplete review — {len(kept) - n_unjudged} of "
-                    f"{len(hunks)} clusters judged)")
+                    f"{len(hunks) - n_triaged} clusters judged)")
 
     total = sum(latencies)
     judged = [
