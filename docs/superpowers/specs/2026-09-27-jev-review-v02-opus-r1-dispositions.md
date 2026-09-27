@@ -653,6 +653,65 @@ counted as a transport failure.)
 - No live re-runs needed: r10 changes touch failure/downgrade paths,
   digest text, and render details — no scoring-path change.
 
+---
+
+# Opus review cycle 11 (r11) — two r10 fixes were fakes
+
+Review (session 3cb04966, $0.67): 0 BLOCKER, 3 MAJOR, 5 MINOR. The
+reviewer caught that two r10 "FIXED" dispositions were not true in the
+code — exactly the failure mode the process note warns about, this time
+in code rather than in the ledger.
+
+## MAJORs
+
+**M1 — the r10 4xx no-retry fix never took effect: FIXED FOR REAL.**
+The `raise RuntimeError(...)` sat inside the `try` whose
+`except Exception` swallowed it and retried — a 401 still cost two
+POSTs. Now a dedicated `_NoRetry` exception is re-raised untouched by
+the handler (5xx keeps its one retry via the normal path). New test
+counts `request()` calls with a fake connection: 401 → 1, 403 → 1,
+500 → 2. (My first rewrite over-corrected and killed the 5xx retry —
+the new test caught that immediately.)
+
+**M2 — closed-set last line broke on "Changes requested (incomplete…)":
+FIXED.** render() only matched `startswith("Approved (incomplete")`.
+Now any verdict containing "(incomplete" maps the last line to
+`Incomplete`. New test sweeps all five verdict shapes and asserts the
+last line is one of the four closed-set values.
+
+**M3 — laya runs labelled "jev" in report and meta: FIXED.** main()
+never put provider/model into meta, so render() fell back to "jev" for
+every provider. meta now carries provider/model; the JSON asserts them,
+and a render test asserts "provider: laya/m1" for laya meta.
+
+## MINORs
+
+- **m1 all-parse-failed on a 1-cluster diff: FIXED** — "nothing judged"
+  now means no successful parse (200-with-garbage counts), not just no
+  transport success.
+- **m2 wrong reasoning in the m5 comment: FIXED** — comment now states
+  the real cost (one wasted request + latency; jev_ask raises once per
+  call either way).
+- **m3 shared transport+parse failure counter: DOCUMENTED** — intended:
+  any repeated failure pattern (mixed causes included) fails open;
+  comment states it.
+- **m4 sweep provider check run twice: FIXED** — select_runs returns
+  (provider, model); main no longer re-checks.
+- **m5 old-name paths: DOCUMENTED** — README gains a "Path continuity
+  (deliberate)" note (metrics path, JEV_REVIEW_METRICS, config dir keep
+  the jev-review name across the rename); module docstring's
+  "JEV-UNAVAILABLE banner" updated to the actual "Unavailable" output.
+
+## Verification (r11 fixes)
+
+- Full suite: 76 passed, 0 failed (3 new: request-count, closed-set
+  sweep, provider-in-meta/render).
+- Sweep over v02-r3: KEEP 0.50 identical.
+- No live re-runs needed: no scoring-path change (transport retry
+  semantics only affect failure accounting, which is fail-open either
+  way).
+
+
 
 
 
