@@ -16,6 +16,9 @@ rm -rf "$ROOT"
 mkdir -p "$ROOT/src"
 cd "$ROOT"
 git init -q -b main
+# m5 (r6): pin the config that would change commit/tree SHAs
+git config commit.gpgsign false
+git config core.autocrlf false
 git config user.email fixture@example.invalid
 git config user.name jev-fixture
 export GIT_AUTHOR_DATE="2026-09-27T12:00:00+0000"

@@ -379,4 +379,58 @@ the traced SQL case; line accounting verified. 64 tests pass.
 - Full suite: 64 passed, 0 failed.
 - Sweep: KEEP 0.50 unchanged.
 
+---
+
+# Opus review cycle 6 (r6) — delta verification after the r5 fixes
+
+Review (session f6b6e24c, $0.80): 0 BLOCKER, 1 MAJOR, 7 MINOR. The
+reviewer re-verified the r2-r5 machinery as OK (halves-up rounding,
+deletion-anchor chain, greedy matching, tie rule, fail-open gates, and
+— newly — the corrected golden lines against HEAD content).
+
+## MAJOR
+
+**M1 — Renamed files reported under their OLD path: FIXED.**
+`--- a/old.py` set `cur_file` first and `+++ b/new.py` only assigned
+when it was None, so a renamed+edited file was judged under a path that
+no longer exists at HEAD (unmatchable by golden, skippable by triage
+under its old name). New side is now authoritative unless `/dev/null`;
+the old side is the whole-file-deletion fallback. Regression test locks
+the rename case. (The r4 M3 "first header wins" priority was correct
+only for the /dev/null case — the reviewer's reading was right.)
+
+## MINORs
+
+- **m1 git diff output not pinned (mnemonicPrefix/color.ui/quotePath
+  would break parsing): FIXED** — `run_git` diff calls now pin
+  `--no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/` and
+  `core.quotePath=false`.
+- **m2 plain unified diffs (no `diff --git`) silently dropped: FIXED**
+  — `awaiting_hunk` now starts True; regression test locks v0.1-style
+  input. (Root cause: my r5 `awaiting_hunk` change introduced this; the
+  reviewer caught the regression.)
+- **m3 laya runs said "Jev" in output: FIXED** — banner and fail-open
+  line are provider-aware (`provider/model`); `jev_calls` rendered as
+  `model_calls` (metrics field name unchanged for log compatibility).
+- **m4 laya shape validation: PARTIALLY ADDRESSED (v0.3)** — the
+  completeness gate catches shape-mismatch runs loudly in the sweep;
+  the first-call shape validation belongs with the v0.3 laya
+  integration work.
+- **m5 fixture SHAs depend on user git config: FIXED** — both builders
+  now pin `commit.gpgsign=false` and `core.autocrlf=false`; both
+  fixtures still rebuild byte-identical to the committed SHAs.
+- **m6 sweep cleanups (bare open(), duplicate provider check):
+  ACKNOWLEDGED, deferred to v0.3** — harmless in the CLI.
+- **m7 no compat shim for jev-review.py: ACKNOWLEDGED, deferred to
+  v0.3** — the repo rename is announced in the README; no external
+  consumers exist yet (D3: built in public, pre-adoption).
+
+## Verification (r6 fixes)
+
+- Full suite: 66 passed, 0 failed.
+- Both fixtures rebuild byte-identical to the committed SHAs under the
+  new config pinning.
+- Sweep over the committed runs: KEEP 0.50, TP 5/5, F1 1.00 — unchanged.
+
+
 
