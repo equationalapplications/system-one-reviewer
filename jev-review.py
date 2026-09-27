@@ -22,6 +22,7 @@ banner, never dies.
 Usage:
   jev-review --repo <path> (--range A..B | --pr N | --staged | --uncommitted)
              [--out f.json] [--max-hunks N] [--golden f] [--label s] [--json]
+             [--negative-golden f] [--fixture NAME]
 """
 
 import argparse
@@ -165,13 +166,13 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 def package_hunks(diff):
-    """Cluster-level packaging: group changed lines into clusters separated by
-    <=2 unchanged lines, each with +/-4 context lines. Windows are clamped at
-    hunk boundaries (a cluster never crosses an @@ header), and anchors fall
-    back old-line -> preceding-context -> hunk start so deletion-only clusters
-    never collapse to line 1. Each cluster is judged independently so one
-    change never dilutes another. Deterministic."""
-    GAP, CTX = 0, 4  # merge only contiguous changed lines; isolate the rest
+    """Cluster-level packaging: contiguous changed lines form a cluster, each
+    with +/-4 context lines. Windows are clamped at @@ hunk boundaries (a
+    cluster never crosses an @@ header), so one change never dilutes another.
+    Anchors: first '+' in the cluster's own run -> else the first context
+    entry with a lineno at/after the run -> else the run's hunk_start (a
+    deletion-only cluster never collapses to line 1). Deterministic."""
+    CTX = 4
     per_file, cur_file, entries = [], None, []
     old_line = new_line = hunk_start = 1
     for line in diff.splitlines():
@@ -191,7 +192,7 @@ def package_hunks(diff):
                 entries.append(("+", new_line, line[1:], hunk_start))
                 new_line += 1
             elif line.startswith("-") and not line.startswith("---"):
-                entries.append(("-", old_line, line[1:], hunk_start))
+                entries.append(("-", None, line[1:], hunk_start))
                 old_line += 1
             elif not line.startswith("\\"):
                 entries.append((" ", new_line, line[1:], hunk_start))
@@ -202,7 +203,7 @@ def package_hunks(diff):
 
     hunks = []
     for fname, ents in per_file:
-        # split into hunk-boundary segments: no cluster/window crosses an @@
+        # hunk-boundary segments: no cluster/window crosses an @@
         segments, cur_seg, cur_hs = [], [], None
         for e in ents:
             if cur_seg and e[3] != cur_hs:
@@ -217,10 +218,10 @@ def package_hunks(diff):
             changed = [i for i, e in enumerate(seg) if e[0] != " "]
             if not changed:
                 continue
-            # group changed indices into runs, merging runs with <=GAP between
+            # group changed indices into runs of contiguous changed lines
             groups, run = [], [changed[0]]
             for i in changed[1:]:
-                if i - run[-1] <= GAP + 1:
+                if i - run[-1] <= 1:
                     run.append(i)
                 else:
                     groups.append(run)
@@ -229,18 +230,18 @@ def package_hunks(diff):
             for g in groups:
                 lo, hi = max(0, g[0] - CTX), min(len(seg), g[-1] + CTX + 1)
                 window = seg[lo:hi]
-                # anchor chain: first added line IN the cluster (never bleed
-                # into a neighbouring cluster's window), then the first
-                # changed entry (deletions carry their old-file line), then
-                # the nearest preceding context line, then the hunk start
+                # anchor chain (plan Task 2): first '+' in the cluster's own
+                # run, never a neighbouring cluster's window; then the first
+                # context entry with a lineno at/after the run; then the run's
+                # hunk_start
                 anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
-                               if e[0] == "+" and e[1]), None)
+                               if e[0] == "+" and e[1] is not None), None)
                 if anchor is None:
-                    anchor = seg[g[0]][1]
+                    anchor = next((e[1] for e in seg[g[-1] + 1:hi]
+                                   if e[0] == " " and e[1] is not None), None)
                 if anchor is None:
-                    anchor = next((e[1] for e in reversed(seg[:g[0]])
-                                   if e[1]), seg_hunk_start) or 1
-                lines = []
+                    anchor = seg_hunk_start
+                lines, n_changed = [], 0
                 for k, n, t, _ in window:
                     if k == "+":
                         lines.append(f"{n}: + {t}")
@@ -256,7 +257,8 @@ def package_hunks(diff):
                     "hunk_start": seg_hunk_start,
                     "header": f"@@ {fname} around line {anchor} "
                               f"({n_changed} changed lines) @@",
-                    "lines": lines, "n_changed": n_changed,
+                    "lines": lines, "entries": window,
+                    "n_changed": n_changed,
                 })
     for h in hunks:
         h["size"] = len(h["lines"])
@@ -323,17 +325,17 @@ PR_QUESTIONS = {
 # ---------- judge + compose ----------
 
 def hunk_state(h):
-    """Structured before/after state (docs: state can be an object)."""
+    """Structured before/after state, read from `entries` only (never the
+    rendered lines, which can corrupt text containing ': + ')."""
     before, after = [], []
-    for ln in h["lines"]:
-        if ": + " in ln:
-            after.append(ln.split(": + ", 1)[1])
-        elif ln.startswith("    - "):
-            before.append(ln[6:])
-        elif ":   " in ln:
-            t = ln.split(":   ", 1)[1]
-            before.append(t)
-            after.append(t)
+    for kind, _n, text, _hs in h["entries"]:
+        if kind == "+":
+            after.append(text)
+        elif kind == "-":
+            before.append(text)
+        else:
+            before.append(text)
+            after.append(text)
     return {
         "file": h["file"],
         "location": f"around line {h['line']}",
@@ -429,8 +431,11 @@ def eval_against_golden(reported, golden_path):
     """Precision/recall/F1 of reported findings vs a golden issues file.
 
     Golden format, one issue per line:  <file>\t<line>\t<description>
-    A reported finding matches when file matches and reported line falls
-    within +/-5 lines of the golden line (hunk granularity tolerance).
+    Matching (Task 3): a reported finding matches a golden issue when the
+    file matches and the reported line is within +/-1 of the golden line;
+    ties go to the lower golden line, and each golden issue matches at most
+    one reported finding (nearest distance wins). tp_severities records the
+    sev_level() class of every true positive.
     """
     golden = []
     with open(golden_path) as fh:
@@ -441,14 +446,20 @@ def eval_against_golden(reported, golden_path):
                 if len(parts) >= 2:
                     golden.append((parts[0], int(parts[1]), parts[2] if len(parts) > 2 else ""))
     matched_golden, matched_reported = set(), set()
+    matches = []  # (reported_idx, golden_idx, distance)
     for i, f in enumerate(reported):
         for j, (gfile, gline, gdesc) in enumerate(golden):
             if j in matched_golden:
                 continue
-            if f["hunk"]["file"] == gfile and abs(f["hunk"]["line"] - gline) <= 5:
-                matched_reported.add(i)
-                matched_golden.add(j)
-                break
+            if f["hunk"]["file"] == gfile and abs(f["hunk"]["line"] - gline) <= 1:
+                matches.append((abs(f["hunk"]["line"] - gline), i, j))
+    matches.sort(key=lambda m: (m[0], golden[m[2]][1], m[1]))
+    # nearest first; distance ties -> lower golden line -> earlier reported
+    for _d, i, j in matches:
+        if i in matched_reported or j in matched_golden:
+            continue
+        matched_reported.add(i)
+        matched_golden.add(j)
     tp = len(matched_reported)
     precision = tp / len(reported) if reported else None
     recall = len(matched_golden) / len(golden) if golden else None
@@ -457,6 +468,11 @@ def eval_against_golden(reported, golden_path):
     return {"golden_issues": len(golden), "reported": len(reported),
             "true_positives": tp, "precision": precision,
             "recall": recall, "f1": f1,
+            "tp_severities": sorted(sev_level(reported[i].get("severity"))
+                                    for i in matched_reported),
+            "matched": [(golden[j][0], golden[j][1]) for _d, i, j in
+                        sorted(matches, key=lambda m: m[1])
+                        if i in matched_reported and j in matched_golden],
             "missed": [g for j, g in enumerate(golden) if j not in matched_golden]}
 
 
