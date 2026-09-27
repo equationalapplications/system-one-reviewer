@@ -227,3 +227,38 @@ def test_content_looking_like_headers_inside_hunk_is_judged(jr):
     assert any("+ counter" in ln or "counter" in ln for ln in h["lines"])
     # line accounting survived: the context line after both must be line 2
     assert h["line"] == 2  # first '+' content line, new-file line 2
+
+
+def test_renamed_file_reported_under_new_path(jr):
+    """M1 (r6): a renamed+edited file must be reported under its NEW path —
+    line numbers are HEAD-side, and golden matching compares paths."""
+    diff = (
+        "diff --git a/src/old.py b/src/new.py\n"
+        "similarity index 90%\n"
+        "rename from src/old.py\n"
+        "rename to src/new.py\n"
+        "--- a/src/old.py\n"
+        "+++ b/src/new.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " keep\n"
+        "+added\n"
+        " keep2\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1
+    assert hunks[0]["file"] == "src/new.py"
+
+
+def test_plain_unified_diff_without_git_header_still_parses(jr):
+    """m2 (r6): hand-built unified diffs with no `diff --git` line must
+    still parse (v0.1 behavior)."""
+    diff = (
+        "--- a/x.py\n"
+        "+++ b/x.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " keep\n"
+        "+added\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1
+    assert hunks[0]["file"] == "a/x.py" or hunks[0]["file"] == "x.py"

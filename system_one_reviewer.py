@@ -242,7 +242,15 @@ def laya_ask_or_die(router=None, model=None, loader=None):
 # ---------- deterministic stages ----------
 
 def run_git(repo, *args):
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    if args and args[0] == "diff":
+        # m1 (r6): pin the output format — user config (mnemonicPrefix,
+        # color.ui, diff.external, quotePath) would break parsing.
+        args = ("--no-color", "--no-ext-diff", "--src-prefix=a/",
+                "--dst-prefix=b/",) + args
+        r = subprocess.run(["git", "-C", repo, "-c", "core.quotePath=false",
+                            *args], capture_output=True, text=True)
+    else:
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{r.stderr}")
     return r.stdout
@@ -296,7 +304,8 @@ def package_hunks(diff):
     CTX = 4
     per_file, cur_file, entries = [], None, []
     old_line = new_line = hunk_start = hunk_end = 1
-    awaiting_hunk = False  # True between a file's headers and its first @@
+    awaiting_hunk = True  # m2 (r6): plain unified diffs start at `--- `
+                          # with no `diff --git` line before them
     for line in diff.splitlines():
         if line.startswith("diff --git "):
             # M3 (r4): the `diff --git a/X b/X` header names the NEXT file —
@@ -309,22 +318,23 @@ def package_hunks(diff):
             awaiting_hunk = True
             continue
         if awaiting_hunk and line.startswith("--- "):
-            # M3 (r4): old-side path. For a whole-file deletion this is the
-            # ONLY place the real file name appears (new side is /dev/null).
-            # M2 (r5): header prefixes are ONLY headers here, before the
-            # first @@ — inside a hunk, `--- text` is a removed line whose
-            # content starts with `-- ` (SQL/Lua comments, diff-like text).
+            # M3 (r4): for a whole-file deletion this is the ONLY place the
+            # real file name appears (new side is /dev/null) — keep it as
+            # the FALLBACK. M1 (r6): the new side wins otherwise, because
+            # line numbers are HEAD-side and renames must report the new
+            # path. Header prefixes are ONLY headers here, before the first
+            # @@ — inside a hunk, `--- text` is a removed line whose content
+            # starts with `-- ` (SQL/Lua comments, diff-like text).
             old_path = line[4:]
             if old_path != "/dev/null" and cur_file is None:
                 cur_file = old_path[2:] if old_path.startswith("a/") else old_path
             continue
         if awaiting_hunk and line.startswith("+++ "):
-            # M3 (r4): `+++ /dev/null` marks a whole-file deletion — the
-            # hunks that follow belong to the file named on the old side
-            # (set above), not to /dev/null. Never flush the previous file
-            # here: `diff --git` already did that.
+            # M1 (r6): the +++ path is authoritative unless /dev/null (a
+            # whole-file deletion has no new side). Never flush the previous
+            # file here: `diff --git` already did that.
             new_path = line[4:]
-            if new_path != "/dev/null" and cur_file is None:
+            if new_path != "/dev/null":
                 cur_file = new_path[2:] if new_path.startswith("b/") else new_path
             continue
         if awaiting_hunk and line.startswith(("index ", "old mode ", "new mode ",
@@ -696,15 +706,17 @@ def eval_against_golden(reported, golden_path):
 # ---------- report ----------
 
 def render(reported, skipped, verdict, pr_level, jitter, meta):
-    out = []
-    out.append("JEV REVIEW (experimental local reviewer — advisory only)")
+    prov = meta.get("provider", "jev")
+    model = meta.get("model")
+    prov_name = f"{prov}/{model}" if (prov == "laya" and model) else prov
+    out = [f"SYSTEM-ONE REVIEW (experimental local reviewer — advisory only, provider: {prov_name})"]
     out.append(f"repo={meta['repo']} mode={meta['mode']} head={meta['head'][:10]}")
     out.append(f"analyzed={meta['n_analyzed']} hunks, "
                f"skipped={len(skipped)}, "
                f"total_latency={meta['total_latency_ms']:.0f}ms, "
-               f"jev_calls={meta['jev_calls']}")
+               f"model_calls={meta['jev_calls']}")
     if meta.get("fail_open"):
-        out.append("!! Jev unavailable after repeated failures — "
+        out.append(f"!! {prov_name} unavailable after repeated failures — "
                    "heuristic-only run, treat as triage not review")
     out.append("")
     if not reported:
