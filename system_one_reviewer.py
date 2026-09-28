@@ -69,6 +69,10 @@ KNOWN_FIXTURES = {"positive", "negative"}
 # Per-run build provenance lives in
 # docs/benchmarks/2026-09-28-v03b-branch-benchmark.md.)
 PACKAGING_VERSION = "v03b"
+# Release version, stamped by scripts/build_release.py during semantic-release
+# (tags vX.Y.Z). Distinct from PACKAGING_VERSION, which versions the scoring
+# rubric the threshold sweep gates on.
+__version__ = "0.0.0-dev"
 
 
 def sev_level(v):
@@ -1252,6 +1256,8 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
 
 def main():
     ap = argparse.ArgumentParser(prog="system-one-reviewer")
+    ap.add_argument("--version", action="version",
+                    version=f"%(prog)s {__version__}")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--range", dest="range")
     ap.add_argument("--pr", type=int)
@@ -1364,6 +1370,7 @@ def main():
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
              "judged": judged,
              "packaging_version": PACKAGING_VERSION,
+             "tool_version": __version__,
              "provider": provider, "model": model,
              "fixture": args.fixture,
              "fixture_head": head,
