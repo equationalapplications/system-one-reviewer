@@ -17,6 +17,7 @@ Spec: docs/superpowers/specs/2026-09-28-corpus-eval-design.md
 import argparse
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -207,6 +208,237 @@ def cmd_fetch(args):
     return 0
 
 
+# ---------- spot-check ----------
+
+SPOT_COLS = ["candidate_id", "why", "thread", "code", "disposition", "label",
+             "severity", "evidence", "verdict", "correct_label", "note"]
+GATE = 0.85
+
+
+def is_disagreement(disposition, label):
+    return ((disposition == "fixed" and label == "false-positive")
+            or (disposition in ("not-applied", "unaddressed") and label == "real-bug"))
+
+
+def spotcheck_rows(adjudicated, candidates, seed=0, frac=0.2):
+    rows = sorted(adjudicated, key=lambda a: a["candidate_id"])
+    k = max(1, round(len(rows) * frac)) if rows else 0
+    random_ids = {a["candidate_id"] for a in random.Random(seed).sample(rows, k)}
+    out = []
+    for a in rows:
+        c = candidates[a["candidate_id"]]
+        why = []
+        if a["candidate_id"] in random_ids:
+            why.append("random")
+        if is_disagreement(c["disposition"], a["label"]):
+            why.append("disagreement")
+        if not why:
+            continue
+        out.append({
+            "candidate_id": a["candidate_id"], "why": "+".join(why),
+            "thread": f"[thread]({c['thread_url']})",
+            "code": (f"[code](https://github.com/{c['repo']}/blob/{c['original_commit']}/"
+                     f"{a['file']}#L{a['line']})"),
+            "disposition": c["disposition"], "label": a["label"],
+            "severity": a.get("severity_class") or "", "evidence": a.get("evidence") or "",
+            "verdict": "", "correct_label": "", "note": ""})
+    return out
+
+
+def _esc(v):
+    return str(v).replace("\n", " ").replace("\t", " ").replace("|", "\\|")
+
+
+def _cells(line):
+    parts = re.split(r"(?<!\\)\|", line.strip())
+    return [p.strip() for p in parts[1:-1]]
+
+
+def write_spot_check(path, rows):
+    head = ["# Corpus spot-check", "",
+            "Fill `verdict` with agree/disagree for every row. For a disagree, put the",
+            "correct label (real-bug/style/false-positive/unclear) in `correct_label`.",
+            f"Gate: agreement on `random` rows must be >= {GATE:.0%}.", "",
+            "| " + " | ".join(SPOT_COLS) + " |",
+            "|" + "---|" * len(SPOT_COLS)]
+    body = ["| " + " | ".join(_esc(r[c]) for c in SPOT_COLS) + " |" for r in rows]
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("\n".join(head + body) + "\n")
+
+
+def read_spot_check(path):
+    """(overrides id->label, agreed ids, agreement over random rows | None if unfilled)."""
+    overrides, agreed = {}, set()
+    n_random = n_agree = 0
+    unfilled = False
+    with open(path) as f:
+        for line in f:
+            if not line.startswith("| ") or line.startswith("| candidate_id"):
+                continue
+            cells = _cells(line)
+            if len(cells) != len(SPOT_COLS):
+                raise cl.CorpusError(f"spot-check row has {len(cells)} cells: {line!r}")
+            row = dict(zip(SPOT_COLS, cells, strict=True))
+            verdict = row["verdict"].lower()
+            if verdict not in ("agree", "disagree"):
+                unfilled = True
+                continue
+            if "random" in row["why"]:
+                n_random += 1
+                n_agree += verdict == "agree"
+            if verdict == "agree":
+                agreed.add(row["candidate_id"])
+            elif row["correct_label"]:
+                if row["correct_label"] not in cl.LABELS:
+                    raise cl.CorpusError(f"bad correct_label {row['correct_label']!r}")
+                overrides[row["candidate_id"]] = row["correct_label"]
+            else:
+                overrides[row["candidate_id"]] = "unclear"
+    if unfilled or n_random == 0:
+        return overrides, agreed, None
+    return overrides, agreed, n_agree / n_random
+
+
+# ---------- build ----------
+
+def _issue_row(sid, a, fix_sha, adjudicator, spot_checked):
+    return {"sample_id": sid, "file": a["file"], "line": str(a["line"]),
+            "verify_substring": a["verify_substring"],
+            "severity_class": a.get("severity_class") or "minor",
+            "category": a.get("category") or "", "evidence": _esc(a.get("evidence") or ""),
+            "fix_sha": fix_sha or "", "adjudicator": adjudicator,
+            "spot_checked": spot_checked}
+
+
+def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
+               private=frozenset()):
+    """Adjudications -> {"public"|"private": (prs, issues, dismissed)}, warnings.
+
+    verify(repo, sha, pr, file, line, substring) -> error str | None.
+    """
+    by_pr: dict[tuple[str, int], list[tuple[dict, dict, str]]] = {}
+    for a in adjudicated:
+        cid = a["candidate_id"]
+        if cid not in candidates:
+            raise cl.CorpusError(f"adjudication for unknown candidate {cid}")
+        label = overrides.get(cid, a["label"])
+        if label not in cl.LABELS:
+            raise cl.CorpusError(f"{cid}: bad label {label!r}")
+        if (cid not in overrides and label in cl.DISMISSED_LABELS
+                and a.get("dismissal_reason") not in cl.DISMISSAL_REASONS):
+            raise cl.CorpusError(f"{cid}: {label} needs a valid dismissal_reason")
+        if label == "unclear":
+            continue
+        c = candidates[cid]
+        by_pr.setdefault((c["repo"], c["pr"]), []).append((c, a, label))
+
+    out: dict[str, tuple[list[dict], list[dict], list[dict]]] = {
+        "public": ([], [], []), "private": ([], [], [])}
+    warnings: list[str] = []
+    promo_by_sid: dict[str, list[dict]] = {}
+    for p in promotions:
+        promo_by_sid.setdefault(p["sample_id"], []).append(p)
+
+    for (repo, pr), rows in sorted(by_pr.items()):
+        prs, issues, dismissed = out["private" if repo in private else "public"]
+        split = cl.split_for(repo, pr)
+        c0 = rows[0][0]
+        bugs = [r for r in rows if r[2] == "real-bug"]
+        pre_head = c0["original_commit"]
+        if bugs:  # the commit most real bugs were reported against
+            heads = [c["original_commit"] for c, _, _ in bugs]
+            pre_head = max(set(heads), key=heads.count)
+        pre_sid = cl.sample_id(repo, pr, "pre")
+        source = "fix-pr" if any(c["disposition_source"] == "fix-pr"
+                                 for c, _, _ in rows) else "thread-fix"
+        prs.append({"sample_id": pre_sid, "repo": repo, "base_sha": c0["base_ref_oid"],
+                    "head_sha": pre_head, "kind": "positive" if bugs else "clean",
+                    "split": split, "source": source})
+        for c, a, label in rows:
+            err = verify(repo, pre_head, pr, a["file"], int(a["line"]), a["verify_substring"])
+            if err:
+                warnings.append(f"{c['id']}: dropped — {err}")
+                continue
+            cid = c["id"]
+            human = cid in overrides
+            checked = "y" if (human or cid in agreed) else "n"
+            row = _issue_row(pre_sid, a, c.get("fix_sha"), "human" if human else "claude",
+                             checked)
+            if label == "real-bug":
+                issues.append(row)
+            else:
+                row["label"] = label
+                row["dismissal_reason"] = ("other" if human and not a.get("dismissal_reason")
+                                           else a.get("dismissal_reason") or "other")
+                dismissed.append(row)
+        if bugs and all(a.get("fixed_at_final") is True for _, a, _ in bugs):
+            fin_sid = cl.sample_id(repo, pr, "final")
+            promos = promo_by_sid.get(fin_sid, [])
+            prs.append({"sample_id": fin_sid, "repo": repo, "base_sha": c0["base_ref_oid"],
+                        "head_sha": c0["head_ref_oid"],
+                        "kind": "positive" if promos else "clean", "split": split,
+                        "source": "promoted" if promos else source})
+            for p in promos:
+                err = verify(repo, c0["head_ref_oid"], pr, p["file"], int(p["line"]),
+                             p["verify_substring"])
+                if err:
+                    warnings.append(f"{fin_sid} promotion {p['file']}:{p['line']}: {err}")
+                    continue
+                issues.append(_issue_row(fin_sid, p, "", "claude", "n"))
+    return out, warnings
+
+
+def _verify_via_cache(repo, sha, pr, file, line, substring):
+    d = cl.ensure_clone(repo)
+    cl.ensure_commit(d, sha, pr)
+    return cl.verify_row(d, sha, file, line, substring)
+
+
+def cmd_spotcheck(args):
+    work = os.path.join(args.corpus, "work")
+    cands = {c["id"]: c for c in cl.read_jsonl(os.path.join(work, "candidates.jsonl"))}
+    adj = cl.read_jsonl(os.path.join(work, "adjudicated.jsonl"))
+    rows = spotcheck_rows(adj, cands)
+    write_spot_check(os.path.join(work, "spot-check.md"), rows)
+    print(f"spotcheck: {len(rows)} rows -> {os.path.join(work, 'spot-check.md')}")
+    return 0
+
+
+def cmd_build(args, verify=_verify_via_cache):
+    work = os.path.join(args.corpus, "work")
+    sheet = os.path.join(work, "spot-check.md")
+    if not os.path.exists(sheet):
+        raise cl.CorpusError("no spot-check.md — run `spotcheck` and fill it in first")
+    overrides, agreed, agreement = read_spot_check(sheet)
+    if agreement is None:
+        raise cl.CorpusError("spot-check.md is not fully filled in")
+    if agreement < GATE:
+        raise cl.CorpusError(f"spot-check agreement {agreement:.0%} < {GATE:.0%} — revise "
+                             "the adjudication prompt and re-adjudicate")
+    cands = {c["id"]: c for c in cl.read_jsonl(os.path.join(work, "candidates.jsonl"))}
+    adj = cl.read_jsonl(os.path.join(work, "adjudicated.jsonl"))
+    promos = cl.read_jsonl(os.path.join(work, "promotions.jsonl"))
+    out, warnings = build_rows(cands, adj, overrides, agreed, promos, verify,
+                               private=set(args.private or ()))
+    for w in warnings:
+        print(f"build: warning: {w}", file=sys.stderr)
+    note = "generated by scripts/mine_corpus.py build — do not hand-edit"
+    for key, root in (("public", args.corpus), ("private", os.path.join(args.corpus, "local"))):
+        prs, issues, dismissed = out[key]
+        if key == "private" and not prs:
+            continue
+        cl.write_tsv(os.path.join(root, "prs.tsv"), cl.PRS_COLS, prs, note)
+        cl.write_tsv(os.path.join(root, "issues.tsv"), cl.ISSUE_COLS, issues, note)
+        cl.write_tsv(os.path.join(root, "dismissed.tsv"), cl.DISMISSED_COLS, dismissed, note)
+    corpus = cl.load_corpus(args.corpus)  # full validation of what was written
+    share = cl.check_holdout_share(corpus["prs"])
+    print(f"build: {len(corpus['prs'])} samples, {len(corpus['issues'])} issues, "
+          f"{len(corpus['dismissed'])} dismissed, holdout share {share:.2f}, "
+          f"agreement {agreement:.0%}, {len(warnings)} dropped")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -215,10 +447,19 @@ def main(argv=None):
     f.add_argument("--repo", action="append", required=True)
     f.add_argument("--limit", type=int, default=None, help="max merged PRs per repo")
     f.add_argument("--corpus", default=DEFAULT_CORPUS)
+    s = sub.add_parser("spotcheck")
+    s.add_argument("--corpus", default=DEFAULT_CORPUS)
+    b = sub.add_parser("build")
+    b.add_argument("--private", action="append", help="repos whose rows go to corpus/local/")
+    b.add_argument("--corpus", default=DEFAULT_CORPUS)
     args = ap.parse_args(argv)
     try:
         if args.cmd == "fetch":
             return cmd_fetch(args)
+        if args.cmd == "spotcheck":
+            return cmd_spotcheck(args)
+        if args.cmd == "build":
+            return cmd_build(args)
     except cl.CorpusError as e:
         print(f"mine_corpus: {e}", file=sys.stderr)
         return 1
