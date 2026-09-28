@@ -342,6 +342,20 @@ def run_git(repo, *args):
     return r.stdout
 
 
+GIT_PROBE_TIMEOUT = 30  # seconds; rev-parse is instant unless git is stuck
+
+
+def _git_probe(repo, *args):
+    """Cheap up-front git check -> returncode. Bounded: a stalled git
+    (hung network FS, index lock) must not block the CLI forever."""
+    try:
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True,
+                              text=True, timeout=GIT_PROBE_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        sys.exit(f"system-one-reviewer: git {' '.join(args)} timed out after "
+                 f"{GIT_PROBE_TIMEOUT}s in {repo!r}")
+
+
 def resolve_diff(repo, args):
     """Return (diff_text, head_sha, mode).
 
@@ -354,9 +368,7 @@ def resolve_diff(repo, args):
     """
     # Checked up front: a bad --repo otherwise surfaces as git diff's full
     # usage text (outside a work tree `git diff` falls back to --no-index).
-    probe = subprocess.run(["git", "-C", repo, "rev-parse", "--git-dir"],
-                           capture_output=True, text=True)
-    if probe.returncode != 0:
+    if _git_probe(repo, "rev-parse", "--git-dir") != 0:
         sys.exit(f"system-one-reviewer: {repo!r} is not a git repository")
     if args.range:
         # F5 (field evals, 2026-09-28): merge-base diff, matching the
@@ -387,10 +399,8 @@ def resolve_diff(repo, args):
         return (run_git(repo, "diff"),
                 run_git(repo, "rev-parse", "HEAD").strip(), "uncommitted")
     if args.pr:
-        ref = subprocess.run(["git", "-C", repo, "rev-parse", "--verify",
-                              "--quiet", f"pr/{args.pr}^{{commit}}"],
-                             capture_output=True, text=True)
-        if ref.returncode != 0:
+        if _git_probe(repo, "rev-parse", "--verify", "--quiet",
+                      f"pr/{args.pr}^{{commit}}") != 0:
             sys.exit(f"system-one-reviewer: no local ref pr/{args.pr} — run "
                      f"`git fetch origin pull/{args.pr}/head:pr/{args.pr}` "
                      "in the repo first")

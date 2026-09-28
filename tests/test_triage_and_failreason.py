@@ -185,3 +185,35 @@ def test_empty_diff_makes_no_model_calls(jr, tmp_path, capsys, monkeypatch):
     assert calls == [], "an empty diff must not spend a model call"
     assert "empty diff" in out.lower()
     assert out.rstrip().splitlines()[-1] == "Approved"
+
+
+def test_git_probe_timeout_is_a_clear_error(jr, tmp_path, monkeypatch):
+    """A stalled git (hung network FS, lock) must not block the CLI
+    forever: the up-front probes carry a timeout and report it cleanly."""
+    import subprocess as sp
+    seen = {}
+
+    def hang(cmd, **kw):
+        seen["timeout"] = kw.get("timeout")
+        raise sp.TimeoutExpired(cmd, kw.get("timeout"))
+
+    monkeypatch.setattr(jr.subprocess, "run", hang)
+    with pytest.raises(SystemExit, match="timed out"):
+        jr.resolve_diff(str(tmp_path), _args(staged=True))
+    assert seen["timeout"], "probe must pass a timeout"
+
+
+def test_pr_ref_probe_timeout_is_a_clear_error(jr, tmp_path, monkeypatch):
+    import subprocess as sp
+    repo = _git_repo(tmp_path)
+    real_run = sp.run
+
+    def hang_on_verify(cmd, **kw):
+        if "--verify" in cmd:
+            assert kw.get("timeout"), "pr-ref probe must pass a timeout"
+            raise sp.TimeoutExpired(cmd, kw["timeout"])
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(jr.subprocess, "run", hang_on_verify)
+    with pytest.raises(SystemExit, match="timed out"):
+        jr.resolve_diff(str(repo), _args(pr=7))
