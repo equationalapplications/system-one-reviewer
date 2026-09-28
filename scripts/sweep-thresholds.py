@@ -2,7 +2,7 @@
 """E5: threshold sweep over already-logged metrics runs.
 
 Reads metrics.jsonl, selects runs by label prefix, gates them on the
-committed expected fixture SHAs and packaging_version=v03, replays each
+committed expected fixture SHAs and packaging_version=v03b, replays each
 run's `judged` array through jev-review's own `compose` at every threshold
 (no logic duplication), combines runs per threshold by MINIMUM F1 (the
 worst-run figure), picks the candidate by argmax with a documented tie rule
@@ -15,7 +15,7 @@ group; mixed providers among the selected runs is a hard error.
 
 Usage:
   sweep-thresholds.py --metrics FILE --label PREFIX --golden POS.tsv \
-      --negative-golden NEG.tsv --shas FILE [--packaging-version v03]
+      --negative-golden NEG.tsv --shas FILE [--packaging-version v03b]
 
 --shas file format: lines `positive=<full40sha>` / `negative=<full40sha>`
 (the same constants as examples/fixture-shas.txt).
@@ -57,7 +57,7 @@ def threshold_grid():
     return list(GRID)
 
 
-def gate_run(rec, expected, packaging_version="v03"):
+def gate_run(rec, expected, packaging_version="v03b"):
     """Reject stale, hand-edited, fail-open, or incomplete runs loudly.
 
     r12 MINOR 2: the verdict is checked too — `n_analyzed` counts
@@ -108,7 +108,7 @@ def check_single_provider_group(recs):
     return groups.pop()
 
 
-def select_runs(recs, expected, label_prefix, packaging_version="v03"):
+def select_runs(recs, expected, label_prefix, packaging_version="v03b"):
     sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
     if not sel:
         die(f"no runs with label prefix {label_prefix!r}")
@@ -140,10 +140,17 @@ def select_runs(recs, expected, label_prefix, packaging_version="v03"):
 # ---------- replay through compose ----------
 
 def rewrap(j):
-    """Flat judged entry -> the `f['hunk'][...]` shape compose consumes."""
+    """Flat judged entry -> the `f['hunk'][...]` shape compose consumes.
+
+    v03b: rubric/references_remaining/change_type ride through when the
+    ledger record has them (v03b+ records). Older records replay as
+    code-change rubric without corroboration fields — correct, because
+    pre-v03b runs never sent deletion questions either."""
     return {"hunk": {"file": j["file"], "line": j["line"]},
             "is_real": j["is_real"], "severity": j["severity"],
-            "category": j.get("category"), "parse_error": None}
+            "category": j.get("category"), "parse_error": None,
+            "rubric": j.get("rubric", "code-change"),
+            "references_remaining": j.get("references_remaining")}
 
 
 def replay(jr, run, t):
@@ -316,7 +323,7 @@ def main(argv=None):
                          "triage-leakage guard; required so the guard "
                          "cannot silently turn off (r3 m2)")
     ap.add_argument("--shas", required=True, help="expected fixture SHA file")
-    ap.add_argument("--packaging-version", default="v03")
+    ap.add_argument("--packaging-version", default="v03b")
     args = ap.parse_args(argv)
 
     expected = load_shas(args.shas)

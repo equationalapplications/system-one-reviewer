@@ -132,6 +132,8 @@ and the `~/.config/jev-review/.env` / `JEV_REVIEW_METRICS` names.
 Field runs logged empty labels and `repo: "."` (`os.path.basename`
 (:977) returns "." for "." and "" for trailing slashes). Proposal: default
 label = mode when unset; store `basename(realpath(repo))`.
+(Implemented in v0.3b as `auto:<mode>`; pre-v0.3b ledger records keep
+their bare-mode labels — historical, no migration.)
 
 ## Candidate v0.3 changes
 

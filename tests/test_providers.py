@@ -189,15 +189,15 @@ def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
     golden.write_text("a.py\t10\tx\n")
 
     def pos(i):
-        return {"label": f"v03-mix-baseline-{i}", "fixture": "positive",
+        return {"label": f"v03b-mix-baseline-{i}", "fixture": "positive",
                 "fixture_head": "a" * 40, "head": "a" * 10,
-                "packaging_version": "v03", "provider": "jev", "model": None,
+                "packaging_version": "v03b", "provider": "jev", "model": None,
                 "judged": []}
 
     def neg(i, provider="laya"):
-        return {"label": f"v03-mix-negative-{i}", "fixture": "negative",
+        return {"label": f"v03b-mix-negative-{i}", "fixture": "negative",
                 "fixture_head": "b" * 40, "head": "b" * 10,
-                "packaging_version": "v03", "provider": provider,
+                "packaging_version": "v03b", "provider": provider,
                 "model": "convaiinnovations/rl-agent", "judged": []}
 
     # 3 positive (jev) + 3 negative, one of which is laya -> mixed survivors.
@@ -209,7 +209,7 @@ def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
     shas.write_text(f"positive={'a' * 40}\nnegative={'b' * 40}\n")
     sw_path = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
     r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
-                        "--label", "v03-mix-", "--golden", str(golden),
+                        "--label", "v03b-mix-", "--golden", str(golden),
                         "--negative-golden", str(golden),
                         "--shas", str(shas)],
                        capture_output=True, text=True)
@@ -229,16 +229,16 @@ def test_sweep_skips_stale_mixed_provider_run(jr, tmp_path):
         # the full length even for synthetic runs).
         return {"label": label, "fixture": fixture,
                 "fixture_head": sha * 8, "head": (sha * 8)[:10],
-                "packaging_version": "v03",
+                "packaging_version": "v03b",
                 "provider": provider, "model": model, "judged": []}
 
     # negative-3 is stale (wrong fixture SHA) AND laya: must be skipped.
-    recs = [rec("v03-stale-baseline-1", "positive", "a", "jev"),
-            rec("v03-stale-baseline-2", "positive", "a", "jev"),
-            rec("v03-stale-baseline-3", "positive", "a", "jev"),
-            rec("v03-stale-negative-1", "negative", "b", "jev"),
-            rec("v03-stale-negative-2", "negative", "b", "jev"),
-            rec("v03-stale-negative-3", "negative", "c", "laya",
+    recs = [rec("v03b-stale-baseline-1", "positive", "a", "jev"),
+            rec("v03b-stale-baseline-2", "positive", "a", "jev"),
+            rec("v03b-stale-baseline-3", "positive", "a", "jev"),
+            rec("v03b-stale-negative-1", "negative", "b", "jev"),
+            rec("v03b-stale-negative-2", "negative", "b", "jev"),
+            rec("v03b-stale-negative-3", "negative", "c", "laya",
                 "convaiinnovations/rl-agent")]
     metrics = tmp_path / "metrics.jsonl"
     metrics.write_text("".join(json.dumps(r) + "\n" for r in recs))
@@ -246,7 +246,7 @@ def test_sweep_skips_stale_mixed_provider_run(jr, tmp_path):
     shas.write_text(f"positive={'a' * 40}\nnegative={'b' * 40}\n")
     sw_path = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
     r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
-                        "--label", "v03-stale-", "--golden", str(golden),
+                        "--label", "v03b-stale-", "--golden", str(golden),
                         "--negative-golden", str(golden),
                         "--shas", str(shas)],
                        capture_output=True, text=True)

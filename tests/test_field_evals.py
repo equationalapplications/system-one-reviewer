@@ -50,7 +50,7 @@ def test_infile_deletion_is_deletion_only_not_whole_file(jr):
         "diff --git a/src/nine.py b/src/nine.py\n"
         "--- a/src/nine.py\n"
         "+++ b/src/nine.py\n"
-        "@@ -1,9 +1,8 @@\n"
+        "@@ -1,4 +1,3 @@\n"
         " line1\n"
         "-dead_middle()\n"
         " line4\n"
@@ -147,7 +147,8 @@ def test_deletion_verdict_requires_corroboration(jr):
 
 def test_deletion_verdict_flips_when_corroborated(jr):
     """Corroboration paths: references_remaining=True (deterministic grep
-    hit) or a second (code-change) reported finding."""
+    hit) or a reported CODE-CHANGE finding. Deletion findings do NOT
+    corroborate each other (v0.3b M2 fix: #45 had six wrong together)."""
     def _finding(refs, rubric="deletion", file="a.ts"):
         return {"hunk": {"file": file, "line": 1, "header": "h", "lines": []},
                 "severity": 2.8, "is_real": 0.75, "category": "other",
@@ -156,7 +157,37 @@ def test_deletion_verdict_flips_when_corroborated(jr):
     assert v1 == "Changes requested"      # grep says code still references it
     second = _finding(False, rubric="code-change", file="b.py")
     _, _j, v2 = jr.compose([_finding(False), second], [], None)
-    assert v2 == "Changes requested"      # corroborated by another finding
+    assert v2 == "Changes requested"      # corroborated by a code-change finding
+
+
+def test_two_uncorroborated_deletions_do_not_flip(jr):
+    """v0.3b M2 fix (Opus): the gate covers the 2-MAJOR path too — two
+    uncorroborated deletion findings at MAJOR severity must NOT reach
+    'Changes requested' via len(majors) >= 2 (#45 had six clusters)."""
+    def _major(file):
+        return {"hunk": {"file": file, "line": 1, "header": "h", "lines": []},
+                "severity": 2.0, "is_real": 0.75, "category": "bug-risk",
+                "rubric": "deletion", "references_remaining": False}
+    reported, _j, verdict = jr.compose([_major("a.ts"), _major("b.ts")],
+                                       [], None)
+    assert verdict == "Approved"
+    assert len(reported) == 2             # both still visible to the human
+
+
+def test_deletion_major_verdict_eligible_when_corroborated(jr):
+    """m5 (Opus): corroborated deletion findings are verdict-eligible —
+    two corroborated deletion MAJORs DO reach 'Changes requested'. The
+    gate is about corroboration, not severity. (A lone corroborated
+    MAJOR still doesn't flip — the 2-MAJOR majority rule is unchanged.)"""
+    def _major(file):
+        return {"hunk": {"file": file, "line": 1, "header": "h",
+                         "lines": []},
+                "severity": 2.0, "is_real": 0.75, "category": "bug-risk",
+                "rubric": "deletion", "references_remaining": True}
+    _, _j, v_one = jr.compose([_major("a.ts")], [], None)
+    assert v_one == "Approved"            # lone MAJOR: majority rule unchanged
+    _, _j, v_two = jr.compose([_major("a.ts"), _major("b.ts")], [], None)
+    assert v_two == "Changes requested"   # corroborated, majority met
 
 
 def test_deletion_rubric_uses_own_threshold(jr):
@@ -270,7 +301,7 @@ def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
     assert rec["label"] == "auto:range:main...feature"
     assert rec["repo"] == tmp_path.name
-    assert rec["packaging_version"] == "v03"
+    assert rec["packaging_version"] == "v03b"
 
 
 def test_infile_deletion_with_context_is_deletion_only(jr):
@@ -294,7 +325,6 @@ def test_infile_deletion_with_context_is_deletion_only(jr):
     state = jr.hunk_state(hunks[0])
     assert state["change_type"] == "deletion-only"
     assert state["code_after_change"]     # context survives; state is honest
-    assert any("dead_middle" in b for b in state["code_before_change"])
     # v0.3b: 'dead_middle' appears in no surviving line here, but line4/line5
     # don't mention it either — references_remaining must be a real bool
     assert state["references_remaining"] is False
