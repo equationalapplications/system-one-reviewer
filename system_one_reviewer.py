@@ -6,7 +6,8 @@ Tessera on the ThinkPad. Runs in seconds, costs fractions of a cent, use
 freely and often. Posts nothing anywhere; prints a report, optionally JSON.
 
 Design (v0.2, evaluation-hardened):
-  1. gather   — git plumbing pre-computes merge-base/diff/head (no re-derivation)
+  1. gather   — git plumbing computes diff/head (--range reviews the
+                merge-base diff A...B; --pr uses the same form)
   2. triage   — deterministic skip: lockfiles, generated, docs-only
   3. package  — diff split into change clusters with file:line anchors,
                 hunk-boundary clamping (windows never cross an @@ header)
@@ -326,7 +327,10 @@ def resolve_diff(repo, args):
     HEAD would diverge, which the committed fixtures never do.
     """
     if args.range:
-        diff = run_git(repo, "diff", args.range)
+        # F5 (field evals, 2026-09-28): merge-base diff, matching the
+        # documented behavior and --pr. A..B on a stale base showed
+        # post-branch main-side changes as deletions (false-FP machine).
+        diff = run_git(repo, "diff", triple_dot(args.range))
         head = run_git(repo, "rev-parse", "HEAD").strip()
         return diff, head, f"range:{args.range}"
     if args.staged:
@@ -343,6 +347,21 @@ def resolve_diff(repo, args):
 
 
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def triple_dot(rng):
+    """Rewrite a two-dot range spec to its merge-base form.
+
+    `A..B` becomes `A...B`; anything else (SHA, `--cached`-style specs,
+    ranges that already use `...`) passes through unchanged. `git diff
+    A...B` reviews the branch's own changes against the merge-base, so a
+    stale main never masquerades as deletions in the reviewed diff.
+    """
+    if rng.count("..") == 1 and "..." not in rng:
+        left, right = rng.split("..", 1)
+        if left and right:
+            return f"{left}...{right}"
+    return rng
 
 
 def package_hunks(diff):
@@ -621,12 +640,54 @@ PR_QUESTIONS = {
         "instructions": "Should a human reviewer look at this change set beyond this automated report?"},
 }
 
+# F1 (field evals 2026-09-28): deletion-only clusters have no surviving
+# code to be "buggy", so the generic severity question ("most serious
+# problem in this hunk") systematically over-scores pure removals — the
+# #45 field run put six harmless file deletions at BLOCKER-level severity.
+# The questions below ask what a deletion can actually be guilty of: was
+# something load-bearing removed? Severity scores removal risk, not code
+# risk; the is_real gate and compose() stay unchanged.
+DELETION_QUESTIONS = {
+    "severity": {
+        "type": "score",
+        "instructions": "This hunk only REMOVES code. How risky is the removal itself?",
+        "criteria": [
+            "Safe removal: dead code, unused asset, or superseded logic",
+            "Minor: removal is fine but leaves small debris (stale doc reference, unused import elsewhere)",
+            "Major: something load-bearing was removed — a caller, config, or behavior disappears",
+            "Blocker: removal breaks builds, tests, security, or data the system still needs",
+        ]},
+    "is_real_issue": {
+        "type": "noul",
+        "instructions": "Does this removal genuinely warrant a reviewer comment (e.g. something load-bearing was deleted)?"},
+    "category": {
+        "type": "choice",
+        "instructions": "What kind of issue is it, if any?",
+        "criteria": {
+            "bug-risk": "The removal breaks remaining code that still references it",
+            "security": "The removal was load-bearing for security or secret handling",
+            "style": "Debris the removal leaves behind (stale references, dead imports)",
+            "performance": "The removal hurts performance (e.g. a needed cache was deleted)",
+            "test-gap": "The removal took away coverage the system still needs",
+            "other": "Any other removal-related issue worth noting",
+        }},
+}
+
 
 # ---------- judge + compose ----------
 
 def hunk_state(h):
     """Structured before/after state, read from `entries` only (never the
-    rendered lines, which can corrupt text containing ': + ')."""
+    rendered lines, which can corrupt text containing ': + ').
+
+    change_type (F1, field evals 2026-09-28): 'deletion-only' when the
+    cluster adds nothing (empty after-state) — there is no surviving code
+    to be "buggy", so the model gets the deletion-adapted question set
+    (DELETION_QUESTIONS) instead of full severity scoring. On the #45 field
+    run, six deletion-only clusters scored severity 2.73-2.82 under the
+    generic questions and the one crossing the is_real gate flipped the
+    verdict to "Changes requested" on a clean cleanup PR.
+    """
     before, after = [], []
     for w in h["entries"]:
         kind, _n, text = w[0], w[1], w[2]
@@ -640,20 +701,30 @@ def hunk_state(h):
     return {
         "file": h["file"],
         "location": f"around line {h['line']}",
+        "change_type": "deletion-only" if not after else "code-change",
         "code_before_change": before,
         "code_after_change": after,
     }
 
 
 def judge(hunks, ask):
-    """ask is the wired provider's ask(state, questions) (E8 contract)."""
+    """ask is the wired provider's ask(state, questions) (E8 contract).
+
+    F1: deletion-only clusters (empty after-state) get DELETION_QUESTIONS —
+    removal-risk scoring instead of code-bug scoring; all other clusters
+    get HUNK_QUESTIONS. The response contract and compose() gating are
+    identical for both sets.
+    """
     findings, latencies, failures = [], [], 0
     parse_failures = 0  # M1 (r8): consecutive shape errors, separate counter
     kept_hunks = len(hunks)
     for h in hunks:
         state = hunk_state(h)
+        questions = (DELETION_QUESTIONS
+                     if state["change_type"] == "deletion-only"
+                     else HUNK_QUESTIONS)
         try:
-            payload, ms = ask(state, HUNK_QUESTIONS)
+            payload, ms = ask(state, questions)
             latencies.append(ms)
             failures = 0
         except Exception:
@@ -974,7 +1045,8 @@ def main():
          "category": f.get("category"), "confidence": f.get("confidence"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
-    meta = {"repo": os.path.basename(args.repo), "mode": mode, "head": head,
+    meta = {"repo": os.path.basename(os.path.abspath(args.repo)),
+            "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks), "n_analyzed": len(kept),
             "total_latency_ms": total, "jev_calls": len(latencies),
@@ -999,7 +1071,10 @@ def main():
         golden_eval["negative_eval"] = neg
         result["golden_eval"] = golden_eval
 
-    log_run({"label": args.label, "repo": meta["repo"], "mode": mode,
+    # F7 (field evals, 2026-09-28): label hygiene — an empty label weakens
+    # the ledger (several field runs logged label:""). Default to the mode
+    # so every record is attributable.
+    log_run({"label": args.label or mode, "repo": meta["repo"], "mode": mode,
              "head": head[:10], "n_hunks": meta["n_hunks"],
              "n_analyzed": meta["n_analyzed"], "verdict": verdict,
              "fail_open": fail_open, "total_latency_ms": round(total, 1),
