@@ -654,6 +654,12 @@ def package_hunks(diff):
                         lines.append("    - " + t)
                     else:
                         lines.append(f"{n}:   {t}")
+                # corpus spec §1: cluster line span (new-file line numbers
+                # covering the cluster's window). Deletion entries use the
+                # tracked new line; missing entries drop out so a pure
+                # insertion can't drag the span to a different hunk.
+                span = [e[4] if e[0] == "-" else e[1] for e in window]
+                span = [n for n in span if n is not None] or [anchor]
                 # count only THIS cluster's changed lines: a neighbour's
                 # changed lines may appear as context but are not ours
                 n_changed = len(g)
@@ -677,6 +683,7 @@ def package_hunks(diff):
                     change_type = "code-change"
                 hunks.append({
                     "file": fname, "line": anchor,
+                    "line_start": min(span), "line_end": max(span),
                     "hunk_start": seg_hunk_start,
                     "header": f"@@ {fname} around line {anchor} "
                               f"({n_changed} changed lines) @@",
@@ -690,17 +697,25 @@ def package_hunks(diff):
     return hunks
 
 
+def _span(h):
+    """Cluster's window span (new-file lines) for corpus-side matching."""
+    return {"line_start": h.get("line_start", h["line"]),
+            "line_end": h.get("line_end", h["line"])}
+
+
 def triage(hunks):
     """Deterministic skip: lockfiles, generated dirs, docs-only runs."""
     kept, skipped = [], []
     for h in hunks:
         f = h["file"] or ""
         if SKIP_PATTERNS.search(f) or DOC_EXT.search(f):
-            skipped.append({"file": f, "reason": "docs/generated/lockfile"})
+            skipped.append({"file": f, "reason": "docs/generated/lockfile",
+                            **_span(h)})
         elif DATA_EXT.search(f):
-            skipped.append({"file": f, "reason": "data/snapshot"})
+            skipped.append({"file": f, "reason": "data/snapshot", **_span(h)})
         elif h["too_large"]:
-            skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines"})
+            skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines",
+                            **_span(h)})
         else:
             kept.append(h)
     return kept, skipped
@@ -1322,6 +1337,7 @@ def main():
     total = sum(latencies)
     judged = [
         {"file": f["hunk"]["file"], "line": f["hunk"]["line"],
+         **_span(f["hunk"]),
          "severity": f.get("severity"), "is_real": f.get("is_real"),
          "category": f.get("category"), "confidence": f.get("confidence"),
          # v03b (Opus r2 B1): the fields compose()'s gate reads MUST ride
@@ -1342,6 +1358,7 @@ def main():
     result = {"meta": meta, "pr_level": pr_level if not fail_open else None,
               "findings": [
                   {"file": f["hunk"]["file"], "line": f["hunk"]["line"],
+                   **_span(f["hunk"]),
                    "severity": f.get("severity"), "is_real": f.get("is_real"),
                    "category": f.get("category"), "header": f["hunk"]["header"]}
                   for f in reported],
