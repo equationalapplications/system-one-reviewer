@@ -1,27 +1,121 @@
 name: CI
 
+# lint + typecheck + test on every PR and main push; on main, once all three
+# pass, semantic-release cuts the release (version bump, CHANGELOG, vX.Y.Z tag,
+# GitHub release with the single-file script + SHA256SUMS attached).
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel stale PR runs, never a main run: a main run may be mid-release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: ruff check --output-format=github .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # the oldest supported Python, so newer-only syntax fails here
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: mypy  # files + strictness live in pyproject.toml
+
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.12", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install test deps (pytest only — no network in tests)
-        run: python -m pip install pytest
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
       - name: Run test suite (offline)
         run: python -m pytest tests/ -q
         env:
           # no secrets, no network: the suite stubs providers and points
           # HOME/JEV_REVIEW_METRICS at tmp dirs itself
           TYPESAFE_API_KEY: ""
+
+  release:
+    needs: [lint, typecheck, test]
+    # push to main, or a manual dispatch on main to retry a failed release
+    # (semantic-release is a no-op when there is nothing new to release).
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write       # push the release commit + tag, create the release
+      issues: write         # comment on issues fixed by the release
+      pull-requests: write  # comment on PRs included in the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # semantic-release reads the whole history and tags, and pushes
+          # the release commit, so credentials must persist here.
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"  # runs scripts/build_release.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # the runner's cached 24.x can predate package.json's >=24.15
+          # engines floor; resolve the newest 24.x instead.
+          check-latest: true
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: semantic-release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: recover partial release
+        # If semantic-release left a draft release with missing assets
+        # (a single asset upload rejecting in Promise.all leaves the
+        # release as a draft), rebuild from the tag's source tree,
+        # upload what's missing, and publish the draft. The tag was
+        # already pushed, so a follow-up dispatch is a no-op for
+        # semantic-release — this step is what makes the retry work.
+        if: always()
+        run: python3 scripts/recover_release.py --repo equationalapplications/system-one-reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

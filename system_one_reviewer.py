@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""system-one-reviewer — local PR review powered by deterministic code + a system one model (hosted Jev or local Laya).
+"""system-one-reviewer — local PR review powered by deterministic code + a system
+one model (hosted Jev or local Laya).
 
 Experimental (D1, Kurt 2026-09-27): an ADDITIONAL lightweight reviewer for
 Tessera on the ThinkPad. Runs in seconds, costs fractions of a cent, use
@@ -68,6 +69,10 @@ KNOWN_FIXTURES = {"positive", "negative"}
 # Per-run build provenance lives in
 # docs/benchmarks/2026-09-28-v03b-branch-benchmark.md.)
 PACKAGING_VERSION = "v03b"
+# Release version, stamped by scripts/build_release.py during semantic-release
+# (tags vX.Y.Z). Distinct from PACKAGING_VERSION, which versions the scoring
+# rubric the threshold sweep gates on.
+__version__ = "0.0.0-dev"
 
 
 def sev_level(v):
@@ -125,7 +130,7 @@ def load_api_key() -> str:
 def _get_conn():
     global _conn
     if _conn is None:
-        _conn = HTTPSConnection(_url.hostname, _url.port or 443,
+        _conn = HTTPSConnection(_url.hostname or "", _url.port or 443,
                                 context=_ssl_ctx, timeout=15)
     return _conn
 
@@ -247,21 +252,21 @@ def make_provider(provider, model, api_key=None):
     if provider == "jev":
         key = api_key if api_key is not None else load_api_key()
 
-        def provider_ask(state, questions):
+        def jev_provider_ask(state, questions):
             return jev_ask(state, questions, key)
 
-        set_transport(provider_ask)
+        set_transport(jev_provider_ask)
         set_provider_name("jev")
-        return provider_ask
+        return jev_provider_ask
     # laya: local inference; the router loads lazily on first call and is
     # kept for the process lifetime.
-    def provider_ask(state, questions):
+    def laya_provider_ask(state, questions):
         router = get_laya_router(model=model)
         return laya_ask(router, state, questions)
 
-    set_transport(provider_ask)
+    set_transport(laya_provider_ask)
     set_provider_name(f"laya/{model}" if model else "laya")
-    return provider_ask
+    return laya_provider_ask
 
 
 def get_laya_router(model=None, loader=None):
@@ -449,7 +454,10 @@ def package_hunks(diff):
     would drift); the old-file line rides along on each '-' entry for
     display. Deterministic."""
     CTX = 4
-    per_file, cur_file, entries = [], None, []
+    per_file, cur_file = [], None
+    # ('+', new_line, text, hunk_start) or, for deletions, the same plus the
+    # clamped HEAD anchor — variable-length on purpose.
+    entries: list[tuple] = []
     file_deleted = False  # v0.3b: the +++ side was /dev/null (whole-file deletion)
     old_line = new_line = hunk_start = hunk_end = 1
     awaiting_hunk = True  # m2 (r6): plain unified diffs start at `--- `
@@ -576,7 +584,9 @@ def package_hunks(diff):
     hunks = []
     for fname, ents, file_was_deleted in per_file:
         # hunk-boundary segments: no cluster/window crosses an @@
-        segments, cur_seg, cur_hs = [], [], None
+        segments: list[tuple] = []
+        cur_seg: list = []
+        cur_hs = None
         for e in ents:
             if cur_seg and e[3] != cur_hs:
                 segments.append((cur_hs, cur_seg))
@@ -605,7 +615,7 @@ def package_hunks(diff):
                 # Expansion stops at any neighbouring cluster's +/- entry,
                 # so a neighbour's changed lines never appear — not even as
                 # "context"; only shared context lines may.
-                foreign = set()
+                foreign: set[int] = set()
                 for g2 in groups:
                     if g2 is not g:
                         foreign.update(range(g2[0], g2[-1] + 1))
@@ -734,7 +744,8 @@ PR_QUESTIONS = {
         ]},
     "needs_human_review": {
         "type": "noul",
-        "instructions": "Should a human reviewer look at this change set beyond this automated report?"},
+        "instructions": ("Should a human reviewer look at this change set "
+                         "beyond this automated report?")},
 }
 
 # F1 (field evals 2026-09-28): deletion-only clusters have no surviving
@@ -758,13 +769,19 @@ DELETION_QUESTIONS = {
                          "risky is the removal on its face?"),
         "criteria": [
             "Safe removal: dead code, unused asset, or superseded logic",
-            "Minor: removal is fine but leaves small debris (stale doc reference, unused import elsewhere)",
-            "Major: the removed code carried behavior nothing in this hunk replaces — a caller, config, or behavior disappears",
-            "Blocker: the removal takes down builds, tests, or security handling on its face (e.g. deletes the only test for a kept feature)",
+            ("Minor: removal is fine but leaves small debris (stale doc "
+             "reference, unused import elsewhere)"),
+            ("Major: the removed code carried behavior nothing in this hunk "
+             "replaces — a caller, config, or behavior disappears"),
+            ("Blocker: the removal takes down builds, tests, or security "
+             "handling on its face (e.g. deletes the only test for a kept "
+             "feature)"),
         ]},
     "is_real_issue": {
         "type": "noul",
-        "instructions": "Does this removal itself warrant a reviewer comment (independent of whether other files reference the deleted code)?"},
+        "instructions": ("Does this removal itself warrant a reviewer "
+                         "comment (independent of whether other files "
+                         "reference the deleted code)?")},
     "category": {
         "type": "choice",
         "instructions": "What kind of issue is it, if any?",
@@ -820,14 +837,14 @@ def references_remaining(h, after_texts):
         # import targets: 'from mod import a, b' / 'import mod'. Skip
         # non-identifier fragments (Opus r2 m3: `import React from 'react'`
         # and multiline `from x import (` produce junk names).
-        m = re.match(r"\s*(?:from\s+([\w.]+)\s+import\s+(.+)|import\s+([\w.,\s]+))",
+        imp = re.match(r"\s*(?:from\s+([\w.]+)\s+import\s+(.+)|import\s+([\w.,\s]+))",
                      text)
-        if m:
-            for part in (m.group(2) or m.group(3) or "").split(","):
+        if imp:
+            for part in (imp.group(2) or imp.group(3) or "").split(","):
                 nm = part.strip().split(" as ")[0].strip()
                 if nm and re.fullmatch(r"[A-Za-z_]\w*", nm):
                     removed_names.add(nm.split(".")[-1])
-            mod = (m.group(1) or m.group(3) or "").strip()
+            mod = (imp.group(1) or imp.group(3) or "").strip()
             # v03b r3 M1 (Opus): relative imports (`from .utils import x`,
             # `from . import x`) yield empty first segments; an empty name
             # makes `\b\b` match ANY word boundary — reopening the #45 FP
@@ -1074,7 +1091,8 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
 
     corroboration_pool = [f for f in reported
                           if f.get("rubric", "code-change") != "deletion"]
-    blockers, majors = [], []
+    blockers: list[dict] = []
+    majors: list[dict] = []
     for f in reported:
         lvl = sev_level(f.get("severity"))
         if lvl >= 2:
@@ -1138,7 +1156,7 @@ def eval_against_golden(reported, golden_path):
     chosen = []  # (reported_idx, golden_idx) pairs the greedy pass kept
     matches = []  # (distance, reported_idx, golden_idx)
     for i, f in enumerate(reported):
-        for j, (gfile, gline, gdesc) in enumerate(golden):
+        for j, (gfile, gline, _gdesc) in enumerate(golden):
             if f["hunk"]["file"] == gfile and abs(f["hunk"]["line"] - gline) <= 1:
                 matches.append((abs(f["hunk"]["line"] - gline), i, j))
     matches.sort(key=lambda m: (m[0], golden[m[2]][1], m[1]))
@@ -1175,7 +1193,8 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
     prov = meta.get("provider", "jev")
     model = meta.get("model")
     prov_name = f"{prov}/{model}" if (prov == "laya" and model) else prov
-    out = [f"SYSTEM-ONE REVIEW (experimental local reviewer — advisory only, provider: {prov_name})"]
+    out = ["SYSTEM-ONE REVIEW (experimental local reviewer — advisory only, "
+           f"provider: {prov_name})"]
     out.append(f"repo={meta['repo']} mode={meta['mode']} head={meta['head'][:10]}")
     out.append(f"analyzed={meta['n_analyzed']} hunks, "
                f"skipped={len(skipped)}, "
@@ -1197,8 +1216,8 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
         out.append(f"[{sev}] {f['hunk']['file']}:{f['hunk']['line']} "
                    f"({f.get('category')}, is_real={f.get('is_real')})")
         out.append(f"  hunk: {f['hunk']['header']}")
-        for l in f["hunk"]["lines"][:6]:
-            out.append("    " + l)
+        for line in f["hunk"]["lines"][:6]:
+            out.append("    " + line)
         out.append("")
     if jitter:
         out.append("Jitter-zone scores (within 0.03 of threshold — do not trust):")
@@ -1211,7 +1230,7 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
     if skipped:
         # One entry per (file, reason): an oversized file or a lockfile
         # yields one skip per hunk, which buried the distinct entries.
-        counts = {}
+        counts: dict[tuple[str, str], int] = {}
         for s in skipped:
             key = (s["file"], s["reason"])
             counts[key] = counts.get(key, 0) + 1
@@ -1237,6 +1256,8 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
 
 def main():
     ap = argparse.ArgumentParser(prog="system-one-reviewer")
+    ap.add_argument("--version", action="version",
+                    version=f"%(prog)s {__version__}")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--range", dest="range")
     ap.add_argument("--pr", type=int)
@@ -1274,15 +1295,14 @@ def main():
     kept = kept[: args.max_hunks]
     n_dropped = len(hunks) - n_triaged - len(kept)  # --max-hunks truncation only
 
-    call_errors = []
+    call_errors: list[str] = []
     findings, latencies = judge(kept, ask, errors=call_errors)
     fail_open = findings is None
+    pr_level = None  # set below unless the run failed open or the diff is empty
     fail_reason = call_errors[-1] if fail_open and call_errors else None
     if fail_open:
         findings = []
-    elif not hunks:
-        pr_level = None  # empty diff: nothing for the PR-level call to judge
-    else:
+    elif hunks:  # empty diff: nothing for the PR-level call to judge
         pr_level = judge_pr_level(findings, ask)
     # M1 (r9): a fail-open run must never carry a clean "Approved" — the
     # verdict is forced to "Unavailable" and flows into JSON/metrics/last
@@ -1350,6 +1370,7 @@ def main():
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
              "judged": judged,
              "packaging_version": PACKAGING_VERSION,
+             "tool_version": __version__,
              "provider": provider, "model": model,
              "fixture": args.fixture,
              "fixture_head": head,

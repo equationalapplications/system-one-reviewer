@@ -3,7 +3,6 @@
 minor-note := sev_level(severity)==1 and category=='style'
 """
 
-import pytest
 
 
 def _run(jr, sev, cat):

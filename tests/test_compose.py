@@ -2,7 +2,6 @@
 keeping the plateau rule semantics for whatever value is passed.
 """
 
-import pytest
 
 
 def _f(is_real, severity, parse_error=None):

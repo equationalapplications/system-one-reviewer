@@ -279,9 +279,11 @@ def test_run_git_diff_flags_produce_parseable_output(jr, tmp_path):
     g("config", "user.email", "t@t")
     g("config", "user.name", "t")
     (repo / "app.py").write_text("one\ntwo\nthree\n")
-    g("add", "-A"); g("commit", "-qm", "base")
+    g("add", "-A")
+    g("commit", "-qm", "base")
     (repo / "app.py").write_text("one\nTWO!\nthree\nfour\n")
-    g("add", "-A"); g("commit", "-qm", "head")
+    g("add", "-A")
+    g("commit", "-qm", "head")
     diff = jr.run_git(str(repo), "diff", "HEAD~1..HEAD")
     hunks = jr.package_hunks(diff)
     # two separate change runs: the edit at line 2 and the addition at line 4
@@ -406,13 +408,6 @@ def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
                         lambda *a, **k: dead_transport)
     monkeypatch.setattr(jr, "set_provider_name", lambda name: None)
 
-    from types import SimpleNamespace
-    args = SimpleNamespace(
-        repo=str(repo), range="HEAD", pr=None, staged=False,
-        uncommitted=False, out=None, max_hunks=40, golden=None,
-        negative_golden=None, fixture=None, label="unavail-test",
-        provider="jev", model=None, json=True)
-
     diff_text = (
         "diff --git a/f.py b/f.py\n"
         "--- a/f.py\n"
@@ -436,7 +431,6 @@ def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
     assert rc is None  # main() returns None on success
     assert "Unavailable" in out
     # M2 (r10): also assert the metrics record, per the docstring promise.
-    import json as _json
     rec = _json.loads(open(str(tmp_path / "m" / "metrics.jsonl")).readlines()[-1])
     assert rec["fail_open"] is True
     assert "Unavailable" in rec["verdict"]
