@@ -30,7 +30,9 @@ def sw():
 
 def _judged(line, real, sev=2.2, cat="bug-risk", file="a.py"):
     return {"file": file, "line": line, "severity": sev, "is_real": real,
-            "category": cat, "confidence": None, "reported": True}
+            "category": cat, "confidence": None, "reported": True,
+            # v03b records carry the compose-gate fields
+            "rubric": "code-change", "references_remaining": None}
 
 
 def _run(label, fixture, judged, pv="v03b", provider="jev", model=None):

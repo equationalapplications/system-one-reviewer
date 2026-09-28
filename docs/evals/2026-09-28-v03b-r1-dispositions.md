@@ -32,10 +32,10 @@
   (deletes the only test for a kept feature).
 - m3 (stale brief line): **FIXED** — F7 paragraph notes the v0.3b
   auto:<mode> label and that bare-mode labels are historical.
-- m4 (malformed test header): **FIXED** — header rewritten to
-  `@@ -1,4 +1,3 @@` = old side {line1, line2, dead_middle, line4},
-  new side {line1, line4, line5}: counts now match the body exactly, no
-  parser leniency relied on.
+- m4 (malformed test header): **FIXED** in the r4 round (header rewritten
+  to match bodies exactly: `@@ -1,3 +1,2 @@` and `@@ -1,5 +1,4 @@`); the
+  r3 row overclaimed and is superseded by
+  docs/evals/2026-09-28-v03b-r4-dispositions.md.
 - m5 (missing test cases): **FIXED** —
   test_two_uncorroborated_deletions_do_not_flip and
   test_deletion_major_verdict_eligible_when_corroborated added.

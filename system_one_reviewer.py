@@ -59,12 +59,16 @@ CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
 DELETION_REAL_THRESHOLD = 0.70  # deletion rubric (provisional; sweep TBD)
 KNOWN_FIXTURES = {"positive", "negative"}
-# v03b (field evals 2026-09-28, Kurt review round): model input changed
-# AGAIN — references_remaining in state, three-valued change_type,
-# rewritten deletion rubric, per-rubric thresholds, corroboration gate in
-# compose. The v03 negative-fixture benchmark is superseded (its
-# fixture_head predates the deletion cluster added to the negative
-# fixture); v03b negatives were re-run and are the current record.
+# v03b (field evals, 2026-09-28, Kurt review round; benchmark refreshed on
+# the r4 commit): model input changed AGAIN — references_remaining in
+# state, three-valued change_type, rewritten deletion rubric, per-rubric
+# thresholds, corroboration gate in compose. The v03 negative-fixture
+# benchmark is superseded (its fixture_head predates the deletion cluster
+# added to the negative fixture); v03b negatives were re-run and are the
+# current record. NOTE (Opus r4 m2): the -1 records were re-run on the
+# r3-fixes build, -2/-3 on the r2-fixes build — same input shape (both
+# post-B1), verified field-identical; labeled order in the file follows
+# run order within each build, not global time.
 PACKAGING_VERSION = "v03b"
 
 
@@ -1008,12 +1012,14 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
         if r is not None and r >= t and (f.get("severity") or 0) >= 1:
             reported.append(f)
-    # Corroboration pool (v0.3b M2 fix, Opus r2 M2, r3 m2): a reported
-    # CODE-CHANGE finding corroborates a deletion finding only when it is
-    # itself sev>=2, OR same-file AND non-style (a real issue in the
-    # deletion's own neighborhood, not a style nit). A style nit —
-    # anywhere — must not unlock the gate for six wrong deletion findings
-    # (#45 shape).
+    # Corroboration pool (v0.3b M2 fix, Opus r2 M2, r3 m2/r4 m1): a
+    # reported CODE-CHANGE finding corroborates a deletion finding when
+    # it is itself sev>=2 (any category — a sev>=2 "style" flag is a
+    # serious claim, not a nit), OR same-file with a non-style category
+    # (a real issue in the deletion's own neighborhood, any severity).
+    # category=None is treated as style-like for the same-file path.
+    # A sev<2 style finding — anywhere — never unlocks the gate (#45
+    # shape: six wrong deletion findings must stay report-only).
     def _corroborates(cf, df):
         same_file = cf["hunk"]["file"] == df["hunk"]["file"]
         if same_file:

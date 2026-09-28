@@ -139,15 +139,18 @@ def select_runs(recs, expected, label_prefix, packaging_version="v03b"):
 
 # ---------- replay through compose ----------
 
-def rewrap(j):
+def rewrap(j, run_version=None):
     """Flat judged entry -> the `f['hunk'][...]` shape compose consumes.
 
     v03b: rubric/references_remaining ride through; older records (no
     rubric key) replay as code-change — correct, because pre-v03b runs
-    never sent deletion questions. A v03b+ record (has the key) that is
-    malformed dies loudly instead of silently replaying wrong logic."""
-    if "rubric" not in j and j.get("packaging_version") == "v03b":
-        die(f"run record {j.get('file')} looks v03b but has no rubric — "
+    never sent deletion questions. The RUN's packaging_version decides
+    that: judged entries never carry it (Opus r4 M1 — the entry-level
+    check previously here could never fire). Callers pass the run's
+    version; a v03b run whose judged entries lack `rubric` was written by
+    a broken build and dies loudly instead of replaying wrong logic."""
+    if run_version == "v03b" and "rubric" not in j:
+        die(f"v03b run record entry {j.get('file')} has no rubric — "
             "ledger written by a broken build; re-run")
     return {"hunk": {"file": j["file"], "line": j["line"]},
             "is_real": j["is_real"], "severity": j["severity"],
@@ -158,8 +161,10 @@ def rewrap(j):
 
 def replay(jr, run, t):
     """Reported findings for this run at threshold t, via compose itself."""
-    reported, _, _ = jr.compose([rewrap(j) for j in run["judged"]], [], None,
-                                threshold=t)
+    version = run.get("packaging_version")
+    reported, _, _ = jr.compose(
+        [rewrap(j, run_version=version) for j in run["judged"]], [], None,
+        threshold=t)
     return reported
 
 

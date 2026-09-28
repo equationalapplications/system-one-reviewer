@@ -372,29 +372,23 @@ def test_bare_range_spec_rejected_loudly(jr, git_pair):
 
 
 def test_ledger_fields_reach_sweep_replay(jr, git_pair, monkeypatch):
-    """Opus v03b r2 B1 / r3 M2: the judged entries written to
-    metrics.jsonl must carry rubric/references_remaining so the sweep's
-    rewrap()->compose() path replays the REAL verdict logic. End-to-end:
-    main() writes a ledger record for a deletion-only .py hunk; we load
-    sweep-thresholds.py (same loader as the unit test below) and replay."""
-    tmp_path, _git = git_pair
-    # add a deletion-only .py change on feature (git_pair's fixture adds
-    # feat.txt, which triage skips as docs — so delete real code instead)
-    subprocess.run(["git", "-C", str(tmp_path), "checkout", "feature"],
-                   check=True, capture_output=True)
+    """Opus v03b r2 B1 / r3 M2 / r4 M2: judged entries in metrics.jsonl
+    must carry rubric/references_remaining AND the deletion rubric must
+    actually be exercised — the feature branch DELETES lines from a file
+    that exists on main, so the merge-base diff contains a deletion-only
+    cluster. Replay goes through the real sweep module."""
+    tmp_path, git = git_pair
+    # code_mod.py exists on MAIN; feature merges main, then removes lines
     code = tmp_path / "code_mod.py"
+    code.write_text("import os\n\nvalue = compute(1)\nflag = True\n")
+    git("add", "code_mod.py")
+    git("commit", "-qm", "add code_mod on main")
+    git("checkout", "-q", "feature")
+    git("merge", "-q", "--no-edit", "main")  # feature now has code_mod.py
     code.write_text("import os\n\nvalue = compute(1)\n")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "code_mod.py"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q",
-                    "-m", "delete referenced code"],
-                   env=dict(os.environ,
-                            GIT_AUTHOR_DATE="2026-09-28T00:00:00 +0000",
-                            GIT_COMMITTER_DATE="2026-09-28T00:00:00 +0000",
-                            GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
-                            GIT_COMMITTER_NAME="t",
-                            GIT_COMMITTER_EMAIL="t@t"),
-                   capture_output=True)
+    git("add", "-A")
+    git("commit", "-qm", "drop dead flag from code_mod")
+
     argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
     monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
@@ -405,7 +399,11 @@ def test_ledger_fields_reach_sweep_replay(jr, git_pair, monkeypatch):
     jr.main()
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
     assert rec["judged"], "fixture must produce judged code hunks"
-    # load the real sweep module (its import touches no env state)
+    deletion = [j for j in rec["judged"] if j["rubric"] == "deletion"]
+    assert deletion, "the code_mod.py removal must be deletion-rubric"
+    assert all(isinstance(j["references_remaining"], bool)
+               for j in deletion)
+    # replay through the sweep's real module, run-level version passed
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "sweep", os.path.join(os.path.dirname(os.path.dirname(
@@ -414,32 +412,70 @@ def test_ledger_fields_reach_sweep_replay(jr, git_pair, monkeypatch):
     sw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sw)
     for j in rec["judged"]:
-        assert j["rubric"] in ("code-change", "deletion")
-        if j["rubric"] == "deletion":
-            assert isinstance(j["references_remaining"], bool)
-        w = sw.rewrap(j)
+        w = sw.rewrap(j, run_version=rec["packaging_version"])
         assert w["rubric"] == j["rubric"]
         assert w["references_remaining"] == j["references_remaining"]
 
 
-def test_sweep_rewrap_passes_rubric_fields():
+def test_rewrap_dies_on_broken_v03b_record():
+    """Opus v03b r4 M1: the v03b rubric gate is RUN-level — a v03b run
+    whose judged entries lack `rubric` must die loudly in rewrap."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sweep", os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "scripts", "sweep-thresholds.py"))
+    assert spec is not None and spec.loader is not None
+    sw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sw)
+    bad = {"file": "gone.ts", "line": 1, "severity": 2.8, "is_real": 0.75}
+    with pytest.raises(SystemExit, match="no rubric"):
+        sw.rewrap(bad, run_version="v03b")
+    # pre-v03b record without rubric: replays as code-change, no error
+    w = sw.rewrap(dict(bad), run_version="v02")
+    assert w["rubric"] == "code-change"
+
+
+def test_sweep_rewrap_passes_rubric_fields(jr):
     """Opus v03b r2 B1 (unit level): rewrap() in scripts/sweep-thresholds
-    forwards rubric/references_remaining so replay matches live compose."""
+    forwards rubric/references_remaining so replay matches live compose.
+    (Uses the jr fixture's isolated import for compose — Opus r3 m4.)"""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "sweep", os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))),
             "scripts", "sweep-thresholds.py"))
+    assert spec is not None and spec.loader is not None
     sw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sw)
     rec = {"file": "gone.ts", "line": 1, "severity": 2.8, "is_real": 0.75,
            "category": "other", "rubric": "deletion",
            "references_remaining": False}
-    w = sw.rewrap(rec)
+    w = sw.rewrap(rec, run_version="v03b")
     assert w["rubric"] == "deletion"
     assert w["references_remaining"] is False
     # and compose() applies the deletion gate: 0.75 >= 0.70 → reported,
     # but uncorroborated → verdict NOT flipped
-    import system_one_reviewer as _sor
-    reported, _, verdict = _sor.compose([w], [], None)
+    reported, _, verdict = jr.compose([w], [], None)
     assert len(reported) == 1 and verdict == "Approved"
+
+
+def test_references_remaining_relative_imports(jr):
+    """Opus v03b r4 M3 / r3 M1 regression: relative imports must NOT
+    produce empty or root-less names that make \\b\\b match everything."""
+    def _diff(removed):
+        return (
+            "diff --git a/pkg/mod.py b/pkg/mod.py\n"
+            "--- a/pkg/mod.py\n"
+            "+++ b/pkg/mod.py\n"
+            "@@ -1,4 +1,3 @@\n"
+            " import os\n"
+            f"-{removed}\n"
+            " value = compute(1)\n"
+        )
+    for removed in ("from .utils import helper",
+                    "from . import helper",
+                    "from ..pkg import helper"):
+        hunks = jr.package_hunks(_diff(removed))
+        state = jr.hunk_state(hunks[0])
+        # surviving context mentions none of the removed module names
+        assert state["references_remaining"] is False, removed
