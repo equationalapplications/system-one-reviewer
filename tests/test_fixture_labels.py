@@ -12,8 +12,6 @@ count/columns are asserted, and building twice yields the identical SHA.
 import os
 import subprocess
 
-import pytest
-
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(REPO, "examples")
 SHAS_FILE = os.path.join(EXAMPLES, "fixture-shas.txt")
@@ -62,7 +60,7 @@ def test_positive_fixture_build_is_deterministic_and_verified(tmp_path):
     assert len(rows) == 5 and all(len(row) == 5 for row in rows)
     for row in rows:
         fline = open(os.path.join(root, row[0])).read().splitlines()
-        assert any(row[3] in l for l in fline), f"verify [{row[3]}] not found"
+        assert any(row[3] in ln for ln in fline), f"verify [{row[3]}] not found"
 
 
 def test_negative_fixture_build_is_deterministic_and_verified(tmp_path):
@@ -88,7 +86,7 @@ def test_negative_fixture_build_is_deterministic_and_verified(tmp_path):
                 f"{row[0]} should be deleted at HEAD"
             continue
         fline = open(os.path.join(root, row[0])).read().splitlines()
-        assert any(row[1] in l for l in fline), f"verify [{row[1]}] not found"
+        assert any(row[1] in ln for ln in fline), f"verify [{row[1]}] not found"
 
 
 def test_fixture_label_accepted(jr):

@@ -24,6 +24,7 @@ Usage:
 import argparse
 import json
 import sys
+from typing import NoReturn
 
 POSITIVE = "positive"
 NEGATIVE = "negative"
@@ -43,7 +44,7 @@ RUBRIC_VERSIONS = {"v03b"}
 GRID = [round(0.30 + 0.05 * k, 2) for k in range(9)]
 
 
-def die(msg):
+def die(msg) -> NoReturn:
     raise SystemExit(f"sweep: {msg}")
 
 
@@ -55,6 +56,8 @@ def load_tool():
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(os.path.dirname(here), "system_one_reviewer.py")
     spec = importlib.util.spec_from_file_location("jev-review-sweep", path)
+    if spec is None or spec.loader is None:
+        die(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -257,7 +260,7 @@ def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
         # FP_neg per negative run, then averaged (E5).
         fp_neg_each = [negative_fp(jr, r, t, benign) for r in neg_runs]
         f1s = []
-        for e, fp_pos in zip(evals, fp_pos_each):
+        for e, fp_pos in zip(evals, fp_pos_each, strict=True):
             tp = e["true_positives"]
             golden_n = e["golden_issues"]
             recall = tp / golden_n if golden_n else 0.0
@@ -289,10 +292,11 @@ def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
     base_f1s = base["f1s"]
     margin_ok = (candidate != SHIPPED_THRESHOLD
                  and len(base_f1s) == len(cand["f1s"])
-                 and all(c - b >= MARGIN_FLOOR for c, b in zip(cand["f1s"], base_f1s)))
+                 and all(c - b >= MARGIN_FLOOR for c, b in zip(cand["f1s"], base_f1s, strict=True)))
     # change rule 2 per spec: Delta-FP-neg <= 0 per run (a candidate that
     # REDUCES negative FPs must not be blocked)
-    neg_fp_ok = all(c <= b for c, b in zip(cand["fp_neg_each"], base["fp_neg_each"]))
+    neg_fp_ok = all(c <= b for c, b in zip(cand["fp_neg_each"], base["fp_neg_each"],
+                                              strict=True))
 
     return {"rows": rows, "candidate": candidate, "tied": tied,
             "rule_margin_ok": margin_ok, "rule_neg_fp_ok": neg_fp_ok,
@@ -349,7 +353,7 @@ def load_field_goldens(path):
     silently treating a positive PR as a clean-FP run (the #46 v0.2 FN is
     exactly the case that would corrupt).
     """
-    goldens = {}
+    goldens: dict[int, str] = {}
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -387,7 +391,7 @@ def select_field_runs(recs, goldens, label_prefix, packaging_version="v03b"):
     sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
     if not sel:
         die(f"no runs with label prefix {label_prefix!r}")
-    by_sha = {}
+    by_sha: dict[str, list] = {}
     for r in sel:
         # expected=head neutralizes gate_run's fixture-SHA equality check
         # (field runs have no committed fixture); the SHA->PR mapping below
@@ -419,7 +423,9 @@ def field_fp(jr, run, t, dt):
     fixed by moving dt, and counting it here would fake a signal).
     """
     reported = replay(jr, run, t, deletion_threshold=dt)
-    is_del = lambda f: f.get("rubric", "code-change") == "deletion"
+
+    def is_del(f):
+        return f.get("rubric", "code-change") == "deletion"
 
     def fp(findings):
         counts = jr.eval_negative(findings)

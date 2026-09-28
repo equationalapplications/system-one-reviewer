@@ -9,7 +9,6 @@ import subprocess
 
 import pytest
 
-
 # ---------- F1: change_type detection ----------
 
 def _whole_file_deletion_diff():
@@ -229,16 +228,20 @@ def git_pair(tmp_path):
                            capture_output=True, text=True, check=True)
         return r.stdout.strip()
     git("init", "-q", "-b", "main")
-    git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
     for name in ("base.txt",):
         (tmp_path / name).write_text("base\n")
-    git("add", "-A"); git("commit", "-qm", "base")
+    git("add", "-A")
+    git("commit", "-qm", "base")
     git("checkout", "-qb", "feature")
     (tmp_path / "feat.txt").write_text("feat\n")
-    git("add", "-A"); git("commit", "-qm", "feat")
+    git("add", "-A")
+    git("commit", "-qm", "feat")
     git("checkout", "-q", "main")
     (tmp_path / "mainmove.txt").write_text("main moved\n")
-    git("add", "-A"); git("commit", "-qm", "main move")
+    git("add", "-A")
+    git("commit", "-qm", "main move")
     return tmp_path, git
 
 

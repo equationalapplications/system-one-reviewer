@@ -2,12 +2,11 @@
 tp_severities. Synthetic TSVs in tmp_path (real TSV is Task 4's deliverable).
 """
 
-import pytest
 
 
 def _golden(tmp_path, rows):
     p = tmp_path / "g.tsv"
-    p.write_text("".join(f"{f}\t{l}\t{d}\n" for f, l, d in rows))
+    p.write_text("".join(f"{f}\t{ln}\t{d}\n" for f, ln, d in rows))
     return str(p)
 
 
