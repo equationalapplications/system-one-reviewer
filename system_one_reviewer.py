@@ -987,7 +987,8 @@ def near(v, t, zone=0.03):
     return v is not None and abs(v - t) <= zone
 
 
-def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
+def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
+            deletion_threshold=DELETION_REAL_THRESHOLD):
     """Thresholds in code. Plateau rule: 0.50 sits >=0.05 from 0.80/0.90.
 
     v0.3b (Kurt review, implements the F1 corroboration proposal; M2 fix
@@ -998,13 +999,19 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
     count: #45 had six deletion clusters all wrong together. An
     uncorroborated deletion finding is still REPORTED (the human sees it)
     but cannot push the verdict to "Changes requested" — at any severity.
+
+    deletion_threshold: sweep hook (F2 executability plan, step b). The
+    sweep replays logged runs through compose() to measure candidate
+    deletion-rubric thresholds; without this parameter the 0.70 knob is a
+    hardcoded module constant no external caller can move. Default keeps
+    the shipped behavior byte-identical.
     """
     reported, jitter = [], []
     for f in findings:
         if f.get("parse_error"):
             continue
         rubric = f.get("rubric", "code-change")
-        t = DELETION_REAL_THRESHOLD if rubric == "deletion" else threshold
+        t = deletion_threshold if rubric == "deletion" else threshold
         r = f.get("is_real")
         if near(r, t):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
