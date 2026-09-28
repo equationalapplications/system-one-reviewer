@@ -18,10 +18,10 @@ commits now on main — the same merge-base ranges F5 made the default.
 | PR | Delta reviewed | Bot/human findings during review | At merged head |
 |----|----------------|----------------------------------|----------------|
 | #43 | `99711a4^...99711a4` perf(import): linear-time OKF import | 3 `major` inline (aws-cloud-agent-pr-review, mid-PR revisions): abort/cleanup race ×2, stale importDump-signature claim | all addressed at head (`stopped` flag + two-step CANCEL handshake + `completed`-decides-outcome; tests use the 3-arg signature) → **clean** |
-| #44 | `2dc4085^...2dc4085` fix(night-shift): finished-run copy | 2 `major` inline — both rebutted as stale (fixed at final head, tests present) → **clean** |
-| #45 | `b43825c^...b43825c` chore: remove unused Expo components | 0 inline findings (deletions verified safe) → **clean** |
-| #46 | `861f1ad^...861f1ad` feat(dev): cached LLM auto-load + mock mode | CodeRabbit 4 (2 minor, 2 major) + bot 1 major; the real ones (document-chunk ordering, model preservation) **fixed at head** — verified in the merged tree (`mockLlmProvider.ts` checks `Document Chunk:` first; `pushAndroid` skips when the installed model matches) → **clean** |
-| #47 | `67262aa^...67262aa` fix(ui): button border | 0 findings → **clean** |
+| #44 | `2dc4085^...2dc4085` fix(night-shift): finished-run copy | 2 `major` inline — both rebutted as stale | fixed at final head, tests present → **clean** |
+| #45 | `b43825c^...b43825c` chore: remove unused Expo components | 0 inline findings (deletions verified safe) | **clean** |
+| #46 | `861f1ad^...861f1ad` feat(dev): cached LLM auto-load + mock mode | CodeRabbit 4 (2 minor, 2 major) + bot 1 major | the real ones (document-chunk ordering, model preservation) **fixed at head** — verified in the merged tree (`mockLlmProvider.ts` checks `Document Chunk:` first; `pushAndroid` skips when the installed model matches) → **clean** |
+| #47 | `67262aa^...67262aa` fix(ui): button border | 0 findings | **clean** |
 
 Net: **5/5 merged heads defect-free** — all five are negative goldens
 (`examples/cj-field-goldens.tsv`, SHA-pinned to the squash commits).
@@ -39,9 +39,11 @@ Net: **5/5 merged heads defect-free** — all five are negative goldens
 **4/5 verdicts correct; the single miss is over-reporting on #43, not a
 false BLOCKER on deletions.** Under v0.2 the same PRs produced a false
 Changes-requested driven by deletion findings at sev 2.7–2.8; under v0.3b
-every deletion cluster on clean heads is either suppressed by the rubric
-gate (#45) or corroboration-starved (#43's two deletion findings never
-reach the verdict).
+every deletion finding on these clean heads (7 on #45, 2 on #43, all
+is_real ≤ 0.55) falls below the shipped 0.70 deletion threshold and is
+suppressed before corroboration runs. This cohort therefore validates the
+threshold's clean-side result; it does **not** exercise the corroboration
+gate in field use.
 
 ## Caveats (honest ones)
 
@@ -65,19 +67,20 @@ reach the verdict).
 ## Ledger
 
 The five records are copied to
-`docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl` (verbatim from
+`docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl` (from
 `~/.local/state/jev-review/metrics.jsonl`) so the sweep is reproducible
 without the local ledger.
 
-**Ignore the `golden_eval` field in these records.** The runs were invoked
-with the toy-fixture `--golden` file, so every record carries a stale
-`src/app.py` recall census (5 "missed" issues in a file none of these PRs
-touch). It is left in place to keep the records verbatim; the field sweep
-never reads it — ground truth for these runs is
+**One deliberate deviation from the ledger: `golden_eval` is `null`.** The
+runs were invoked with the toy-fixture `--golden` file, so the ledger
+records carry an inapplicable `src/app.py` recall census (5 "missed" issues
+in a file none of these PRs touch). The committed copy nulls it — the
+shape a run without `--golden` produces — so no consumer reads it as five
+false negatives. Every other field is verbatim; the field sweep never
+reads `golden_eval` — ground truth for these runs is
 `examples/cj-field-goldens.tsv`, scored via `eval_negative`.
 
-
 ```
-sweep-thresholds.py --metrics docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl \
+python3 scripts/sweep-thresholds.py --metrics docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl \
   --label v03bcj- --field --field-goldens examples/cj-field-goldens.tsv
 ```

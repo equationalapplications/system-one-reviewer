@@ -365,6 +365,11 @@ def load_field_goldens(path):
                 die(f"{path}: PR #{pr} expects {exp} issues — nonzero "
                     "expectations need positive golden rows (unsupported "
                     "in --field mode yet)")
+            if int(pr) in goldens:
+                die(f"{path}: duplicate PR #{pr}")
+            if sha in goldens.values():
+                die(f"{path}: duplicate SHA {sha[:8]} (PR #{pr}) — one run "
+                    "would be counted for two PRs")
             goldens[int(pr)] = sha
     if not goldens:
         die(f"{path}: no field golden rows")

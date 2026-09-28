@@ -55,6 +55,21 @@ def test_load_field_goldens_parses_pr_sha_expected(sw, tmp_path):
     assert sw.load_field_goldens(str(p)) == {43: PR43, 44: PR44}
 
 
+def test_load_field_goldens_rejects_duplicate_pr(sw, tmp_path):
+    p = tmp_path / "fg.tsv"
+    p.write_text(f"43\t{PR43}\t0\n43\t{PR44}\t0\n")
+    with pytest.raises(SystemExit, match="duplicate PR #43"):
+        sw.load_field_goldens(str(p))
+
+
+def test_load_field_goldens_rejects_duplicate_sha(sw, tmp_path):
+    """Two PRs sharing a SHA would map one run to both and count it twice."""
+    p = tmp_path / "fg.tsv"
+    p.write_text(f"43\t{PR43}\t0\n44\t{PR43}\t0\n")
+    with pytest.raises(SystemExit, match="duplicate SHA"):
+        sw.load_field_goldens(str(p))
+
+
 def test_load_field_goldens_rejects_nonzero_expectations(sw, tmp_path):
     p = tmp_path / "fg.tsv"
     p.write_text(f"43\t{PR43}\t2\n")
@@ -192,7 +207,7 @@ def test_field_mode_end_to_end(jr, sw, tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "field mode" in out
-    assert "decision: KEEP 0.70" in out or "RAISE" in out
+    assert "decision: RAISE above 0.70" in out  # 1 deletion FP at 0.70
 
 
 def test_field_mode_requires_field_goldens(sw, tmp_path):

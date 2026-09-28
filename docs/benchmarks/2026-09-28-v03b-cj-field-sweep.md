@@ -71,7 +71,7 @@ F2.
 ## Reproduce
 
 ```
-sweep-thresholds.py \
+python3 scripts/sweep-thresholds.py \
   --metrics docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl \
   --label v03bcj- --field --field-goldens examples/cj-field-goldens.tsv
 ```
