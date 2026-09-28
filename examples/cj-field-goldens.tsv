@@ -1,0 +1,22 @@
+# curated-journal field goldens (v0.3b field-proof re-runs, 2026-09-28).
+# Ground truth per PR (bot + human review, verified at the MERGED squash
+# commit): all five heads are defect-free — zero expected issues.
+#   #43 import-chunking: 3 bot majors (abort-race x2, signature contract)
+#     all fixed pre-merge (stopped-flag + completed handshake verified in
+#     99711a4 tree; tests pass the 3-arg importDump signature).
+#   #44 night-shift copy: 2 bot findings, both stale-revision, rebutted with
+#     code links to PR head 2daa64c (pre-squash; the squash is 2dc4085 below)
+#     — finished-label + reembed case exist at merge.
+#   #45 template cleanup: pure deletions, verified safe (v0.2's false-BLOCKER).
+#   #46 dev-model cache: CodeRabbit/bot majors (mockLlmProvider ordering,
+#     dev-model overwrite) fixed pre-merge (verified in 861f1ad tree).
+#   #47 button style: no findings from any reviewer.
+# Format: pr<TAB>full40sha<TAB>expected-issues
+# The sweep extension (scripts/sweep-thresholds.py --field) gates each run's
+# fixture_head against its PR's SHA and scores it against expected-issues=0
+# (FP census; eval_negative counting).
+43	99711a45c8c037dd191d4a9732d193aa9901da80	0
+44	2dc40858ca13bb7e47e04b15ae7e2d9e8801d03f	0
+45	b43825c7e5e5d1a79ebfa0ceb278786c011281ff	0
+46	861f1ad845779d1c562435b2b40947bce1fae707	0
+47	67262aaf9c1b6855f96dd90dbb40c74f24f06de0	0

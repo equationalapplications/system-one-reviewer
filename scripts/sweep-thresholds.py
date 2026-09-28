@@ -29,6 +29,9 @@ POSITIVE = "positive"
 NEGATIVE = "negative"
 SHIPPED_THRESHOLD = 0.50
 MARGIN_FLOOR = 0.20
+# The shipped deletion-rubric threshold in system_one_reviewer.py
+# (DELETION_REAL_THRESHOLD; v0.3b made it provisional pending this sweep).
+DELETION_SHIPPED = 0.70
 
 # Versions whose judged ledger entries carry rubric/references_remaining
 # (first: v03b, Opus r2 B1). rewrap() dies on a run from one of these
@@ -168,12 +171,20 @@ def rewrap(j, run_version=None):
             "references_remaining": j.get("references_remaining")}
 
 
-def replay(jr, run, t):
-    """Reported findings for this run at threshold t, via compose itself."""
+def replay(jr, run, t, deletion_threshold=None):
+    """Reported findings for this run at threshold t, via compose itself.
+
+    deletion_threshold=None keeps compose's shipped default (fixture
+    sweeps never move the deletion knob); field mode passes the candidate
+    explicitly.
+    """
     version = run.get("packaging_version")
+    kwargs = {"threshold": t}
+    if deletion_threshold is not None:
+        kwargs["deletion_threshold"] = deletion_threshold
     reported, _, _ = jr.compose(
         [rewrap(j, run_version=version) for j in run["judged"]], [], None,
-        threshold=t)
+        **kwargs)
     return reported
 
 
@@ -330,25 +341,225 @@ def load_shas(path):
     return expected
 
 
+def load_field_goldens(path):
+    """CJ field goldens: lines `pr<TAB>full40sha<TAB>expected_issues`.
+
+    expected_issues > 0 needs positive-style golden rows (file/line TSV) to
+    score recall against — not supported yet; die loudly instead of
+    silently treating a positive PR as a clean-FP run (the #46 v0.2 FN is
+    exactly the case that would corrupt).
+    """
+    goldens = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) != 3:
+                die(f"{path}: expected `pr<TAB>sha<TAB>expected` lines: {line!r}")
+            pr, sha, exp = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if not pr.isdigit() or len(sha) != 40:
+                die(f"{path}: bad field golden line {line!r}")
+            if int(exp) != 0:
+                die(f"{path}: PR #{pr} expects {exp} issues — nonzero "
+                    "expectations need positive golden rows (unsupported "
+                    "in --field mode yet)")
+            if int(pr) in goldens:
+                die(f"{path}: duplicate PR #{pr}")
+            if sha in goldens.values():
+                die(f"{path}: duplicate SHA {sha[:8]} (PR #{pr}) — one run "
+                    "would be counted for two PRs")
+            goldens[int(pr)] = sha
+    if not goldens:
+        die(f"{path}: no field golden rows")
+    return goldens
+
+
+def select_field_runs(recs, goldens, label_prefix, packaging_version="v03b"):
+    """Map field runs to their PR via fixture_head SHA; gate like fixtures.
+
+    The CJ field runs carry fixture=None, so the fixture selector ignores
+    them; here fixture_head IS the identity — the run whose head matches
+    PR N's squash SHA reviews PR N. Each PR needs exactly one run (re-runs
+    with the same label prefix are ambiguous -> die, make labels unique).
+    """
+    sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
+    if not sel:
+        die(f"no runs with label prefix {label_prefix!r}")
+    by_sha = {}
+    for r in sel:
+        # expected=head neutralizes gate_run's fixture-SHA equality check
+        # (field runs have no committed fixture); the SHA->PR mapping below
+        # is the real gate. All other gates (fail_open, truncation,
+        # packaging_version, judged completeness) still run.
+        head = r.get("fixture_head")
+        gate_run(r, expected=head, packaging_version=packaging_version)
+        if head not in goldens.values():
+            die(f"run {r.get('label')!r}: fixture_head {head} matches no "
+                "field golden SHA")
+        by_sha.setdefault(head, []).append(r)
+    runs = {}
+    for pr, sha in goldens.items():
+        found = by_sha.get(sha, [])
+        if len(found) != 1:
+            die(f"PR #{pr}: expected exactly 1 run with head {sha[:8]}, "
+                f"found {len(found)}")
+        runs[pr] = found[0]
+    return runs
+
+
+def field_fp(jr, run, t, dt):
+    """FP census for a clean field run at (code t, deletion dt).
+
+    Same counting as negative_fp (eval_negative; MINOR-style exempt), but
+    split by rubric: the deletion-knob sweep must attribute FPs to the
+    knob it moves. A code-rubric FP at pinned t=0.50 is the CODE
+    threshold's pressure (a separate calibration question — it cannot be
+    fixed by moving dt, and counting it here would fake a signal).
+    """
+    reported = replay(jr, run, t, deletion_threshold=dt)
+    is_del = lambda f: f.get("rubric", "code-change") == "deletion"
+
+    def fp(findings):
+        counts = jr.eval_negative(findings)
+        return counts["blocker_major"] + counts["other_fp"]
+
+    return (fp([f for f in reported if not is_del(f)]),
+            fp([f for f in reported if is_del(f)]))
+
+
+# ---------- field-mode sweep (F2 executability plan, step b) ----------
+
+def sweep_field(jr, field_runs, grid=None):
+    """Deletion-threshold sweep over clean field runs (expected_issues=0).
+
+    The five v03b CJ runs are all ground-truth clean, so per threshold the
+    measurement is pure FP census (eval_negative counting; MINOR-style
+    notes exempt, per E5). The code-change threshold stays at its shipped
+    plateau while the deletion knob moves: a code-threshold candidate
+    change remains gated on a future positive field golden (nonzero
+    expectations), which load_field_goldens refuses until real rows exist.
+
+    Decision semantics (differs from the fixture sweep ON PURPOSE): for a
+    `is_real >= t` gate the FP count is monotonically NON-INCREASING in t,
+    so "fewer FPs than shipped" is structurally unpassable — the fixture
+    sweep can reward a lower threshold through RECALL, but an all-clean
+    field cohort has no recall signal. What clean field data CAN decide:
+
+    - 0 FPs at the shipped 0.70 -> KEEP (clean-side validated; the FP
+      curve below shows how much headroom a lower knob would burn).
+    - FPs at 0.70 -> RAISE_ABOVE_GRID: 0.70 is demonstrably too
+      permissive, but 0.70 is the grid ceiling (plateau rule), so no
+      auto-candidate exists — the value is a Kurt decision informed by
+      the per-PR curve.
+
+    The lower half of the curve is still reported: it documents the FP
+    pressure a future lower threshold would face if positive field
+    evidence ever motivates one.
+    """
+    grid = grid or threshold_grid()
+    if DELETION_SHIPPED not in grid:
+        die(f"field sweep grid lacks shipped {DELETION_SHIPPED:.2f} — no "
+            "baseline row to decide KEEP/RAISE from")
+    rows = []
+    for dt in grid:
+        fps = {pr: field_fp(jr, run, SHIPPED_THRESHOLD, dt)
+               for pr, run in field_runs.items()}
+        del_total = sum(v[1] for v in fps.values())
+        code_total = sum(v[0] for v in fps.values())
+        rows.append({"dt": dt, "fps": fps, "deletion_total": del_total,
+                     "code_total": code_total})
+    base = next(r for r in rows if r["dt"] == DELETION_SHIPPED)
+    fps_at_shipped = base["deletion_total"]
+    decision = "KEEP" if fps_at_shipped == 0 else "RAISE_ABOVE_GRID"
+    return {"rows": rows, "shipped": DELETION_SHIPPED,
+            "fps_at_shipped": fps_at_shipped, "decision": decision,
+            "code_total_at_shipped": base["code_total"]}
+
+
+def render_field(res, provider, model, prs):
+    prov = provider + (f"/{model}" if model else "")
+    header = " | ".join(f"#{p}" for p in prs)
+    lines = [f"deletion-threshold sweep, field mode (provider/model: {prov}; "
+             f"code threshold pinned at {SHIPPED_THRESHOLD})",
+             f"dt | deletion-rubric FPs | code-rubric FPs (pinned t) | "
+             f"deletion FP per-PR ({header})"]
+    for r in res["rows"]:
+        per = " | ".join(str(r["fps"][p][1]) for p in prs)
+        lines.append(f"{r['dt']:.2f} | {r['deletion_total']} | "
+                     f"{r['code_total']} | {per}")
+    if res["decision"] == "KEEP":
+        lines.append(f"deletion FPs at shipped {res['shipped']:.2f}: 0 — "
+                     "every clean field run stays clean at the shipped knob")
+        lines.append(f"decision: KEEP {res['shipped']:.2f} (clean-side "
+                     "validated; recall-side evidence needs a positive "
+                     "field golden, see load_field_goldens)")
+    else:
+        lines.append(f"deletion FPs at shipped {res['shipped']:.2f}: "
+                     f"{res['fps_at_shipped']} — the knob is too permissive "
+                     "on clean PRs")
+        lines.append("decision: RAISE above "
+                     f"{res['shipped']:.2f} (grid ceiling — pick the value "
+                     "from the per-PR curve; human call)")
+    if res["code_total_at_shipped"]:
+        lines.append(f"note: {res['code_total_at_shipped']} code-rubric FPs "
+                     f"at pinned t={SHIPPED_THRESHOLD} are CODE-threshold "
+                     "pressure — a separate calibration question (needs a "
+                     "positive field golden to evaluate), not this knob")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="E5 threshold sweep")
     ap.add_argument("--metrics", required=True)
     ap.add_argument("--label", required=True, help="run label prefix")
-    ap.add_argument("--golden", required=True, help="positive golden TSV")
-    ap.add_argument("--negative-golden", required=True,
+    ap.add_argument("--golden", help="positive golden TSV (fixture mode)")
+    ap.add_argument("--negative-golden",
                     help="negative golden TSV — drives the must-skip "
-                         "triage-leakage guard; required so the guard "
-                         "cannot silently turn off (r3 m2)")
-    ap.add_argument("--shas", required=True, help="expected fixture SHA file")
+                         "triage-leakage guard; required (fixture mode) so "
+                         "the guard cannot silently turn off (r3 m2)")
+    ap.add_argument("--shas", help="expected fixture SHA file (fixture mode)")
+    ap.add_argument("--field", action="store_true",
+                    help="field mode: sweep the DELETION threshold over "
+                         "clean CJ runs selected via --field-goldens; "
+                         "requires --field-goldens, forbids fixture args")
+    ap.add_argument("--field-goldens",
+                    help="field golden TSV: pr<TAB>full40sha<TAB>expected")
     ap.add_argument("--packaging-version", default="v03b")
     args = ap.parse_args(argv)
 
-    expected = load_shas(args.shas)
+    if args.field:
+        if not args.field_goldens:
+            die("--field needs --field-goldens")
+        for bad, name in ((args.golden, "--golden"),
+                          (args.negative_golden, "--negative-golden"),
+                          (args.shas, "--shas")):
+            if bad:
+                die(f"--field forbids {name}")
+    else:
+        for need, name in ((args.golden, "--golden"),
+                           (args.negative_golden, "--negative-golden"),
+                           (args.shas, "--shas")):
+            if not need:
+                die(f"fixture mode needs {name}")
+
+    jr = load_tool()
     with open(args.metrics) as f:
         recs = [json.loads(line) for line in f if line.strip()]
+
+    if args.field:
+        goldens = load_field_goldens(args.field_goldens)
+        runs = select_field_runs(recs, goldens, args.label,
+                                 args.packaging_version)
+        provider, model = check_single_provider_group(list(runs.values()))
+        res = sweep_field(jr, runs)
+        print(render_field(res, provider, model, sorted(runs)))
+        return 0
+
+    expected = load_shas(args.shas)
     pos, neg, provider, model = select_runs(recs, expected, args.label,
                                             args.packaging_version)
-    jr = load_tool()
     res = sweep(jr, pos, neg, args.golden, args.negative_golden)
     print(render(res, provider, model))
     return 0
