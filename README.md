@@ -60,7 +60,7 @@ No third-party packages.
 ## Usage
 
 ```bash
-system-one-reviewer --repo PATH --range A..B     # commit range (reviews the merge-base diff A...B)
+system-one-reviewer --repo PATH --range A..B     # commit range (reviews the merge-base diff A...B; two-dot semantics are not available through --range)
 system-one-reviewer --repo PATH --pr N           # GitHub PR (needs local refs: git fetch origin pull/N/head:pr/N; base is origin/main)
 system-one-reviewer --repo PATH --staged         # staged changes
 system-one-reviewer --repo PATH --uncommitted    # working tree

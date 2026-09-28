@@ -38,6 +38,11 @@ not every run was deeply reviewed.
 
 ## Findings (evidence → code location; all line refs verified against main)
 
+**Citation pinning:** line references below were verified against
+`system_one_reviewer.py` at **`e6b7aef`** (the v0.2 HEAD the evals ran
+against). The v0.3 branch inserts ~100 lines, so on-branch numbers drift;
+pin with `git show e6b7aef:system_one_reviewer.py`.
+
 **F1 — Deletion-only clusters get inflated severity and can unilaterally flip
 a verdict to "Changes requested" (#45).**
 On pr45 (mode pr:45, merge-base diff — the deletions are genuinely the PR's

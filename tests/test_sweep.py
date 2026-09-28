@@ -33,7 +33,7 @@ def _judged(line, real, sev=2.2, cat="bug-risk", file="a.py"):
             "category": cat, "confidence": None, "reported": True}
 
 
-def _run(label, fixture, judged, pv="v02", provider="jev", model=None):
+def _run(label, fixture, judged, pv="v03", provider="jev", model=None):
     head = EXPECTED[fixture]
     return {"label": label, "fixture": fixture, "fixture_head": head,
             "head": head[:10], "packaging_version": pv,
@@ -41,12 +41,12 @@ def _run(label, fixture, judged, pv="v02", provider="jev", model=None):
 
 
 def _pos_runs(judged, n=3, **kw):
-    return [_run(f"v02-test-baseline-{i}", "positive", judged, **kw)
+    return [_run(f"v03-test-baseline-{i}", "positive", judged, **kw)
             for i in range(1, n + 1)]
 
 
 def _neg_runs(judged, n=3, **kw):
-    return [_run(f"v02-test-negative-{i}", "negative", judged, **kw)
+    return [_run(f"v03-test-negative-{i}", "negative", judged, **kw)
             for i in range(1, n + 1)]
 
 
@@ -88,13 +88,13 @@ def test_gate_rejects_missing_judged(sw):
 def test_select_runs_requires_three_per_fixture(sw, tmp_path):
     recs = _pos_runs([_judged(10, 0.9)], n=2) + _neg_runs([])
     with pytest.raises(SystemExit, match="3 runs per fixture"):
-        sw.select_runs(recs, EXPECTED, "v02-test-")
+        sw.select_runs(recs, EXPECTED, "v03-test-")
 
 
 def test_select_runs_gates_and_splits(sw):
     recs = _pos_runs([_judged(10, 0.9)]) + _neg_runs([])
-    stale = _run("v02-test-baseline-9", "positive", [], pv="v01")
-    pos, neg = sw.select_runs(recs + [stale], EXPECTED, "v02-test-")[:2]
+    stale = _run("v03-test-baseline-9", "positive", [], pv="v01")
+    pos, neg = sw.select_runs(recs + [stale], EXPECTED, "v03-test-")[:2]
     assert len(pos) == 3 and len(neg) == 3
 
 
@@ -233,7 +233,7 @@ def test_main_end_to_end_on_synthetic_metrics(jr, sw, tmp_path, capsys):
     metrics.write_text("".join(__import__("json").dumps(r) + "\n" for r in recs))
     shas = tmp_path / "shas.txt"
     shas.write_text(f"positive={POS_SHA}\nnegative={NEG_SHA}\n")
-    rc = sw.main(["--metrics", str(metrics), "--label", "v02-test-",
+    rc = sw.main(["--metrics", str(metrics), "--label", "v03-test-",
                   "--golden", golden, "--negative-golden", golden,
                   "--shas", str(shas)])
     out = capsys.readouterr().out

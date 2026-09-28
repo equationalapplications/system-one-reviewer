@@ -181,8 +181,7 @@ def test_stale_base_two_dot_would_show_false_deletion(git_pair):
     tmp_path, git = git_pair
     r = subprocess.run(["git", "diff", "main..feature"], cwd=str(tmp_path),
                        capture_output=True, text=True, check=True)
-    assert any(ln.startswith("--- b/mainmove.txt") or
-               (ln.startswith("--- ") and "mainmove" in ln)
+    assert any(ln.startswith("--- ") and "mainmove" in ln
                for ln in r.stdout.splitlines())
 
 
@@ -206,24 +205,24 @@ def test_resolve_diff_range_uses_merge_base(jr, git_pair, monkeypatch):
 
 # ---------- F7: ledger hygiene ----------
 
-def test_label_defaults_to_mode(jr, git_pair, monkeypatch):
+def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
+    """F7 end-to-end: empty --label logs the mode; repo records the
+    target's realpath basename through the real main() wiring.
+    (Supersedes test_label_defaults_to_mode and the os.path-only
+    test_repo_dot_resolves_to_basename — r2 minors 3+4.)"""
     tmp_path, _git = git_pair
     argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
     monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")  # load_api_key gate
+    monkeypatch.delenv("SOR_PROVIDER", raising=False)  # r2 minor 5: keep
     monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _Capture())
     monkeypatch.setattr(jr, "METRICS_PATH",
                         str(tmp_path / "metrics.jsonl"))
     jr.main()
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
     assert rec["label"] == "range:main...feature"
-
-
-def test_repo_dot_resolves_to_basename(jr):
-    '''repo:"." (cwd invocations) must log the repo's real name, not "."'''
-    assert jr.os.path.basename(jr.os.path.realpath("some/repo")) == "repo"
-    assert (jr.os.path.basename(jr.os.path.realpath(".")) ==
-            os.path.basename(os.path.realpath(".")))
+    assert rec["repo"] == tmp_path.name
+    assert rec["packaging_version"] == "v03"
 
 
 def test_infile_deletion_with_context_is_deletion_only(jr):
@@ -260,13 +259,14 @@ def test_mode_records_diffed_spec(jr, git_pair):
     assert mode == "range:main...feature"
 
 
-def test_label_default_and_repo_metadata(jr, git_pair, monkeypatch):
+def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
     """F7 end-to-end: empty --label logs the mode; repo records the
     target's realpath basename through the real main() wiring."""
     tmp_path, _git = git_pair
     argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
     monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")  # load_api_key gate
+    monkeypatch.delenv("SOR_PROVIDER", raising=False)  # r2 minor 5: env isolation
     monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _Capture())
     monkeypatch.setattr(jr, "METRICS_PATH",
                         str(tmp_path / "metrics.jsonl"))
