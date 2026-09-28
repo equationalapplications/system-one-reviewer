@@ -148,10 +148,13 @@ v0.2 verdicts are not directly comparable with v0.1 logs.
 The first field evaluation (9 live runs on curated-journal PRs #43–#47,
 with Opus/CodeRabbit deep reviews as ground truth) found verdict-level
 accuracy of 2-of-5 on the clear cases: one false "Changes requested" on a
-clean deletions PR (now addressed by the deletion-adapted question set),
-and one "Approved" on a diff with a confirmed bug the tool actually
-reported but under-scored. Verdict-rule changes are gated on a threshold
-sweep over both fixture and field ledgers before any knob flips — see
+clean deletions PR, one likely false positive on a benign fix diff, and
+one "Approved" on a diff with a confirmed bug the tool actually reported
+but under-scored. This branch **targets** the deletions failure mode with
+the deletion-adapted question set — it has NOT yet been re-run against
+that PR, so the fix is unproven until a live run (or the v0.3 threshold
+sweep over new ledgers) confirms it. Verdict-rule changes stay gated on
+that sweep — see
 [docs/evals/2026-09-28-field-evals-cj-prs.md](docs/evals/2026-09-28-field-evals-cj-prs.md)
 for the full evidence and the open v0.3 questions.
 

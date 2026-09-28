@@ -43,3 +43,11 @@
 - m5 (ledger claims unverified): **FIXED** — appendix now reproduces the
   ledger fields verbatim.
 - m6 (README rebrand, keep path-continuity): **FIXED** — F6 states it.
+
+## Post-review note (2026-09-28, cycle 3)
+
+The F5 stale-base example (pr46-fix-delta) was later CHECKED and RULED OUT
+(`git merge-base --is-ancestor 8e6f440 f8c6594` → ancestor; both reported
+findings sit in files the fix touched) — the final brief's F5 records this.
+Earlier text in this file flagging pr46-fix-delta as a possible stale-base
+instance predates that check and is superseded by it.

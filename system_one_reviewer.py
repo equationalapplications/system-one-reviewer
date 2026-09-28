@@ -50,7 +50,14 @@ MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 REAL_THRESHOLD = 0.50         # is_real_issue noul gate (plateau-safe)
 KNOWN_FIXTURES = {"positive", "negative"}
-PACKAGING_VERSION = "v02"
+# v03 (field evals, 2026-09-28): every model call's input changed —
+# change_type rides in hunk state, deletion-only clusters get
+# DELETION_QUESTIONS, and --range diffs A...B. Ledger records produced by
+# different input shapes must never share a version tag (the threshold
+# sweep compares runs within one version).
+PACKAGING_VERSION = "v03"
+
+
 def sev_level(v):
     """Nearest integer level, halves round up (2.5 is a BLOCKER)."""
     if v is None:
@@ -330,9 +337,13 @@ def resolve_diff(repo, args):
         # F5 (field evals, 2026-09-28): merge-base diff, matching the
         # documented behavior and --pr. A..B on a stale base showed
         # post-branch main-side changes as deletions (false-FP machine).
-        diff = run_git(repo, "diff", triple_dot(args.range))
+        spec = triple_dot(args.range)
+        diff = run_git(repo, "diff", spec)
         head = run_git(repo, "rev-parse", "HEAD").strip()
-        return diff, head, f"range:{args.range}"
+        # r1-M3 (Opus v0.3 review): the mode records the spec actually
+        # diffed (A...B), so ledger readers can't confuse pre/post-F5
+        # records that share a user-facing spelling.
+        return diff, head, f"range:{spec}"
     if args.staged:
         return (run_git(repo, "diff", "--cached"),
                 run_git(repo, "rev-parse", "HEAD").strip(), "staged")
@@ -352,15 +363,18 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 def triple_dot(rng):
     """Rewrite a two-dot range spec to its merge-base form.
 
-    `A..B` becomes `A...B`; anything else (SHA, `--cached`-style specs,
-    ranges that already use `...`) passes through unchanged. `git diff
-    A...B` reviews the branch's own changes against the merge-base, so a
-    stale main never masquerades as deletions in the reviewed diff.
+    `A..B` becomes `A...B`; an open-ended side is filled with HEAD first
+    (`main..` -> `main...HEAD`, `..feature` -> `HEAD...feature`). Anything
+    else (a bare SHA, a spec already in `...` form) passes through
+    unchanged. `git diff A...B` reviews the branch's own changes against
+    the merge-base, so a stale main never masquerades as deletions in the
+    reviewed diff.
     """
     if rng.count("..") == 1 and "..." not in rng:
         left, right = rng.split("..", 1)
-        if left and right:
-            return f"{left}...{right}"
+        left = left or "HEAD"
+        right = right or "HEAD"
+        return f"{left}...{right}"
     return rng
 
 
@@ -372,8 +386,10 @@ def package_hunks(diff):
     Anchors: first '+' in the cluster's own run -> else the deletion site
     (first '-' in the run, at the position in HEAD where the line was
     removed) -> else the first context entry with a lineno at/after the run
-    -> else the run's hunk_start (a deletion-only cluster never collapses to
-    line 1). Deletion-only clusters anchor at the '-' entry's tracked
+    -> else the run's hunk_start. An IN-FILE deletion cluster never
+    collapses to line 1; a WHOLE-FILE deletion does anchor at line 1
+    (`@@ -1,N +0,0 @@` clamps hunk_end to 1 — seen throughout the #45
+    field run). Deletion-only clusters anchor at the '-' entry's tracked
     new_line — the HEAD line before which the content was removed — so the
     anchor stays comparable with golden lines recorded against HEAD even
     when earlier lines in the hunk shifted the count (old-file numbering
@@ -571,6 +587,14 @@ def package_hunks(diff):
                 # count only THIS cluster's changed lines: a neighbour's
                 # changed lines may appear as context but are not ours
                 n_changed = len(g)
+                # F1/M1 (Opus v0.3 review): deletion-only means the
+                # cluster's own RUN has no '+' entries — independent of
+                # context. A whole-file deletion has none; an in-file
+                # removal surrounded by unchanged lines also has none,
+                # even though its window carries context that survives in
+                # HEAD. Context must not flip the classification.
+                run_kinds = {seg[i][0] for i in g}
+                deletion_only = "+" not in run_kinds
                 hunks.append({
                     "file": fname, "line": anchor,
                     "hunk_start": seg_hunk_start,
@@ -578,6 +602,8 @@ def package_hunks(diff):
                               f"({n_changed} changed lines) @@",
                     "lines": lines, "entries": window,
                     "n_changed": n_changed,
+                    "change_type": "deletion-only" if deletion_only
+                                   else "code-change",
                 })
     for h in hunks:
         h["size"] = len(h["lines"])
@@ -680,13 +706,16 @@ def hunk_state(h):
     """Structured before/after state, read from `entries` only (never the
     rendered lines, which can corrupt text containing ': + ').
 
-    change_type (F1, field evals 2026-09-28): 'deletion-only' when the
-    cluster adds nothing (empty after-state) — there is no surviving code
-    to be "buggy", so the model gets the deletion-adapted question set
-    (DELETION_QUESTIONS) instead of full severity scoring. On the #45 field
-    run, six deletion-only clusters scored severity 2.73-2.82 under the
-    generic questions and the one crossing the is_real gate flipped the
-    verdict to "Changes requested" on a clean cleanup PR.
+    change_type (F1, field evals 2026-09-28) is computed at packaging time
+    from the cluster's own run: 'deletion-only' when the run has no '+'
+    entries — the cluster only removes code, so the model gets the
+    deletion-adapted question set (DELETION_QUESTIONS: removal-risk
+    scoring) instead of the generic code-bug questions. Context lines ride
+    in code_before/after regardless; they describe the surviving file, not
+    the change. On the #45 field run, six deletion-only clusters scored
+    severity 2.73-2.82 under the generic questions and the one crossing
+    the is_real gate flipped the verdict to "Changes requested" on a clean
+    cleanup PR.
     """
     before, after = [], []
     for w in h["entries"]:
@@ -701,7 +730,7 @@ def hunk_state(h):
     return {
         "file": h["file"],
         "location": f"around line {h['line']}",
-        "change_type": "deletion-only" if not after else "code-change",
+        "change_type": h.get("change_type", "code-change"),
         "code_before_change": before,
         "code_after_change": after,
     }
@@ -710,10 +739,10 @@ def hunk_state(h):
 def judge(hunks, ask):
     """ask is the wired provider's ask(state, questions) (E8 contract).
 
-    F1: deletion-only clusters (empty after-state) get DELETION_QUESTIONS —
-    removal-risk scoring instead of code-bug scoring; all other clusters
-    get HUNK_QUESTIONS. The response contract and compose() gating are
-    identical for both sets.
+    F1: deletion-only clusters (no '+' in the cluster's own run) get
+    DELETION_QUESTIONS — removal-risk scoring instead of code-bug scoring;
+    all other clusters get HUNK_QUESTIONS. The response contract and
+    compose() gating are identical for both sets.
     """
     findings, latencies, failures = [], [], 0
     parse_failures = 0  # M1 (r8): consecutive shape errors, separate counter
@@ -1045,7 +1074,7 @@ def main():
          "category": f.get("category"), "confidence": f.get("confidence"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
-    meta = {"repo": os.path.basename(os.path.abspath(args.repo)),
+    meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
             "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks), "n_analyzed": len(kept),

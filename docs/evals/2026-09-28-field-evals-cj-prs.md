@@ -103,16 +103,17 @@ pr46: risk 2.1 + Approved). Decision needed: recalibrate the PR-level
 prompt, or cut the render line. Either way keep the closed-set last line
 intact (:899-904).
 
-**F5 — `--range` does a two-dot diff while its docstring claims merge-base.**
-`resolve_diff()` (:329) runs `git diff A..B` (two-dot, no merge-base) but the
-module docstring (:9) claims it "pre-computes merge-base"; only `--pr` uses
+**F5 — `--range` did a two-dot diff while the docstring claimed merge-base
+(FIXED in v0.3).**
+`resolve_diff()` (:329) ran `git diff A..B` (two-dot, no merge-base) while the
+module docstring (:9) claimed it "pre-computes merge-base"; only `--pr` used
 `...` (:339). Two-dot ranges against a stale base show post-branch main-side
 changes as deletions — a false-FP machine in principle. (The pr46-fix-delta
 FP is **not** an instance: verified via `git merge-base --is-ancestor
 8e6f440 f8c6594` — ancestor, so two-dot and merge-base agree there, and both
-reported findings sit in files the fix itself touched.) Proposal: make
+reported findings sit in files the fix itself touched.) v0.3 makes
 `--range` use `A...B` (merge-base), matching the docstring and user
-expectation; re-verify fixtures.
+expectation; fixtures re-run on the branch (see README).
 
 **F6 — README still leads with the old name.**
 `README.md:1` is `# jev-review`; Jev-as-actor prose throughout (:24-31).

@@ -4,6 +4,7 @@ docs/evals/2026-09-28-field-evals-cj-prs.md.
 """
 
 import json
+import os
 import subprocess
 
 import pytest
@@ -131,11 +132,15 @@ def test_triple_dot_rewrites_two_dot(jr):
 
 def test_triple_dot_passthrough(jr):
     for spec in ("main...HEAD", "abc123", "", "HEAD~1..HEAD...x"):
-        if spec == "HEAD~1..HEAD...x":
-            # two dots inside a spec that already has three-dot form
-            assert jr.triple_dot(spec) == spec
-        else:
-            assert jr.triple_dot(spec) == spec
+        assert jr.triple_dot(spec) == spec
+
+
+def test_triple_dot_fills_open_sides_with_head(jr):
+    """r1 minor 2 (Opus v0.3 review): open-ended two-dot ranges were
+    passed through unchanged, keeping the stale-base two-dot semantics
+    F5 set out to remove."""
+    assert jr.triple_dot("main..") == "main...HEAD"
+    assert jr.triple_dot("..feature") == "HEAD...feature"
 
 
 @pytest.fixture
@@ -173,7 +178,6 @@ def test_range_reviews_merge_base(jr, git_pair):
 def test_stale_base_two_dot_would_show_false_deletion(git_pair):
     """Documents the bug F5 fixes: the two-dot form DOES contain the
     main-side file as a deletion (this is what misled v0.2's --range)."""
-    import system_one_reviewer as _unused  # noqa: F401  (import guard only)
     tmp_path, git = git_pair
     r = subprocess.run(["git", "diff", "main..feature"], cwd=str(tmp_path),
                        capture_output=True, text=True, check=True)
@@ -197,14 +201,13 @@ def test_resolve_diff_range_uses_merge_base(jr, git_pair, monkeypatch):
                           "uncommitted": False, "pr": None})()
     _diff, _head, mode = jr.resolve_diff(str(tmp_path), args)
     assert seen["spec"] == "main...feature"
-    assert mode == "range:main..feature"  # mode keeps the user's spelling
+    assert mode == "range:main...feature"  # mode records the diffed spec
 
 
 # ---------- F7: ledger hygiene ----------
 
 def test_label_defaults_to_mode(jr, git_pair, monkeypatch):
     tmp_path, _git = git_pair
-    import system_one_reviewer as _unused  # noqa: F401  (import guard only)
     argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
     monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")  # load_api_key gate
@@ -213,12 +216,62 @@ def test_label_defaults_to_mode(jr, git_pair, monkeypatch):
                         str(tmp_path / "metrics.jsonl"))
     jr.main()
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
-    assert rec["label"] == "range:main..feature"
+    assert rec["label"] == "range:main...feature"
 
 
 def test_repo_dot_resolves_to_basename(jr):
     '''repo:"." (cwd invocations) must log the repo's real name, not "."'''
-    import os
-    assert jr.os.path.basename(jr.os.path.abspath("some/repo")) == "repo"
-    assert (jr.os.path.basename(jr.os.path.abspath(".")) ==
-            os.path.basename(os.path.abspath(".")))
+    assert jr.os.path.basename(jr.os.path.realpath("some/repo")) == "repo"
+    assert (jr.os.path.basename(jr.os.path.realpath(".")) ==
+            os.path.basename(os.path.realpath(".")))
+
+
+def test_infile_deletion_with_context_is_deletion_only(jr):
+    """M1 (Opus v0.3 review): change_type must key on the cluster's own
+    run, not the after-state — context lines survive in HEAD and must not
+    flip an in-file removal into 'code-change'."""
+    diff = (
+        "diff --git a/src/nine.py b/src/nine.py\n"
+        "--- a/src/nine.py\n"
+        "+++ b/src/nine.py\n"
+        "@@ -1,9 +1,8 @@\n"
+        " line1\n"
+        " line2\n"
+        "-dead_middle()\n"
+        " line4\n"
+        " line5\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1
+    assert hunks[0]["change_type"] == "deletion-only"
+    state = jr.hunk_state(hunks[0])
+    assert state["change_type"] == "deletion-only"
+    assert state["code_after_change"]     # context survives; state is honest
+    assert any("dead_middle" in b for b in state["code_before_change"])
+
+
+def test_mode_records_diffed_spec(jr, git_pair):
+    """r1 minor 3 (Opus v0.3 review): the mode string must carry the
+    merge-base spec actually diffed, not the user's two-dot spelling."""
+    tmp_path, _git = git_pair
+    args = type("A", (), {"range": "main..feature", "staged": False,
+                          "uncommitted": False, "pr": None})()
+    _diff, _head, mode = jr.resolve_diff(str(tmp_path), args)
+    assert mode == "range:main...feature"
+
+
+def test_label_default_and_repo_metadata(jr, git_pair, monkeypatch):
+    """F7 end-to-end: empty --label logs the mode; repo records the
+    target's realpath basename through the real main() wiring."""
+    tmp_path, _git = git_pair
+    argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
+    monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")  # load_api_key gate
+    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _Capture())
+    monkeypatch.setattr(jr, "METRICS_PATH",
+                        str(tmp_path / "metrics.jsonl"))
+    jr.main()
+    rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
+    assert rec["label"] == "range:main...feature"
+    assert rec["repo"] == tmp_path.name
+    assert rec["packaging_version"] == "v03"
