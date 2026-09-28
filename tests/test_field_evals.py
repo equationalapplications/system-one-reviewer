@@ -39,7 +39,25 @@ def _addition_diff():
 def test_deletion_only_cluster_flagged(jr):
     hunks = jr.package_hunks(_whole_file_deletion_diff())
     assert len(hunks) == 1
-    assert jr.hunk_state(hunks[0])["change_type"] == "deletion-only"
+    # v0.3b: +++ /dev/null ⇒ whole-file-deleted (three-valued change_type)
+    assert jr.hunk_state(hunks[0])["change_type"] == "whole-file-deleted"
+
+
+def test_infile_deletion_is_deletion_only_not_whole_file(jr):
+    """Three-valued change_type (v0.3b, Kurt review): an in-file removal
+    is deletion-only; whole-file-deleted is reserved for +++ /dev/null."""
+    diff = (
+        "diff --git a/src/nine.py b/src/nine.py\n"
+        "--- a/src/nine.py\n"
+        "+++ b/src/nine.py\n"
+        "@@ -1,9 +1,8 @@\n"
+        " line1\n"
+        "-dead_middle()\n"
+        " line4\n"
+    )
+    hunks = jr.package_hunks(diff)
+    assert len(hunks) == 1
+    assert hunks[0]["change_type"] == "deletion-only"
 
 
 def test_addition_cluster_not_flagged(jr):
@@ -91,8 +109,10 @@ def test_deletion_only_cluster_gets_deletion_questions(jr):
     jr.judge(jr.package_hunks(_whole_file_deletion_diff()), cap)
     state, questions = cap.calls[0]
     assert questions is jr.DELETION_QUESTIONS
-    assert state["change_type"] == "deletion-only"
+    assert state["change_type"] == "whole-file-deleted"
     assert state["code_after_change"] == []
+    # v0.3b: the deterministic cross-file signal rides in the state
+    assert "references_remaining" in state
 
 
 def test_code_cluster_gets_generic_questions(jr):
@@ -112,16 +132,43 @@ def test_deletion_question_set_same_shape(jr):
                 == jr.HUNK_QUESTIONS[q]["type"])
 
 
-def test_deletion_findings_gate_and_verdict_unchanged(jr):
-    """compose() treats deletion findings identically: the #45 failure
-    shape (single BLOCKER-level deletion finding) still flips the verdict
-    — the fix changes what the model is ASKED, not how answers gate."""
+def test_deletion_verdict_requires_corroboration(jr):
+    """v0.3b corroboration rule (the F1 proposal, now implemented): the
+    #45 failure shape — a lone, uncorroborated deletion BLOCKER — is
+    REPORTED but cannot unilaterally flip the verdict."""
     findings = [{"hunk": {"file": "a.ts", "line": 1, "header": "h",
                           "lines": []},
-                 "severity": 2.8, "is_real": 0.65, "category": "other"}]
+                 "severity": 2.8, "is_real": 0.75, "category": "other",
+                 "rubric": "deletion", "references_remaining": False}]
     reported, _jitter, verdict = jr.compose(findings, [], None)
-    assert verdict == "Changes requested"
-    assert len(reported) == 1
+    assert verdict == "Approved"          # no unilateral flip
+    assert len(reported) == 1             # but the human still sees it
+
+
+def test_deletion_verdict_flips_when_corroborated(jr):
+    """Corroboration paths: references_remaining=True (deterministic grep
+    hit) or a second (code-change) reported finding."""
+    def _finding(refs, rubric="deletion", file="a.ts"):
+        return {"hunk": {"file": file, "line": 1, "header": "h", "lines": []},
+                "severity": 2.8, "is_real": 0.75, "category": "other",
+                "rubric": rubric, "references_remaining": refs}
+    _, _j, v1 = jr.compose([_finding(True)], [], None)
+    assert v1 == "Changes requested"      # grep says code still references it
+    second = _finding(False, rubric="code-change", file="b.py")
+    _, _j, v2 = jr.compose([_finding(False), second], [], None)
+    assert v2 == "Changes requested"      # corroborated by another finding
+
+
+def test_deletion_rubric_uses_own_threshold(jr):
+    """Two rubrics, two thresholds (v0.3b): a deletion finding at is_real
+    0.6 — above the code-change 0.50 gate — must NOT be reported; the
+    deletion gate is 0.70 until its own sweep says otherwise."""
+    findings = [{"hunk": {"file": "a.ts", "line": 1, "header": "h",
+                          "lines": []},
+                 "severity": 2.0, "is_real": 0.60, "category": "bug-risk",
+                 "rubric": "deletion", "references_remaining": False}]
+    reported, _jitter, _verdict = jr.compose(findings, [], None)
+    assert reported == []
 
 
 # ---------- F5: --range reviews the merge-base diff ----------
@@ -206,8 +253,9 @@ def test_resolve_diff_range_uses_merge_base(jr, git_pair, monkeypatch):
 # ---------- F7: ledger hygiene ----------
 
 def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
-    """F7 end-to-end: empty --label logs the mode; repo records the
-    target's realpath basename through the real main() wiring.
+    """F7 end-to-end: empty --label logs auto:<mode> (v0.3b marker so a
+    short sweep prefix can't collide); repo records the target's realpath
+    basename through the real main() wiring.
     (Supersedes test_label_defaults_to_mode and the os.path-only
     test_repo_dot_resolves_to_basename — r2 minors 3+4.)"""
     tmp_path, _git = git_pair
@@ -220,7 +268,7 @@ def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
                         str(tmp_path / "metrics.jsonl"))
     jr.main()
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
-    assert rec["label"] == "range:main...feature"
+    assert rec["label"] == "auto:range:main...feature"
     assert rec["repo"] == tmp_path.name
     assert rec["packaging_version"] == "v03"
 
@@ -247,6 +295,29 @@ def test_infile_deletion_with_context_is_deletion_only(jr):
     assert state["change_type"] == "deletion-only"
     assert state["code_after_change"]     # context survives; state is honest
     assert any("dead_middle" in b for b in state["code_before_change"])
+    # v0.3b: 'dead_middle' appears in no surviving line here, but line4/line5
+    # don't mention it either — references_remaining must be a real bool
+    assert state["references_remaining"] is False
+
+
+def test_references_remaining_true_when_context_mentions_removed(jr):
+    """v0.3b deterministic corroboration: a surviving context line that
+    still references the removed symbol flips references_remaining True —
+    that is the gate that lets a deletion finding drive the verdict."""
+    diff = (
+        "diff --git a/src/nine.py b/src/nine.py\n"
+        "--- a/src/nine.py\n"
+        "+++ b/src/nine.py\n"
+        "@@ -1,9 +1,8 @@\n"
+        " line1\n"
+        "-def dead_middle():\n"
+        "-    return 0\n"
+        " result = dead_middle()  # survives, still calls it\n"
+    )
+    hunks = jr.package_hunks(diff)
+    state = jr.hunk_state(hunks[0])
+    assert state["change_type"] == "deletion-only"
+    assert state["references_remaining"] is True
 
 
 def test_mode_records_diffed_spec(jr, git_pair):
@@ -257,21 +328,3 @@ def test_mode_records_diffed_spec(jr, git_pair):
                           "uncommitted": False, "pr": None})()
     _diff, _head, mode = jr.resolve_diff(str(tmp_path), args)
     assert mode == "range:main...feature"
-
-
-def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
-    """F7 end-to-end: empty --label logs the mode; repo records the
-    target's realpath basename through the real main() wiring."""
-    tmp_path, _git = git_pair
-    argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
-    monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")  # load_api_key gate
-    monkeypatch.delenv("SOR_PROVIDER", raising=False)  # r2 minor 5: env isolation
-    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _Capture())
-    monkeypatch.setattr(jr, "METRICS_PATH",
-                        str(tmp_path / "metrics.jsonl"))
-    jr.main()
-    rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
-    assert rec["label"] == "range:main...feature"
-    assert rec["repo"] == tmp_path.name
-    assert rec["packaging_version"] == "v03"

@@ -27,10 +27,12 @@ not every run was deeply reviewed.
 
 ## Headline numbers (small n, honest)
 
-- On runs with strong ground truth: TP 0, FP 1 (#45) + 1 likely (#46-fix-delta),
-  FN 1 (#46), TN 2 (#47 ×2). #43 ground truth pending. Verdict-level accuracy
-  on the clear cases is **2 of 5** — the two TNs; worse than the fixture
-  benchmarks suggested.
+- On runs with strong ground truth (counting #47 once — #47 and #47-rebased
+  are the same change run twice): TP 0, FP 1 (#45) + 1 likely (#46-fix-delta),
+  FN 1 (#46), TN 1 (#47). #43 ground truth pending. That leaves **3
+  independent strong cases (1 FP, 1 FN, 1 TN) + 1 moderate (the fix-delta
+  likely-FP)** — verdict-level accuracy 1 of 3 on the independent cases;
+  worse than the fixture benchmarks suggested.
 - Finding-level: the model *did* notice the real mockLlmProvider defect
   (is_real 0.64, anchored at the correct line 11) — the finding was reported;
   the **verdict policy** is what ignored it (F2).
@@ -133,10 +135,21 @@ label = mode when unset; store `basename(realpath(repo))`.
 
 ## Candidate v0.3 changes
 
-1. F1: change_type detection + deletion-adapted questions + docstring fix.
+1. F1: change_type detection + deletion-adapted questions + docstring fix
+   **plus the corroboration proposal** (a lone deletion finding may not flip
+   the verdict uncorroborated) and a three-valued change_type
+   (deletion-only / whole-file-deleted / normal).
 2. F2: after F1 lands, sweep a (severity, is_real) joint verdict rule over
    fixture + field ledgers (scripts/sweep-thresholds.py); no knob flips
    before the sweep separates the known FP/FN set.
+   **Executability prerequisite (v0.3b review):** `gate_run` rejects field
+   runs (fixture_head ≠ committed fixture SHA; pre-v03 records also fail the
+   packaging_version gate), so as written the sweep has NO field data to
+   consume. The plan is: (a) re-run the CJ PRs #43/#45/#46/#47 under v03
+   with a CJ-specific golden set (per-PR expected issues, committed next to
+   the fixture goldens); (b) extend sweep-thresholds.py to accept that set
+   alongside the fixture goldens; (c) only then evaluate threshold/verdict
+   changes on measured v03 data.
 3. F3: document severity-confidence semantics; decide on gating (needs Jev docs).
 4. F4: recalibrate or cut needs_human_review render.
 5. F5: `--range` → merge-base (`A...B`).
