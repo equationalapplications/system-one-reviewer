@@ -19,6 +19,7 @@ files = [
     "scripts/build_release.py",
     "scripts/recover_release.py",
     "scripts/corpus_lib.py",
+    "scripts/mine_corpus.py",
 ]
 # The code is mostly unannotated; without this mypy skips those bodies and
 # checks almost nothing.
