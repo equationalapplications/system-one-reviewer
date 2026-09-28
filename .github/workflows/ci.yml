@@ -108,3 +108,14 @@ jobs:
         run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: recover partial release
+        # If semantic-release left a draft release with missing assets
+        # (a single asset upload rejecting in Promise.all leaves the
+        # release as a draft), rebuild from the tag's source tree,
+        # upload what's missing, and publish the draft. The tag was
+        # already pushed, so a follow-up dispatch is a no-op for
+        # semantic-release — this step is what makes the retry work.
+        if: always()
+        run: python3 scripts/recover_release.py --repo equationalapplications/system-one-reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
