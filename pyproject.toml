@@ -21,6 +21,7 @@ files = [
     "scripts/corpus_lib.py",
     "scripts/mine_corpus.py",
     "scripts/run_corpus.py",
+    "scripts/score_corpus.py",
 ]
 # The code is mostly unannotated; without this mypy skips those bodies and
 # checks almost nothing.
