@@ -142,10 +142,13 @@ def select_runs(recs, expected, label_prefix, packaging_version="v03b"):
 def rewrap(j):
     """Flat judged entry -> the `f['hunk'][...]` shape compose consumes.
 
-    v03b: rubric/references_remaining/change_type ride through when the
-    ledger record has them (v03b+ records). Older records replay as
-    code-change rubric without corroboration fields — correct, because
-    pre-v03b runs never sent deletion questions either."""
+    v03b: rubric/references_remaining ride through; older records (no
+    rubric key) replay as code-change — correct, because pre-v03b runs
+    never sent deletion questions. A v03b+ record (has the key) that is
+    malformed dies loudly instead of silently replaying wrong logic."""
+    if "rubric" not in j and j.get("packaging_version") == "v03b":
+        die(f"run record {j.get('file')} looks v03b but has no rubric — "
+            "ledger written by a broken build; re-run")
     return {"hunk": {"file": j["file"], "line": j["line"]},
             "is_real": j["is_real"], "severity": j["severity"],
             "category": j.get("category"), "parse_error": None,

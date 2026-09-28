@@ -372,10 +372,29 @@ def test_bare_range_spec_rejected_loudly(jr, git_pair):
 
 
 def test_ledger_fields_reach_sweep_replay(jr, git_pair, monkeypatch):
-    """Opus v03b r2 B1: the judged entries written to metrics.jsonl must
-    carry rubric/references_remaining so rewrap()->compose() replays the
-    REAL verdict logic (end-to-end: main() -> file -> rewrap)."""
+    """Opus v03b r2 B1 / r3 M2: the judged entries written to
+    metrics.jsonl must carry rubric/references_remaining so the sweep's
+    rewrap()->compose() path replays the REAL verdict logic. End-to-end:
+    main() writes a ledger record for a deletion-only .py hunk; we load
+    sweep-thresholds.py (same loader as the unit test below) and replay."""
     tmp_path, _git = git_pair
+    # add a deletion-only .py change on feature (git_pair's fixture adds
+    # feat.txt, which triage skips as docs — so delete real code instead)
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "feature"],
+                   check=True, capture_output=True)
+    code = tmp_path / "code_mod.py"
+    code.write_text("import os\n\nvalue = compute(1)\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "code_mod.py"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q",
+                    "-m", "delete referenced code"],
+                   env=dict(os.environ,
+                            GIT_AUTHOR_DATE="2026-09-28T00:00:00 +0000",
+                            GIT_COMMITTER_DATE="2026-09-28T00:00:00 +0000",
+                            GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                            GIT_COMMITTER_NAME="t",
+                            GIT_COMMITTER_EMAIL="t@t"),
+                   capture_output=True)
     argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
     monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
@@ -385,11 +404,20 @@ def test_ledger_fields_reach_sweep_replay(jr, git_pair, monkeypatch):
                         str(tmp_path / "metrics.jsonl"))
     jr.main()
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
+    assert rec["judged"], "fixture must produce judged code hunks"
+    # load the real sweep module (its import touches no env state)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sweep", os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "scripts", "sweep-thresholds.py"))
+    assert spec is not None and spec.loader is not None
+    sw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sw)
     for j in rec["judged"]:
         assert j["rubric"] in ("code-change", "deletion")
-        assert isinstance(j["references_remaining"], bool)
-        # replay through the sweep's own rewrap -> compose path
-        w = jr.rewrap(j) if hasattr(jr, "rewrap") else j
+        if j["rubric"] == "deletion":
+            assert isinstance(j["references_remaining"], bool)
+        w = sw.rewrap(j)
         assert w["rubric"] == j["rubric"]
         assert w["references_remaining"] == j["references_remaining"]
 

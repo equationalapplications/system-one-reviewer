@@ -357,7 +357,9 @@ def resolve_diff(repo, args):
             sys.exit("system-one-reviewer: --range needs A..B or A...B; "
                      f"a bare {spec!r} has no right-hand tip to record")
         diff = run_git(repo, "diff", spec)
-        right_ref = spec.rsplit("...", 1)[1]
+        # r3 m3 (Opus): `A...` with an empty right side means HEAD, same
+        # as triple_dot's two-dot fill — don't pass an empty ref to git.
+        right_ref = spec.rsplit("...", 1)[1] or "HEAD"
         head = run_git(repo, "rev-parse", "--verify",
                        f"{right_ref}^{{commit}}").strip()
         # mode records the spec actually diffed (r1-M3), so ledger readers
@@ -792,6 +794,11 @@ def references_remaining(h, after_texts):
                 if nm and re.fullmatch(r"[A-Za-z_]\w*", nm):
                     removed_names.add(nm.split(".")[-1])
             mod = (m.group(1) or m.group(3) or "").strip()
+            # v03b r3 M1 (Opus): relative imports (`from .utils import x`,
+            # `from . import x`) yield empty first segments; an empty name
+            # makes `\b\b` match ANY word boundary — reopening the #45 FP
+            # path. Skip empty names entirely.
+            mod = mod.lstrip(".")
             if mod and re.fullmatch(r"[\w.]+", mod):
                 removed_names.add(mod.split(".")[0])
     if not removed_names:
@@ -1001,16 +1008,18 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
         if r is not None and r >= t and (f.get("severity") or 0) >= 1:
             reported.append(f)
-    # Corroboration pool (v0.3b M2 fix, Opus r2 M2): a reported CODE-CHANGE
-    # finding corroborates a deletion finding only when it is itself
-    # sev>=2 (a serious code finding) OR targets the same file (the
-    # deletion's own neighborhood). A style nit elsewhere must not unlock
-    # the gate for six wrong deletion findings (#45 shape).
+    # Corroboration pool (v0.3b M2 fix, Opus r2 M2, r3 m2): a reported
+    # CODE-CHANGE finding corroborates a deletion finding only when it is
+    # itself sev>=2, OR same-file AND non-style (a real issue in the
+    # deletion's own neighborhood, not a style nit). A style nit —
+    # anywhere — must not unlock the gate for six wrong deletion findings
+    # (#45 shape).
     def _corroborates(cf, df):
-        if cf is df:
-            return False
         same_file = cf["hunk"]["file"] == df["hunk"]["file"]
-        return (sev_level(cf.get("severity")) >= 2 or same_file)
+        if same_file:
+            return (sev_level(cf.get("severity")) >= 2
+                    or cf.get("category") not in ("style", None))
+        return sev_level(cf.get("severity")) >= 2
 
     corroboration_pool = [f for f in reported
                           if f.get("rubric", "code-change") != "deletion"]
