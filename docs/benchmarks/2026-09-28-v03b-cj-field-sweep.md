@@ -34,16 +34,23 @@ data can decide exactly two things, encoded as the two outcomes:
 
 ## Result
 
-```
-dt | deletion FPs | code FPs (pinned t) | per-PR (#43 #44 #45 #46 #47)
-0.30 | 5 | 13 | 2 0 3 0 0
-0.50 | 4 | 13 | 1 0 3 0 0
-0.55 | 1 | 13 | 0 0 1 0 0
-0.60 | 0 | 13 | 0 0 0 0 0
-0.70 | 0 | 13 | 0 0 0 0 0
+Full 9-row grid, verbatim sweep output:
 
-deletion FPs at shipped 0.70: 0
-decision: KEEP 0.70 (clean-side validated)
+```
+deletion-threshold sweep, field mode (provider/model: jev; code threshold pinned at 0.5)
+dt | deletion-rubric FPs | code-rubric FPs (pinned t) | deletion FP per-PR (#43 | #44 | #45 | #46 | #47)
+0.30 | 5 | 13 | 2 | 0 | 3 | 0 | 0
+0.35 | 5 | 13 | 2 | 0 | 3 | 0 | 0
+0.40 | 5 | 13 | 2 | 0 | 3 | 0 | 0
+0.45 | 4 | 13 | 1 | 0 | 3 | 0 | 0
+0.50 | 4 | 13 | 1 | 0 | 3 | 0 | 0
+0.55 | 1 | 13 | 0 | 0 | 1 | 0 | 0
+0.60 | 0 | 13 | 0 | 0 | 0 | 0 | 0
+0.65 | 0 | 13 | 0 | 0 | 0 | 0 | 0
+0.70 | 0 | 13 | 0 | 0 | 0 | 0 | 0
+deletion FPs at shipped 0.70: 0 — every clean field run stays clean at the shipped knob
+decision: KEEP 0.70 (clean-side validated; recall-side evidence needs a positive field golden, see load_field_goldens)
+note: 13 code-rubric FPs at pinned t=0.5 are CODE-threshold pressure — a separate calibration question (needs a positive field golden to evaluate), not this knob
 ```
 
 **The 0.70 deletion threshold is no longer provisional: it is

@@ -414,15 +414,14 @@ def field_fp(jr, run, t, dt):
     fixed by moving dt, and counting it here would fake a signal).
     """
     reported = replay(jr, run, t, deletion_threshold=dt)
-    code = deletion = 0
-    for f in reported:
-        counts = jr.eval_negative([f])
-        n = counts["blocker_major"] + counts["other_fp"]
-        if f.get("rubric", "code-change") == "deletion":
-            deletion += n
-        else:
-            code += n
-    return code, deletion
+    is_del = lambda f: f.get("rubric", "code-change") == "deletion"
+
+    def fp(findings):
+        counts = jr.eval_negative(findings)
+        return counts["blocker_major"] + counts["other_fp"]
+
+    return (fp([f for f in reported if not is_del(f)]),
+            fp([f for f in reported if is_del(f)]))
 
 
 # ---------- field-mode sweep (F2 executability plan, step b) ----------
@@ -455,6 +454,9 @@ def sweep_field(jr, field_runs, grid=None):
     evidence ever motivates one.
     """
     grid = grid or threshold_grid()
+    if DELETION_SHIPPED not in grid:
+        die(f"field sweep grid lacks shipped {DELETION_SHIPPED:.2f} — no "
+            "baseline row to decide KEEP/RAISE from")
     rows = []
     for dt in grid:
         fps = {pr: field_fp(jr, run, SHIPPED_THRESHOLD, dt)

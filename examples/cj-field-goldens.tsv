@@ -5,7 +5,8 @@
 #     all fixed pre-merge (stopped-flag + completed handshake verified in
 #     99711a4 tree; tests pass the 3-arg importDump signature).
 #   #44 night-shift copy: 2 bot findings, both stale-revision, rebutted with
-#     head-2daa64c code links (finished-label + reembed case exist at merge).
+#     code links to PR head 2daa64c (pre-squash; the squash is 2dc4085 below)
+#     — finished-label + reembed case exist at merge.
 #   #45 template cleanup: pure deletions, verified safe (v0.2's false-BLOCKER).
 #   #46 dev-model cache: CodeRabbit/bot majors (mockLlmProvider ordering,
 #     dev-model overwrite) fixed pre-merge (verified in 861f1ad tree).

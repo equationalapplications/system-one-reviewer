@@ -212,3 +212,12 @@ def test_field_mode_forbids_fixture_args(sw, tmp_path):
 def test_fixture_mode_still_requires_goldens(sw, tmp_path):
     with pytest.raises(SystemExit, match="fixture mode needs"):
         sw.main(["--metrics", str(tmp_path / "m.jsonl"), "--label", "x"])
+
+
+def test_sweep_field_grid_without_shipped_dies_loudly(jr, sw):
+    """A custom grid that omits the shipped 0.70 has no baseline row to
+    decide from — named die(), not a bare StopIteration."""
+    runs = {pr: _field_run(f"v03bcj-pr{pr}", sha, [])
+            for pr, sha in FIELD_GOLDENS.items()}
+    with pytest.raises(SystemExit, match="lacks shipped"):
+        sw.sweep_field(jr, runs, grid=[0.40, 0.50, 0.60])

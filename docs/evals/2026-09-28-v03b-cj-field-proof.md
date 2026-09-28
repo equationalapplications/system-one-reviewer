@@ -30,10 +30,10 @@ Net: **5/5 merged heads defect-free** — all five are negative goldens
 
 | PR | Verdict | Reported findings | vs ground truth |
 |----|---------|-------------------|-----------------|
-| #43 | **Changes requested** | 11 (sev 1.4–2.1, is_real 0.5–0.79) | FP on a clean head — but see caveats |
+| #43 | **Changes requested** | 11 (sev 1.03–2.07, is_real 0.50–0.79) | FP on a clean head — but see caveats |
 | #44 | Approved | 0 | ✅ |
 | #45 | Approved | **0** (7 deletion clusters, all is_real ≤ 0.55, refs_remaining=False → suppressed) | ✅ **the #45 false-BLOCKER is gone in the field** |
-| #46 | Approved | 2 MINORs (verdict unaffected) | ✅ |
+| #46 | Approved | 2 MINORs (sev 1.34, 1.48 — both round to level 1; verdict unaffected) | ✅ |
 | #47 | Approved | 0 | ✅ |
 
 **4/5 verdicts correct; the single miss is over-reporting on #43, not a
@@ -67,7 +67,15 @@ reach the verdict).
 The five records are copied to
 `docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl` (verbatim from
 `~/.local/state/jev-review/metrics.jsonl`) so the sweep is reproducible
-without the local ledger:
+without the local ledger.
+
+**Ignore the `golden_eval` field in these records.** The runs were invoked
+with the toy-fixture `--golden` file, so every record carries a stale
+`src/app.py` recall census (5 "missed" issues in a file none of these PRs
+touch). It is left in place to keep the records verbatim; the field sweep
+never reads it — ground truth for these runs is
+`examples/cj-field-goldens.tsv`, scored via `eval_negative`.
+
 
 ```
 sweep-thresholds.py --metrics docs/benchmarks/2026-09-28-v03b-cj-field-metrics.jsonl \
