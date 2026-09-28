@@ -1,0 +1,16 @@
+{
+  "name": "system-one-reviewer-release",
+  "private": true,
+  "description": "Release tooling only (semantic-release). The reviewer itself is a dependency-free Python script.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.15"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "7.0.0",
+    "@semantic-release/exec": "7.1.0",
+    "@semantic-release/git": "11.0.1",
+    "conventional-changelog-conventionalcommits": "10.4.0",
+    "semantic-release": "25.0.9"
+  }
+}
