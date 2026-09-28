@@ -2,7 +2,7 @@
 """E5: threshold sweep over already-logged metrics runs.
 
 Reads metrics.jsonl, selects runs by label prefix, gates them on the
-committed expected fixture SHAs and packaging_version=v02, replays each
+committed expected fixture SHAs and packaging_version=v03b, replays each
 run's `judged` array through jev-review's own `compose` at every threshold
 (no logic duplication), combines runs per threshold by MINIMUM F1 (the
 worst-run figure), picks the candidate by argmax with a documented tie rule
@@ -15,7 +15,7 @@ group; mixed providers among the selected runs is a hard error.
 
 Usage:
   sweep-thresholds.py --metrics FILE --label PREFIX --golden POS.tsv \
-      --negative-golden NEG.tsv --shas FILE [--packaging-version v02]
+      --negative-golden NEG.tsv --shas FILE [--packaging-version v03b]
 
 --shas file format: lines `positive=<full40sha>` / `negative=<full40sha>`
 (the same constants as examples/fixture-shas.txt).
@@ -29,6 +29,12 @@ POSITIVE = "positive"
 NEGATIVE = "negative"
 SHIPPED_THRESHOLD = 0.50
 MARGIN_FLOOR = 0.20
+
+# Versions whose judged ledger entries carry rubric/references_remaining
+# (first: v03b, Opus r2 B1). rewrap() dies on a run from one of these
+# versions whose entries lack `rubric`. Bump PACKAGING_VERSION? Add the
+# new tag here if it still carries the fields (Opus r5 m5).
+RUBRIC_VERSIONS = {"v03b"}
 
 # 0.30 + 0.05*k, k = 0..8 (top of grid: 0.70; 0.75+ excluded by the plateau rule).
 GRID = [round(0.30 + 0.05 * k, 2) for k in range(9)]
@@ -57,7 +63,7 @@ def threshold_grid():
     return list(GRID)
 
 
-def gate_run(rec, expected, packaging_version="v02"):
+def gate_run(rec, expected, packaging_version="v03b"):
     """Reject stale, hand-edited, fail-open, or incomplete runs loudly.
 
     r12 MINOR 2: the verdict is checked too — `n_analyzed` counts
@@ -108,7 +114,7 @@ def check_single_provider_group(recs):
     return groups.pop()
 
 
-def select_runs(recs, expected, label_prefix, packaging_version="v02"):
+def select_runs(recs, expected, label_prefix, packaging_version="v03b"):
     sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
     if not sel:
         die(f"no runs with label prefix {label_prefix!r}")
@@ -139,17 +145,35 @@ def select_runs(recs, expected, label_prefix, packaging_version="v02"):
 
 # ---------- replay through compose ----------
 
-def rewrap(j):
-    """Flat judged entry -> the `f['hunk'][...]` shape compose consumes."""
+def rewrap(j, run_version=None):
+    """Flat judged entry -> the `f['hunk'][...]` shape compose consumes.
+
+    rubric/references_remaining ride through; older records (no rubric
+    key) replay as code-change — correct, because pre-v03b runs never
+    sent deletion questions. The RUN's packaging_version decides that:
+    judged entries never carry it (Opus r4 M1 — the entry-level check
+    previously here could never fire). Callers pass the run's version;
+    any rubric-era run (RUBRIC_VERSIONS) whose judged entries lack
+    `rubric` was written by a broken build and dies loudly instead of
+    replaying wrong logic. Future versions: add to RUBRIC_VERSIONS when
+    they carry the rubric fields, so the gate survives version bumps
+    (Opus r5 m5)."""
+    if run_version in RUBRIC_VERSIONS and "rubric" not in j:
+        die(f"{run_version} run record entry {j.get('file')} has no "
+            "rubric — ledger written by a broken build; re-run")
     return {"hunk": {"file": j["file"], "line": j["line"]},
             "is_real": j["is_real"], "severity": j["severity"],
-            "category": j.get("category"), "parse_error": None}
+            "category": j.get("category"), "parse_error": None,
+            "rubric": j.get("rubric", "code-change"),
+            "references_remaining": j.get("references_remaining")}
 
 
 def replay(jr, run, t):
     """Reported findings for this run at threshold t, via compose itself."""
-    reported, _, _ = jr.compose([rewrap(j) for j in run["judged"]], [], None,
-                                threshold=t)
+    version = run.get("packaging_version")
+    reported, _, _ = jr.compose(
+        [rewrap(j, run_version=version) for j in run["judged"]], [], None,
+        threshold=t)
     return reported
 
 
@@ -316,7 +340,7 @@ def main(argv=None):
                          "triage-leakage guard; required so the guard "
                          "cannot silently turn off (r3 m2)")
     ap.add_argument("--shas", required=True, help="expected fixture SHA file")
-    ap.add_argument("--packaging-version", default="v02")
+    ap.add_argument("--packaging-version", default="v03b")
     args = ap.parse_args(argv)
 
     expected = load_shas(args.shas)

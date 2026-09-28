@@ -5,3 +5,5 @@
 # file column as the must-skip (triage-leakage) guard.
 README.md	## Usage
 src/app.py	# Render the items as a comma-separated string (innocuous comment).
+# v0.3b: whole-file deletion in the benign commit; GONE = file must not exist at HEAD
+src/format_extra.py	GONE

@@ -44,3 +44,22 @@ def test_benign_src_clusters_are_judged(jr, neg_fixture):
     kept, skipped = jr.triage(hunks)
     assert kept, "benign src changes are triaged IN (they get judged)"
     assert all(os.path.basename(h["file"]) != "README.md" for h in kept)
+
+
+def test_negative_fixture_contains_whole_file_deletion(jr, neg_fixture):
+    """v0.3b (Kurt review): the #45 failure shape — a benign WHOLE-FILE
+    deletion — must be present in the negative diff, judged (not triaged
+    out), and classified whole-file-deleted. The live FP census now
+    exercises the deletion rubric on every negative run."""
+    diff = subprocess.run(
+        ["git", "-C", neg_fixture, "diff", "HEAD~1..HEAD"],
+        capture_output=True, text=True, check=True).stdout
+    hunks = jr.package_hunks(diff)
+    dels = [h for h in hunks
+            if h["change_type"] == "whole-file-deleted"]
+    assert len(dels) == 1, "fixture must contain exactly one whole-file deletion"
+    assert dels[0]["file"] == "src/format_extra.py"
+    kept, skipped = jr.triage(hunks)
+    assert dels[0] in kept, "the deletion must be judged, not skipped"
+    state = jr.hunk_state(dels[0])
+    assert state["references_remaining"] is False  # benign: nothing references it

@@ -77,9 +77,16 @@ def test_negative_fixture_build_is_deterministic_and_verified(tmp_path):
     assert _head_sha(r2) == head
     # negative golden TSV: content checks, 2 columns, README + benign source
     rows = _golden_rows("negative-golden.tsv")
-    assert len(rows) == 2 and all(len(row) == 2 for row in rows)
+    # v0.3b: three rows — README, benign source, and the GONE (deleted) row
+    assert len(rows) == 3 and all(len(row) == 2 for row in rows)
     assert any(row[0].endswith("README.md") for row in rows)
+    gone = [row for row in rows if row[1] == "GONE"]
+    assert len(gone) == 1, "exactly one GONE (whole-file-deleted) row"
     for row in rows:
+        if row[1] == "GONE":
+            assert not os.path.exists(os.path.join(root, row[0])), \
+                f"{row[0]} should be deleted at HEAD"
+            continue
         fline = open(os.path.join(root, row[0])).read().splitlines()
         assert any(row[1] in l for l in fline), f"verify [{row[1]}] not found"
 

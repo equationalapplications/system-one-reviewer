@@ -24,6 +24,22 @@ git config user.name jev-fixture
 export GIT_AUTHOR_DATE="2026-09-27T12:00:00 +0000"
 export GIT_COMMITTER_DATE="2026-09-27T12:00:00 +0000"
 
+cat > README.md <<'EOF'
+# demo app
+
+Renders items and loads config.
+EOF
+# v0.3b (Kurt review): a helper that only the deleted file's caller used —
+# removed outright in the benign commit. The negative diff now contains a
+# WHOLE-FILE DELETION cluster: the #45 failure shape, judged live. The
+# fixture benchmark can only catch a deletion-rubric regression while the
+# live #45 re-run hasn't happened.
+cat > src/format_extra.py <<'EOF'
+"""Helper removed in the benign cleanup (unused after feature flag drop)."""
+
+def format_extra(items):
+    return " | ".join(str(i) for i in items)
+EOF
 cat > src/app.py <<'EOF'
 import json
 import os
@@ -42,11 +58,6 @@ def divide(a, b):
     if b == 0:
         raise ValueError("denominator must be non-zero")
     return a / b
-EOF
-cat > README.md <<'EOF'
-# demo app
-
-Renders items and loads config.
 EOF
 git add .
 git commit -qm base
@@ -85,6 +96,9 @@ Renders items and loads config.
 
     python src/app.py
 EOF
+# v0.3b: the benign cleanup ALSO removes the now-unused helper outright —
+# this is the whole-file-deletion cluster (the #45 shape) in the negative diff.
+git rm -q src/format_extra.py
 git add .
 git commit -qm "benign cleanup: whitespace, comment, docs"
 
@@ -95,7 +109,8 @@ if [ -n "$EXPECT" ] && [ "$HEAD_SHA" != "$EXPECT" ]; then
     exit 1
 fi
 
-# golden verification: README.md changed but src/app.py diff is all-benign
+# golden verification: README.md changed, src/app.py diff is all-benign,
+# and src/format_extra.py is GONE at HEAD (the whole-file deletion).
 GOLDEN="$SCRIPT_DIR/negative-golden.tsv"
 while IFS=$'\t' read -r fname substr || [ -n "$fname" ]; do
     case "$fname" in \#*) continue;; esac
@@ -105,6 +120,14 @@ while IFS=$'\t' read -r fname substr || [ -n "$fname" ]; do
     if [ -z "$substr" ]; then
         echo "golden verify FAIL: $fname has an empty verify-substring" >&2
         exit 1
+    fi
+    if [ "$substr" = "GONE" ]; then
+        # v0.3b: the deleted file must NOT exist at HEAD
+        if git cat-file -e "HEAD:$fname" 2>/dev/null; then
+            echo "golden verify FAIL: $fname should be deleted at HEAD" >&2
+            exit 1
+        fi
+        continue
     fi
     git show "HEAD:$fname" | grep -qF -- "$substr" \
         || { echo "golden verify FAIL: $fname missing '$substr'" >&2; exit 1; }

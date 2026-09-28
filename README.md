@@ -1,9 +1,13 @@
-# jev-review
+# system-one-reviewer
 
 A local pull-request reviewer built from two ingredients: **deterministic
-code** for all the plumbing, and **[Jev](https://typesafe.ai)** (TypeSafe's
-System One model) for every judgment. No agent loop, no prompt engineering,
-no cloud CI — one Python file, git, and an API key.
+code** for all the plumbing, and a **system one model** for every judgment
+— a hosted model like TypeSafe's
+[Jev](https://typesafe.ai), or a local open one like
+[Laya](https://huggingface.co/ConvAI-Innovations) (this project's framing:
+the category is "system one model"; Jev and Laya are examples). No agent
+loop, no prompt engineering, no cloud CI — one Python file, git, and an API
+key.
 
 ```
 $ system-one-reviewer --repo ~/myrepo --range main..HEAD
@@ -21,14 +25,17 @@ Verdict: Changes requested
 
 ## Why this shape
 
-- **Jev owns judgments; code owns everything else.** Diff gathering, triage,
-  packaging, thresholds, and the verdict composition are ordinary
-  deterministic Python. Jev answers typed questions (severity Score,
-  true-positive Noul, category Choice) about each change — under ~100 ms and
-  fractions of a cent per call, cheap enough to run on *every* diff.
+- **The model owns judgments; code owns everything else.** Diff gathering,
+  triage, packaging, thresholds, and the verdict composition are ordinary
+  deterministic Python. The model answers typed questions (severity Score,
+  true-positive Noul, category Choice) about each change — under ~100 ms
+  and fractions of a cent per call, cheap enough to run on *every* diff.
 - **One batched round-trip per change cluster.** Changes are isolated into
-  clusters (no gap-merging) so no change dilutes another; each cluster is one
-  Jev call with three questions.
+  clusters (no gap-merging) so no change dilutes another; each cluster is
+  one model call with three questions. Deletion-only clusters get their own
+  adapted question set — removal-risk scoring instead of code-bug scoring,
+  after field evals showed pure deletions get systematically inflated
+  severity under the generic questions (see `docs/evals/`).
 - **Structured state beats raw diffs.** Hunk state is sent as explicit
   `code_before_change` / `code_after_change` lists. This one choice moved a
   planted bug's true-positive score from 0.36 to 0.69 in our fixture runs.
@@ -36,7 +43,9 @@ Verdict: Changes requested
   scores (reported or not) to a local jsonl, and `--golden` scores precision /
   recall / F1 against planted issues. We built the reviewer by iterating on
   that loop — F1 went 0.0 → 0.29 → 0.50 across three design changes — and
-  the loop ships with the tool.
+  the loop ships with the tool. Field evaluation against real PRs (with
+  deeper reviews as ground truth) lives in `docs/evals/` alongside the
+  fixture benchmarks.
 
 ## Install
 
@@ -45,12 +54,13 @@ export TYPESAFE_API_KEY=...        # or ~/.config/jev-review/.env
 cp system_one_reviewer.py ~/.local/bin/system-one-reviewer   # any PATH dir works
 ```
 
-Requires: Python 3.10+, git, a TypeSafe API key. No third-party packages.
+Requires: Python 3.10+, git, a TypeSafe API key (for the hosted provider).
+No third-party packages.
 
 ## Usage
 
 ```bash
-system-one-reviewer --repo PATH --range A..B     # commit range
+system-one-reviewer --repo PATH --range A..B     # commit range (reviews the merge-base diff A...B; two-dot semantics are not available through --range)
 system-one-reviewer --repo PATH --pr N           # GitHub PR (needs local refs: git fetch origin pull/N/head:pr/N; base is origin/main)
 system-one-reviewer --repo PATH --staged         # staged changes
 system-one-reviewer --repo PATH --uncommitted    # working tree
@@ -71,6 +81,9 @@ system-one-reviewer --repo PATH --range A..B --fixture positive --label run3
 
 Metrics append to `$XDG_STATE_HOME/jev-review/metrics.jsonl` (default
 `~/.local/state/...`). Nothing leaves your machine except the model calls.
+Runs with no `--label` log the review mode as the label, and `repo`
+records the target repository's basename (so `--repo .` stays
+attributable).
 
 **Path continuity (deliberate):** the tool was renamed from
 `jev-review` to `system-one-reviewer`, but the on-disk paths keep the
@@ -129,6 +142,21 @@ Note: severity levels now round halves **up** (`sev_level(2.5)` is a
 BLOCKER; previously banker's rounding made it a MAJOR). A fractional
 severity of 2.5+ can flip a verdict from Approved to Changes requested, so
 v0.2 verdicts are not directly comparable with v0.1 logs.
+
+## Field evaluation (real PRs, honest numbers)
+
+The first field evaluation (9 live runs on curated-journal PRs #43–#47,
+with Opus/CodeRabbit deep reviews as ground truth) found verdict-level
+accuracy of 2-of-5 on the clear cases: one false "Changes requested" on a
+clean deletions PR, one likely false positive on a benign fix diff, and
+one "Approved" on a diff with a confirmed bug the tool actually reported
+but under-scored. This branch **targets** the deletions failure mode with
+the deletion-adapted question set — it has NOT yet been re-run against
+that PR, so the fix is unproven until a live run (or the v0.3 threshold
+sweep over new ledgers) confirms it. Verdict-rule changes stay gated on
+that sweep — see
+[docs/evals/2026-09-28-field-evals-cj-prs.md](docs/evals/2026-09-28-field-evals-cj-prs.md)
+for the full evidence and the open v0.3 questions.
 
 ## Status
 

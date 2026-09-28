@@ -6,7 +6,8 @@ Tessera on the ThinkPad. Runs in seconds, costs fractions of a cent, use
 freely and often. Posts nothing anywhere; prints a report, optionally JSON.
 
 Design (v0.2, evaluation-hardened):
-  1. gather   — git plumbing pre-computes merge-base/diff/head (no re-derivation)
+  1. gather   — git plumbing computes diff/head (--range reviews the
+                merge-base diff A...B; --pr uses the same form)
   2. triage   — deterministic skip: lockfiles, generated, docs-only
   3. package  — diff split into change clusters with file:line anchors,
                 hunk-boundary clamping (windows never cross an @@ header)
@@ -47,9 +48,28 @@ METRICS_PATH = os.environ.get(
 
 MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
-REAL_THRESHOLD = 0.50         # is_real_issue noul gate (plateau-safe)
+# Rubric thresholds (v0.3b, Kurt review): the 0.50 plateau was calibrated
+# on code-change answers. The deletion rubric asks a different question, so
+# its answers are NOT assumed to land on the same distribution — it gets
+# its own threshold until the v0.3 sweep measures the deletion-rubric
+# is_real distribution and justifies a number. Starting CONSERVATIVE
+# (0.70): a deletion finding must clear a higher bar to be reported at
+# all, because #45 showed deletion clusters over-scoring, not
+# under-scoring. Both stay >=0.05 from the 0.80/0.90 upper region.
+REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
+DELETION_REAL_THRESHOLD = 0.70  # deletion rubric (provisional; sweep TBD)
 KNOWN_FIXTURES = {"positive", "negative"}
-PACKAGING_VERSION = "v02"
+# v03b (field evals, 2026-09-28, Kurt review round): model input changed
+# AGAIN — references_remaining in state, three-valued change_type,
+# rewritten deletion rubric, per-rubric thresholds, corroboration gate in
+# compose. Ledger records produced from different input shapes must never
+# share a version tag. (v03 negative benchmark superseded: its
+# fixture_head predates the deletion cluster in the negative fixture.
+# Per-run build provenance lives in
+# docs/benchmarks/2026-09-28-v03b-branch-benchmark.md.)
+PACKAGING_VERSION = "v03b"
+
+
 def sev_level(v):
     """Nearest integer level, halves round up (2.5 is a BLOCKER)."""
     if v is None:
@@ -326,9 +346,27 @@ def resolve_diff(repo, args):
     HEAD would diverge, which the committed fixtures never do.
     """
     if args.range:
-        diff = run_git(repo, "diff", args.range)
-        head = run_git(repo, "rev-parse", "HEAD").strip()
-        return diff, head, f"range:{args.range}"
+        # F5 (field evals, 2026-09-28): merge-base diff, matching the
+        # documented behavior and --pr. A..B on a stale base showed
+        # post-branch main-side changes as deletions (false-FP machine).
+        spec = triple_dot(args.range)
+        # v0.3b (Kurt review): HEAD is a fine fixture sentinel, but the
+        # ledger must record what was DIFFED. triple_dot can pass bare
+        # specs through (a single SHA) — those have no right-hand side, so
+        # reject them loudly BEFORE diffing, not with an IndexError
+        # traceback afterwards (Opus r2 M1).
+        if "..." not in spec:
+            sys.exit("system-one-reviewer: --range needs A..B or A...B; "
+                     f"a bare {spec!r} has no right-hand tip to record")
+        diff = run_git(repo, "diff", spec)
+        # r3 m3 (Opus): `A...` with an empty right side means HEAD, same
+        # as triple_dot's two-dot fill — don't pass an empty ref to git.
+        right_ref = spec.rsplit("...", 1)[1] or "HEAD"
+        head = run_git(repo, "rev-parse", "--verify",
+                       f"{right_ref}^{{commit}}").strip()
+        # mode records the spec actually diffed (r1-M3), so ledger readers
+        # can't confuse pre/post-F5 records sharing a user-facing spelling.
+        return diff, head, f"range:{spec}"
     if args.staged:
         return (run_git(repo, "diff", "--cached"),
                 run_git(repo, "rev-parse", "HEAD").strip(), "staged")
@@ -345,6 +383,24 @@ def resolve_diff(repo, args):
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
+def triple_dot(rng):
+    """Rewrite a two-dot range spec to its merge-base form.
+
+    `A..B` becomes `A...B`; an open-ended side is filled with HEAD first
+    (`main..` -> `main...HEAD`, `..feature` -> `HEAD...feature`). Anything
+    else (a bare SHA, a spec already in `...` form) passes through
+    unchanged. `git diff A...B` reviews the branch's own changes against
+    the merge-base, so a stale main never masquerades as deletions in the
+    reviewed diff.
+    """
+    if rng.count("..") == 1 and "..." not in rng:
+        left, right = rng.split("..", 1)
+        left = left or "HEAD"
+        right = right or "HEAD"
+        return f"{left}...{right}"
+    return rng
+
+
 def package_hunks(diff):
     """Cluster-level packaging: contiguous changed lines form a cluster, each
     with +/-4 context lines. Windows are clamped at @@ hunk boundaries (a
@@ -353,8 +409,10 @@ def package_hunks(diff):
     Anchors: first '+' in the cluster's own run -> else the deletion site
     (first '-' in the run, at the position in HEAD where the line was
     removed) -> else the first context entry with a lineno at/after the run
-    -> else the run's hunk_start (a deletion-only cluster never collapses to
-    line 1). Deletion-only clusters anchor at the '-' entry's tracked
+    -> else the run's hunk_start. An IN-FILE deletion cluster never
+    collapses to line 1; a WHOLE-FILE deletion does anchor at line 1
+    (`@@ -1,N +0,0 @@` clamps hunk_end to 1 — seen throughout the #45
+    field run). Deletion-only clusters anchor at the '-' entry's tracked
     new_line — the HEAD line before which the content was removed — so the
     anchor stays comparable with golden lines recorded against HEAD even
     when earlier lines in the hunk shifted the count (old-file numbering
@@ -362,6 +420,7 @@ def package_hunks(diff):
     display. Deterministic."""
     CTX = 4
     per_file, cur_file, entries = [], None, []
+    file_deleted = False  # v0.3b: the +++ side was /dev/null (whole-file deletion)
     old_line = new_line = hunk_start = hunk_end = 1
     awaiting_hunk = True  # m2 (r6): plain unified diffs start at `--- `
                           # with no `diff --git` line before them
@@ -373,8 +432,9 @@ def package_hunks(diff):
             # mode/rename lines) of the new file can leak into the old
             # file's last window as fake context.
             if cur_file is not None:
-                per_file.append((cur_file, entries))
+                per_file.append((cur_file, entries, file_deleted))
             cur_file, entries = None, []
+            file_deleted = False
             awaiting_hunk = True
             continue
         if awaiting_hunk and line.startswith("--- "):
@@ -394,7 +454,9 @@ def package_hunks(diff):
             # whole-file deletion has no new side). Never flush the previous
             # file here: `diff --git` already did that.
             new_path = line[4:].split("\t", 1)[0]
-            if new_path != "/dev/null":
+            if new_path == "/dev/null":
+                file_deleted = True  # whole-file deletion (+++ /dev/null)
+            else:
                 cur_file = new_path[2:] if new_path.startswith("b/") else new_path
             continue
         if awaiting_hunk and line.startswith(("index ", "old mode ", "new mode ",
@@ -433,8 +495,9 @@ def package_hunks(diff):
             if (line.startswith(("--- ", "+++ "))
                     and old_left <= 0 and new_left <= 0):
                 if entries:
-                    per_file.append((cur_file, entries))
+                    per_file.append((cur_file, entries, file_deleted))
                 cur_file, entries = None, []
+                file_deleted = False
                 awaiting_hunk = True
                 old_left = new_left = 0
                 if line.startswith("--- "):
@@ -444,7 +507,9 @@ def package_hunks(diff):
                                     else old_path)
                 else:
                     new_path = line[4:].split("\t", 1)[0]
-                    if new_path != "/dev/null":
+                    if new_path == "/dev/null":
+                        file_deleted = True  # whole-file deletion
+                    else:
                         cur_file = (new_path[2:] if new_path.startswith("b/")
                                     else new_path)
                 continue
@@ -476,10 +541,10 @@ def package_hunks(diff):
                 old_left -= 1
                 new_left -= 1
     if cur_file is not None:
-        per_file.append((cur_file, entries))
+        per_file.append((cur_file, entries, file_deleted))
 
     hunks = []
-    for fname, ents in per_file:
+    for fname, ents, file_was_deleted in per_file:
         # hunk-boundary segments: no cluster/window crosses an @@
         segments, cur_seg, cur_hs = [], [], None
         for e in ents:
@@ -552,6 +617,24 @@ def package_hunks(diff):
                 # count only THIS cluster's changed lines: a neighbour's
                 # changed lines may appear as context but are not ours
                 n_changed = len(g)
+                # F1/M1 (Opus v0.3 review): deletion-only means the
+                # cluster's own RUN has no '+' entries — independent of
+                # context. A whole-file deletion has none; an in-file
+                # removal surrounded by unchanged lines also has none,
+                # even though its window carries context that survives in
+                # HEAD. Context must not flip the classification.
+                # v0.3b (Kurt review): three-valued change_type —
+                # 'whole-file-deleted' when the +++ side was /dev/null, so
+                # the model knows the file is GONE (it cannot infer this
+                # from a single cluster's before/after state).
+                run_kinds = {seg[i][0] for i in g}
+                deletion_only = "+" not in run_kinds
+                if deletion_only and file_was_deleted:
+                    change_type = "whole-file-deleted"
+                elif deletion_only:
+                    change_type = "deletion-only"
+                else:
+                    change_type = "code-change"
                 hunks.append({
                     "file": fname, "line": anchor,
                     "hunk_start": seg_hunk_start,
@@ -559,6 +642,7 @@ def package_hunks(diff):
                               f"({n_changed} changed lines) @@",
                     "lines": lines, "entries": window,
                     "n_changed": n_changed,
+                    "change_type": change_type,
                 })
     for h in hunks:
         h["size"] = len(h["lines"])
@@ -621,12 +705,126 @@ PR_QUESTIONS = {
         "instructions": "Should a human reviewer look at this change set beyond this automated report?"},
 }
 
+# F1 (field evals 2026-09-28): deletion-only clusters have no surviving
+# code to be "buggy", so the generic severity question ("most serious
+# problem in this hunk") systematically over-scores pure removals — the
+# #45 field run put six harmless file deletions at BLOCKER-level severity.
+# The questions ask what a deletion can actually be guilty of. v0.3b
+# (Kurt review): the model judges ONE cluster and cannot see the rest of
+# the tree, so cross-file questions ("does remaining code still reference
+# it?") are answered deterministically — references_remaining is computed
+# in hunk_state() (grep of the post-state) and fed in as fact, not asked.
+# The rubric below scores only what a single-cluster view can know: the
+# internal consistency of the removal.
+DELETION_QUESTIONS = {
+    "severity": {
+        "type": "score",
+        "instructions": ("This hunk only REMOVES code. Judge the removal "
+                         "as it stands within this hunk; whether other "
+                         "code still uses what was removed is measured "
+                         "separately and not your concern here. How "
+                         "risky is the removal on its face?"),
+        "criteria": [
+            "Safe removal: dead code, unused asset, or superseded logic",
+            "Minor: removal is fine but leaves small debris (stale doc reference, unused import elsewhere)",
+            "Major: the removed code carried behavior nothing in this hunk replaces — a caller, config, or behavior disappears",
+            "Blocker: the removal takes down builds, tests, or security handling on its face (e.g. deletes the only test for a kept feature)",
+        ]},
+    "is_real_issue": {
+        "type": "noul",
+        "instructions": "Does this removal itself warrant a reviewer comment (independent of whether other files reference the deleted code)?"},
+    "category": {
+        "type": "choice",
+        "instructions": "What kind of issue is it, if any?",
+        "criteria": {
+            "bug-risk": "The removed code carried behavior nothing in this hunk replaces",
+            "security": "The removed code was load-bearing for security or secret handling",
+            "style": "Debris the removal leaves behind (stale references, dead imports)",
+            "performance": "The removal hurts performance (e.g. a needed cache was deleted)",
+            "test-gap": "The removal took away coverage the system still needs",
+            "other": "Any other removal-related issue worth noting",
+        }},
+}
+
 
 # ---------- judge + compose ----------
 
+def references_remaining(h, after_texts):
+    """Deterministic corroboration signal for deletion clusters (v0.3b,
+    Kurt review; semantics corrected per Opus v03b r1 M1): do the
+    cluster's SURVIVING lines (its ±4-line context) still mention a name
+    the removal declared — the def/class/function/const names and import
+    targets taken out by the deleted lines?
+
+    Scope is honest and deliberately narrow: the cluster window only.
+    'False' means nothing IN VIEW references the removal — it is NOT a
+    tree-wide claim. For whole-file deletions the window's post-state is
+    empty by construction, so the answer is vacuously False; dangling
+    imports elsewhere in the tree are NOT measured here (that would need
+    a tree grep the diff-only tool does not do).
+    """
+    ct = h.get("change_type", "code-change")
+    if ct not in ("deletion-only", "whole-file-deleted"):
+        return None
+    corpus = "\n".join(after_texts)
+    if not corpus:
+        return False  # vacuous: nothing survives in view (whole-file deletions)
+    removed_names = set()
+    for w in h["entries"]:
+        if w[0] != "-":
+            continue
+        text = w[2]
+        # DECLARED names only (v0.3b M1 fix): def/class (Python),
+        # function/const/let/var/class (JS/TS). Matching every ≥3-char
+        # token matched keywords like def/return/self and made the signal
+        # fire on almost anything. Names shorter than 3 chars are skipped
+        # (Opus r2 m2: removing `let i = 0` must not open the gate via
+        # `\bi\b` matching every surviving loop).
+        for m in re.finditer(
+                r"\b(?:def|class|function|const|let|var)\s+([A-Za-z_]\w*)",
+                text):
+            if len(m.group(1)) >= 3:
+                removed_names.add(m.group(1))
+        # import targets: 'from mod import a, b' / 'import mod'. Skip
+        # non-identifier fragments (Opus r2 m3: `import React from 'react'`
+        # and multiline `from x import (` produce junk names).
+        m = re.match(r"\s*(?:from\s+([\w.]+)\s+import\s+(.+)|import\s+([\w.,\s]+))",
+                     text)
+        if m:
+            for part in (m.group(2) or m.group(3) or "").split(","):
+                nm = part.strip().split(" as ")[0].strip()
+                if nm and re.fullmatch(r"[A-Za-z_]\w*", nm):
+                    removed_names.add(nm.split(".")[-1])
+            mod = (m.group(1) or m.group(3) or "").strip()
+            # v03b r3 M1 (Opus): relative imports (`from .utils import x`,
+            # `from . import x`) yield empty first segments; an empty name
+            # makes `\b\b` match ANY word boundary — reopening the #45 FP
+            # path. Skip empty names entirely.
+            mod = mod.lstrip(".")
+            if mod and re.fullmatch(r"[\w.]+", mod):
+                removed_names.add(mod.split(".")[0])
+    if not removed_names:
+        return False
+    # Whole-word match only (v0.3b M1 fix): 'def' must not match 'default'.
+    return any(re.search(rf"\b{re.escape(n)}\b", corpus)
+               for n in removed_names)
+
+
 def hunk_state(h):
     """Structured before/after state, read from `entries` only (never the
-    rendered lines, which can corrupt text containing ': + ')."""
+    rendered lines, which can corrupt text containing ': + ').
+
+    change_type (F1, field evals 2026-09-28) is computed at packaging time
+    from the cluster's own run: 'deletion-only' when the run has no '+'
+    entries — the cluster only removes code, so the model gets the
+    deletion-adapted question set (DELETION_QUESTIONS: removal-risk
+    scoring) instead of the generic code-bug questions. Context lines ride
+    in code_before/after regardless; they describe the surviving file, not
+    the change. On the #45 field run, six deletion-only clusters scored
+    severity 2.73-2.82 under the generic questions and the one crossing
+    the is_real gate flipped the verdict to "Changes requested" on a clean
+    cleanup PR.
+    """
     before, after = [], []
     for w in h["entries"]:
         kind, _n, text = w[0], w[1], w[2]
@@ -637,23 +835,45 @@ def hunk_state(h):
         else:
             before.append(text)
             after.append(text)
-    return {
+    ct = h.get("change_type", "code-change")
+    state = {
         "file": h["file"],
         "location": f"around line {h['line']}",
+        "change_type": ct,
         "code_before_change": before,
         "code_after_change": after,
     }
+    if ct in ("deletion-only", "whole-file-deleted"):
+        # v0.3b: cross-file-ness is MEASURED, not asked (see
+        # references_remaining). True ⇒ the surviving context still
+        # mentions removed identifiers — that is the corroboration
+        # compose() requires before a lone deletion finding flips the
+        # verdict; False ⇒ nothing in view references the removal.
+        state["references_remaining"] = references_remaining(h, after)
+    return state
 
 
 def judge(hunks, ask):
-    """ask is the wired provider's ask(state, questions) (E8 contract)."""
+    """ask is the wired provider's ask(state, questions) (E8 contract).
+
+    F1: deletion-only clusters (no '+' in the cluster's own run) get
+    DELETION_QUESTIONS — removal-risk scoring instead of code-bug scoring;
+    all other clusters get HUNK_QUESTIONS. The response contract and
+    compose() gating are identical for both sets.
+    """
     findings, latencies, failures = [], [], 0
     parse_failures = 0  # M1 (r8): consecutive shape errors, separate counter
     kept_hunks = len(hunks)
     for h in hunks:
         state = hunk_state(h)
+        # v0.3b: whole-file deletions are still deletions for question
+        # routing; only code-change clusters get the generic set.
+        questions = (DELETION_QUESTIONS
+                     if state["change_type"] in ("deletion-only",
+                                                 "whole-file-deleted")
+                     else HUNK_QUESTIONS)
         try:
-            payload, ms = ask(state, HUNK_QUESTIONS)
+            payload, ms = ask(state, questions)
             latencies.append(ms)
             failures = 0
         except Exception:
@@ -689,6 +909,16 @@ def judge(hunks, ask):
                 "is_real": noul,
                 "category": cat.get("choice"),
                 "cat_dist": cat.get("probabilities"),
+                # v0.3b: rubric provenance + the deterministic
+                # corroboration signal ride on the finding so compose()
+                # can apply the deletion rubric's own threshold and the
+                # corroboration gate without re-deriving anything.
+                "rubric": ("deletion"
+                           if state["change_type"] in ("deletion-only",
+                                                       "whole-file-deleted")
+                           else "code-change"),
+                "references_remaining": state.get("references_remaining"),
+                "change_type": state["change_type"],
                 "latency_ms": round(ms, 1),
             }
             findings.append(rec)
@@ -758,18 +988,55 @@ def near(v, t, zone=0.03):
 
 
 def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
-    """Thresholds in code. Plateau rule: 0.50 sits >=0.05 from 0.80/0.90."""
+    """Thresholds in code. Plateau rule: 0.50 sits >=0.05 from 0.80/0.90.
+
+    v0.3b (Kurt review, implements the F1 corroboration proposal; M2 fix
+    extends the gate to MAJORs): a deletion-rubric finding drives the
+    verdict ONLY when corroborated — references_remaining True (surviving
+    context mentions a removed name) OR a reported CODE-CHANGE finding
+    exists in the run. Deletion findings corroborating each other do NOT
+    count: #45 had six deletion clusters all wrong together. An
+    uncorroborated deletion finding is still REPORTED (the human sees it)
+    but cannot push the verdict to "Changes requested" — at any severity.
+    """
     reported, jitter = [], []
     for f in findings:
         if f.get("parse_error"):
             continue
+        rubric = f.get("rubric", "code-change")
+        t = DELETION_REAL_THRESHOLD if rubric == "deletion" else threshold
         r = f.get("is_real")
-        if near(r, threshold):
+        if near(r, t):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
-        if r is not None and r >= threshold and (f.get("severity") or 0) >= 1:
+        if r is not None and r >= t and (f.get("severity") or 0) >= 1:
             reported.append(f)
-    blockers = [f for f in reported if sev_level(f.get("severity")) == 3]
-    majors = [f for f in reported if sev_level(f.get("severity")) == 2]
+    # Corroboration pool (v0.3b M2 fix, Opus r2 M2, r3 m2/r4 m1): a
+    # reported CODE-CHANGE finding corroborates a deletion finding when
+    # it is itself sev>=2 (any category — a sev>=2 "style" flag is a
+    # serious claim, not a nit), OR same-file with a non-style category
+    # (a real issue in the deletion's own neighborhood, any severity).
+    # category=None is treated as style-like for the same-file path.
+    # A sev<2 style finding — anywhere — never unlocks the gate (#45
+    # shape: six wrong deletion findings must stay report-only).
+    def _corroborates(cf, df):
+        same_file = cf["hunk"]["file"] == df["hunk"]["file"]
+        if same_file:
+            return (sev_level(cf.get("severity")) >= 2
+                    or cf.get("category") not in ("style", None))
+        return sev_level(cf.get("severity")) >= 2
+
+    corroboration_pool = [f for f in reported
+                          if f.get("rubric", "code-change") != "deletion"]
+    blockers, majors = [], []
+    for f in reported:
+        lvl = sev_level(f.get("severity"))
+        if lvl >= 2:
+            if (f.get("rubric", "code-change") == "deletion"
+                    and not f.get("references_remaining")
+                    and not any(_corroborates(c, f)
+                                for c in corroboration_pool)):
+                continue  # uncorroborated deletion finding: report, not verdict
+            (blockers if lvl == 3 else majors).append(f)
     verdict = "Changes requested" if (blockers or len(majors) >= 2) else "Approved"
     return reported, jitter, verdict
 
@@ -972,9 +1239,16 @@ def main():
         {"file": f["hunk"]["file"], "line": f["hunk"]["line"],
          "severity": f.get("severity"), "is_real": f.get("is_real"),
          "category": f.get("category"), "confidence": f.get("confidence"),
+         # v03b (Opus r2 B1): the fields compose()'s gate reads MUST ride
+         # into the ledger, or sweep replay falls back to code-change and
+         # computes the wrong curve.
+         "rubric": f.get("rubric", "code-change"),
+         "references_remaining": f.get("references_remaining"),
+         "change_type": f["hunk"].get("change_type", "code-change"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
-    meta = {"repo": os.path.basename(args.repo), "mode": mode, "head": head,
+    meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
+            "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks), "n_analyzed": len(kept),
             "total_latency_ms": total, "jev_calls": len(latencies),
@@ -999,7 +1273,11 @@ def main():
         golden_eval["negative_eval"] = neg
         result["golden_eval"] = golden_eval
 
-    log_run({"label": args.label, "repo": meta["repo"], "mode": mode,
+    # F7 (field evals, 2026-09-28): label hygiene — an empty label weakens
+    # the ledger (several field runs logged label:""). Default to the mode,
+    # marked auto: so a sweep with a short user prefix can never collide
+    # with generated labels (v0.3b, Kurt review).
+    log_run({"label": args.label or f"auto:{mode}", "repo": meta["repo"], "mode": mode,
              "head": head[:10], "n_hunks": meta["n_hunks"],
              "n_analyzed": meta["n_analyzed"], "verdict": verdict,
              "fail_open": fail_open, "total_latency_ms": round(total, 1),

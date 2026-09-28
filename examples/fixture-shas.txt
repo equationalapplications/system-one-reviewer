@@ -2,4 +2,4 @@
 # fixed GIT_AUTHOR/COMMITTER_DATE + identity). Format: name=full40sha.
 # The build scripts assert their output against these; the sweep gates on them.
 positive=3346ca1aa31942ad7808352faf77ab28d5f13bc1
-negative=e7de08b239982e896d9d57981fa07d83aab7cb65
+negative=5ca6f0137d25da5180adcbc97bbcafbb4313bdc3
