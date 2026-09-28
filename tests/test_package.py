@@ -440,6 +440,9 @@ def test_fail_open_run_verdicts_unavailable_end_to_end(jr, tmp_path, capsys,
     rec = _json.loads(open(str(tmp_path / "m" / "metrics.jsonl")).readlines()[-1])
     assert rec["fail_open"] is True
     assert "Unavailable" in rec["verdict"]
+    # the cause must be visible, not just the fact of failure
+    assert "provider down" in out
+    assert "provider down" in rec["fail_reason"]
 
 
 def _ok_payload(state, questions):

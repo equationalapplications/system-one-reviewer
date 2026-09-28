@@ -57,6 +57,11 @@ cp system_one_reviewer.py ~/.local/bin/system-one-reviewer   # any PATH dir work
 Requires: Python 3.10+, git, a TypeSafe API key (for the hosted provider).
 No third-party packages.
 
+macOS with the python.org installer: run its one-time
+`/Applications/Python 3.x/Install Certificates.command`, or every model
+call fails TLS verification and the run fails open. The report's
+`!! last error:` line names the cause when that happens.
+
 ## Usage
 
 ```bash

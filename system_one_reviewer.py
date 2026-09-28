@@ -80,11 +80,18 @@ SEV_NAME = {0: "none", 1: "MINOR", 2: "MAJOR", 3: "BLOCKER"}
 CATEGORIES = ["bug-risk", "security", "style", "performance", "test-gap", "other"]
 SKIP_PATTERNS = re.compile(
     r"(^|/)(package-lock\.json|yarn\.lock|Cargo\.lock|poetry\.lock|"
-    r"pnpm-lock\.yaml|uv\.lock|LICENSE|COPYING|\.gitignore|\.editorconfig)$"
+    r"pnpm-lock\.yaml|uv\.lock|Gemfile\.lock|composer\.lock|Pipfile\.lock|"
+    r"flake\.lock|bun\.lockb?|go\.sum|"
+    r"LICENSE|COPYING|\.gitignore|\.editorconfig)$"
     r"|(^|/)(dist|build|target|node_modules|\.min\.(js|css))(/|$)"
     r"|^(CHANGELOG|AUTHORS|CONTRIBUTORS)"
 )
 DOC_EXT = re.compile(r"\.(md|mdx|txt|rst|adoc)$", re.I)
+# Data ledgers, tabular fixtures and test snapshots: the hunk rubric asks
+# about code bugs, so judging a metrics.jsonl line just prints the record
+# back as a "finding" (first live install run, 2026-09-28). .json stays
+# judged — package.json/tsconfig changes are real config changes.
+DATA_EXT = re.compile(r"\.(jsonl|ndjson|csv|tsv|snap)$", re.I)
 
 # ---------- Jev client (same keep-alive contract as the voice gate) ----------
 
@@ -345,6 +352,12 @@ def resolve_diff(repo, args):
     the same value is correct there); only a range that does not END at
     HEAD would diverge, which the committed fixtures never do.
     """
+    # Checked up front: a bad --repo otherwise surfaces as git diff's full
+    # usage text (outside a work tree `git diff` falls back to --no-index).
+    probe = subprocess.run(["git", "-C", repo, "rev-parse", "--git-dir"],
+                           capture_output=True, text=True)
+    if probe.returncode != 0:
+        sys.exit(f"system-one-reviewer: {repo!r} is not a git repository")
     if args.range:
         # F5 (field evals, 2026-09-28): merge-base diff, matching the
         # documented behavior and --pr. A..B on a stale base showed
@@ -374,6 +387,13 @@ def resolve_diff(repo, args):
         return (run_git(repo, "diff"),
                 run_git(repo, "rev-parse", "HEAD").strip(), "uncommitted")
     if args.pr:
+        ref = subprocess.run(["git", "-C", repo, "rev-parse", "--verify",
+                              "--quiet", f"pr/{args.pr}^{{commit}}"],
+                             capture_output=True, text=True)
+        if ref.returncode != 0:
+            sys.exit(f"system-one-reviewer: no local ref pr/{args.pr} — run "
+                     f"`git fetch origin pull/{args.pr}/head:pr/{args.pr}` "
+                     "in the repo first")
         diff = run_git(repo, "diff", f"origin/main...pr/{args.pr}")
         head = run_git(repo, "rev-parse", f"pr/{args.pr}").strip()
         return diff, head, f"pr:{args.pr}"
@@ -657,6 +677,8 @@ def triage(hunks):
         f = h["file"] or ""
         if SKIP_PATTERNS.search(f) or DOC_EXT.search(f):
             skipped.append({"file": f, "reason": "docs/generated/lockfile"})
+        elif DATA_EXT.search(f):
+            skipped.append({"file": f, "reason": "data/snapshot"})
         elif h["too_large"]:
             skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines"})
         else:
@@ -853,8 +875,12 @@ def hunk_state(h):
     return state
 
 
-def judge(hunks, ask):
+def judge(hunks, ask, errors=None):
     """ask is the wired provider's ask(state, questions) (E8 contract).
+
+    errors, if given, collects a short repr of every failed call (transport
+    or response shape) so a fail-open run can say WHY — the first live
+    install failed open on an SSL CA error that the report never showed.
 
     F1: deletion-only clusters (no '+' in the cluster's own run) get
     DELETION_QUESTIONS — removal-risk scoring instead of code-bug scoring;
@@ -876,7 +902,9 @@ def judge(hunks, ask):
             payload, ms = ask(state, questions)
             latencies.append(ms)
             failures = 0
-        except Exception:
+        except Exception as exc:
+            if errors is not None:
+                errors.append(repr(exc)[:300])
             failures += 1
             if failures >= CALL_FAIL_LIMIT:
                 return None, latencies  # fail-open signal
@@ -923,7 +951,9 @@ def judge(hunks, ask):
             }
             findings.append(rec)
             parse_failures = 0
-        except (KeyError, TypeError, AttributeError, ValueError):
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            if errors is not None:
+                errors.append(f"bad response shape: {exc!r}"[:300])
             # M1 (r7)/m2 (r9): shape errors count toward fail-open — a wrong
             # response shape on every call is a broken/changed API, not a
             # set of harmless per-hunk misses. ValueError covers non-numeric
@@ -1144,10 +1174,15 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
     if meta.get("fail_open"):
         out.append(f"!! {prov_name} unavailable after repeated failures — "
                    "heuristic-only run, treat as triage not review")
+        if meta.get("fail_reason"):
+            out.append(f"!! last error: {meta['fail_reason']}")
     out.append("")
-    if not reported:
+    if meta.get("n_hunks") == 0:
+        out.append("Empty diff — nothing to review (check the range/mode).")
+    elif not reported:
         out.append("No findings above threshold.")
-    for f in reported:
+    # Most severe first; stable, so equal severities keep compose() order.
+    for f in sorted(reported, key=lambda f: -(f.get("severity") or 0)):
         sev = SEV_NAME.get(sev_level(f.get("severity")), "?")
         out.append(f"[{sev}] {f['hunk']['file']}:{f['hunk']['line']} "
                    f"({f.get('category')}, is_real={f.get('is_real')})")
@@ -1164,8 +1199,17 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
         out.append(f"PR-level risk: {pr_level['overall_risk']}/3, "
                    f"needs_human_review={pr_level.get('needs_human_review')}")
     if skipped:
+        # One entry per (file, reason): an oversized file or a lockfile
+        # yields one skip per hunk, which buried the distinct entries.
+        counts = {}
+        for s in skipped:
+            key = (s["file"], s["reason"])
+            counts[key] = counts.get(key, 0) + 1
+        items = [f"{f} ({r})" + (f" x{n}" if n > 1 else "")
+                 for (f, r), n in counts.items()]
+        more = f" (+{len(items) - 10} more)" if len(items) > 10 else ""
         out.append("Skipped (deterministic triage): " +
-                   ", ".join(f"{s['file']} ({s['reason']})" for s in skipped[:10]))
+                   ", ".join(items[:10]) + more)
     out.append("Verdict: " + verdict)
     # m3 (r10)/M2 (r11): the last line is a CLOSED SET for grep-ledgering —
     # detail lives on the Verdict: line above, never here. The incomplete
@@ -1220,10 +1264,14 @@ def main():
     kept = kept[: args.max_hunks]
     n_dropped = len(hunks) - n_triaged - len(kept)  # --max-hunks truncation only
 
-    findings, latencies = judge(kept, ask)
+    call_errors = []
+    findings, latencies = judge(kept, ask, errors=call_errors)
     fail_open = findings is None
+    fail_reason = call_errors[-1] if fail_open and call_errors else None
     if fail_open:
         findings = []
+    elif not hunks:
+        pr_level = None  # empty diff: nothing for the PR-level call to judge
     else:
         pr_level = judge_pr_level(findings, ask)
     # M1 (r9): a fail-open run must never carry a clean "Approved" — the
@@ -1259,7 +1307,7 @@ def main():
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks), "n_analyzed": len(kept),
             "total_latency_ms": total, "jev_calls": len(latencies),
-            "fail_open": fail_open}
+            "fail_open": fail_open, "fail_reason": fail_reason}
 
     result = {"meta": meta, "pr_level": pr_level if not fail_open else None,
               "findings": [
@@ -1287,7 +1335,8 @@ def main():
     log_run({"label": args.label or f"auto:{mode}", "repo": meta["repo"], "mode": mode,
              "head": head[:10], "n_hunks": meta["n_hunks"],
              "n_analyzed": meta["n_analyzed"], "verdict": verdict,
-             "fail_open": fail_open, "total_latency_ms": round(total, 1),
+             "fail_open": fail_open, "fail_reason": fail_reason,
+             "total_latency_ms": round(total, 1),
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
              "judged": judged,
              "packaging_version": PACKAGING_VERSION,
