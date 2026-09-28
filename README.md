@@ -49,9 +49,30 @@ Verdict: Changes requested
 
 ## Install
 
+Each [GitHub release](https://github.com/equationalapplications/system-one-reviewer/releases)
+attaches the single-file script (version stamped in) and its `SHA256SUMS`.
+Download both, verify, and put the script on your PATH:
+
 ```bash
-export TYPESAFE_API_KEY=...        # or ~/.config/jev-review/.env
-cp system_one_reviewer.py ~/.local/bin/system-one-reviewer   # any PATH dir works
+curl -fsSLO https://github.com/equationalapplications/system-one-reviewer/releases/latest/download/system-one-reviewer
+curl -fsSLO https://github.com/equationalapplications/system-one-reviewer/releases/latest/download/SHA256SUMS
+shasum -a 256 -c SHA256SUMS && install -m 755 system-one-reviewer ~/.local/bin/   # any PATH dir works
+system-one-reviewer --version
+```
+
+Re-run the same commands to update. From a checkout instead:
+`install -m 755 system_one_reviewer.py ~/.local/bin/system-one-reviewer`
+(`--version` then reports the last release, even with unreleased commits on top).
+
+Then give it a TypeSafe API key (hosted provider), either in the
+environment or in a file, which works even where your shell profile
+isn't loaded:
+
+```bash
+export TYPESAFE_API_KEY=...
+# or
+mkdir -p ~/.config/jev-review && echo 'TYPESAFE_API_KEY=...' > ~/.config/jev-review/.env
+chmod 600 ~/.config/jev-review/.env
 ```
 
 Requires: Python 3.10+, git, a TypeSafe API key (for the hosted provider).
