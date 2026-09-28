@@ -31,7 +31,9 @@ def die(msg):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("version", help="release version, e.g. 1.2.3 (no leading v)")
     ap.add_argument("--root", default=os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), help="repository root")

@@ -73,7 +73,11 @@ jobs:
 
   release:
     needs: [lint, typecheck, test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # push to main, or a manual dispatch on main to retry a failed release
+    # (semantic-release is a no-op when there is nothing new to release).
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     concurrency:
       group: release
@@ -88,12 +92,16 @@ jobs:
           # semantic-release reads the whole history and tags, and pushes
           # the release commit, so credentials must persist here.
           fetch-depth: 0
+          persist-credentials: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"  # runs scripts/build_release.py
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
+          # the runner's cached 24.x can predate package.json's >=24.15
+          # engines floor; resolve the newest 24.x instead.
+          check-latest: true
           cache: npm
       - run: npm ci --ignore-scripts
       - name: semantic-release

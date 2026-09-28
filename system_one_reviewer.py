@@ -252,12 +252,12 @@ def make_provider(provider, model, api_key=None):
     if provider == "jev":
         key = api_key if api_key is not None else load_api_key()
 
-        def provider_ask(state, questions):
+        def jev_provider_ask(state, questions):
             return jev_ask(state, questions, key)
 
-        set_transport(provider_ask)
+        set_transport(jev_provider_ask)
         set_provider_name("jev")
-        return provider_ask
+        return jev_provider_ask
     # laya: local inference; the router loads lazily on first call and is
     # kept for the process lifetime.
     def laya_provider_ask(state, questions):
