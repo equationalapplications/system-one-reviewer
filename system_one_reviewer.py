@@ -348,12 +348,15 @@ def resolve_diff(repo, args):
         # documented behavior and --pr. A..B on a stale base showed
         # post-branch main-side changes as deletions (false-FP machine).
         spec = triple_dot(args.range)
-        diff = run_git(repo, "diff", spec)
         # v0.3b (Kurt review): HEAD is a fine fixture sentinel, but the
-        # ledger must record what was DIFFED. The right-hand ref of the
-        # spec is the diffed tip; rev-parse it (peeled to commit for
-        # annotated tags). run_git sys.exits on failure, so a missing ref
-        # dies loudly rather than silently falling back.
+        # ledger must record what was DIFFED. triple_dot can pass bare
+        # specs through (a single SHA) — those have no right-hand side, so
+        # reject them loudly BEFORE diffing, not with an IndexError
+        # traceback afterwards (Opus r2 M1).
+        if "..." not in spec:
+            sys.exit("system-one-reviewer: --range needs A..B or A...B; "
+                     f"a bare {spec!r} has no right-hand tip to record")
+        diff = run_git(repo, "diff", spec)
         right_ref = spec.rsplit("...", 1)[1]
         head = run_git(repo, "rev-parse", "--verify",
                        f"{right_ref}^{{commit}}").strip()
@@ -768,23 +771,28 @@ def references_remaining(h, after_texts):
             continue
         text = w[2]
         # DECLARED names only (v0.3b M1 fix): def/class (Python),
-        # function/const/let/var/class (JS/TS), export forms. Matching
-        # every ≥3-char token matched keywords like def/return/self and
-        # made the signal fire on almost anything.
+        # function/const/let/var/class (JS/TS). Matching every ≥3-char
+        # token matched keywords like def/return/self and made the signal
+        # fire on almost anything. Names shorter than 3 chars are skipped
+        # (Opus r2 m2: removing `let i = 0` must not open the gate via
+        # `\bi\b` matching every surviving loop).
         for m in re.finditer(
                 r"\b(?:def|class|function|const|let|var)\s+([A-Za-z_]\w*)",
                 text):
-            removed_names.add(m.group(1))
-        # import targets: 'from mod import a, b' / 'import mod'
+            if len(m.group(1)) >= 3:
+                removed_names.add(m.group(1))
+        # import targets: 'from mod import a, b' / 'import mod'. Skip
+        # non-identifier fragments (Opus r2 m3: `import React from 'react'`
+        # and multiline `from x import (` produce junk names).
         m = re.match(r"\s*(?:from\s+([\w.]+)\s+import\s+(.+)|import\s+([\w.,\s]+))",
                      text)
         if m:
             for part in (m.group(2) or m.group(3) or "").split(","):
                 nm = part.strip().split(" as ")[0].strip()
-                if nm:
+                if nm and re.fullmatch(r"[A-Za-z_]\w*", nm):
                     removed_names.add(nm.split(".")[-1])
             mod = (m.group(1) or m.group(3) or "").strip()
-            if mod:
+            if mod and re.fullmatch(r"[\w.]+", mod):
                 removed_names.add(mod.split(".")[0])
     if not removed_names:
         return False
@@ -993,8 +1001,17 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
         if r is not None and r >= t and (f.get("severity") or 0) >= 1:
             reported.append(f)
-    # Corroboration pool: reported CODE-CHANGE findings only (v0.3b M2 fix —
-    # other deletion findings do not corroborate each other).
+    # Corroboration pool (v0.3b M2 fix, Opus r2 M2): a reported CODE-CHANGE
+    # finding corroborates a deletion finding only when it is itself
+    # sev>=2 (a serious code finding) OR targets the same file (the
+    # deletion's own neighborhood). A style nit elsewhere must not unlock
+    # the gate for six wrong deletion findings (#45 shape).
+    def _corroborates(cf, df):
+        if cf is df:
+            return False
+        same_file = cf["hunk"]["file"] == df["hunk"]["file"]
+        return (sev_level(cf.get("severity")) >= 2 or same_file)
+
     corroboration_pool = [f for f in reported
                           if f.get("rubric", "code-change") != "deletion"]
     blockers, majors = [], []
@@ -1003,7 +1020,8 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD):
         if lvl >= 2:
             if (f.get("rubric", "code-change") == "deletion"
                     and not f.get("references_remaining")
-                    and not corroboration_pool):
+                    and not any(_corroborates(c, f)
+                                for c in corroboration_pool)):
                 continue  # uncorroborated deletion finding: report, not verdict
             (blockers if lvl == 3 else majors).append(f)
     verdict = "Changes requested" if (blockers or len(majors) >= 2) else "Approved"
@@ -1208,6 +1226,12 @@ def main():
         {"file": f["hunk"]["file"], "line": f["hunk"]["line"],
          "severity": f.get("severity"), "is_real": f.get("is_real"),
          "category": f.get("category"), "confidence": f.get("confidence"),
+         # v03b (Opus r2 B1): the fields compose()'s gate reads MUST ride
+         # into the ledger, or sweep replay falls back to code-change and
+         # computes the wrong curve.
+         "rubric": f.get("rubric", "code-change"),
+         "references_remaining": f.get("references_remaining"),
+         "change_type": f["hunk"].get("change_type", "code-change"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
     meta = {"repo": os.path.basename(os.path.realpath(args.repo)),

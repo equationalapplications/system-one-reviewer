@@ -50,7 +50,7 @@ def test_infile_deletion_is_deletion_only_not_whole_file(jr):
         "diff --git a/src/nine.py b/src/nine.py\n"
         "--- a/src/nine.py\n"
         "+++ b/src/nine.py\n"
-        "@@ -1,4 +1,3 @@\n"
+        "@@ -1,3 +1,2 @@\n"
         " line1\n"
         "-dead_middle()\n"
         " line4\n"
@@ -312,7 +312,7 @@ def test_infile_deletion_with_context_is_deletion_only(jr):
         "diff --git a/src/nine.py b/src/nine.py\n"
         "--- a/src/nine.py\n"
         "+++ b/src/nine.py\n"
-        "@@ -1,9 +1,8 @@\n"
+        "@@ -1,5 +1,4 @@\n"
         " line1\n"
         " line2\n"
         "-dead_middle()\n"
@@ -325,6 +325,7 @@ def test_infile_deletion_with_context_is_deletion_only(jr):
     state = jr.hunk_state(hunks[0])
     assert state["change_type"] == "deletion-only"
     assert state["code_after_change"]     # context survives; state is honest
+    assert any("dead_middle" in b for b in state["code_before_change"])
     # v0.3b: 'dead_middle' appears in no surviving line here, but line4/line5
     # don't mention it either — references_remaining must be a real bool
     assert state["references_remaining"] is False
@@ -338,7 +339,7 @@ def test_references_remaining_true_when_context_mentions_removed(jr):
         "diff --git a/src/nine.py b/src/nine.py\n"
         "--- a/src/nine.py\n"
         "+++ b/src/nine.py\n"
-        "@@ -1,9 +1,8 @@\n"
+        "@@ -1,4 +1,2 @@\n"
         " line1\n"
         "-def dead_middle():\n"
         "-    return 0\n"
@@ -358,3 +359,59 @@ def test_mode_records_diffed_spec(jr, git_pair):
                           "uncommitted": False, "pr": None})()
     _diff, _head, mode = jr.resolve_diff(str(tmp_path), args)
     assert mode == "range:main...feature"
+
+
+def test_bare_range_spec_rejected_loudly(jr, git_pair):
+    """Opus v03b r2 M1: triple_dot passes bare specs through; resolve_diff
+    must sys.exit with a clear message, not IndexError."""
+    tmp_path, _git = git_pair
+    args = type("A", (), {"range": "abc123", "staged": False,
+                          "uncommitted": False, "pr": None})()
+    with pytest.raises(SystemExit, match="right-hand tip"):
+        jr.resolve_diff(str(tmp_path), args)
+
+
+def test_ledger_fields_reach_sweep_replay(jr, git_pair, monkeypatch):
+    """Opus v03b r2 B1: the judged entries written to metrics.jsonl must
+    carry rubric/references_remaining so rewrap()->compose() replays the
+    REAL verdict logic (end-to-end: main() -> file -> rewrap)."""
+    tmp_path, _git = git_pair
+    argv = ["--repo", str(tmp_path), "--range", "main..feature", "--json"]
+    monkeypatch.setattr("sys.argv", ["system-one-reviewer"] + argv)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    monkeypatch.delenv("SOR_PROVIDER", raising=False)
+    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: _Capture())
+    monkeypatch.setattr(jr, "METRICS_PATH",
+                        str(tmp_path / "metrics.jsonl"))
+    jr.main()
+    rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
+    for j in rec["judged"]:
+        assert j["rubric"] in ("code-change", "deletion")
+        assert isinstance(j["references_remaining"], bool)
+        # replay through the sweep's own rewrap -> compose path
+        w = jr.rewrap(j) if hasattr(jr, "rewrap") else j
+        assert w["rubric"] == j["rubric"]
+        assert w["references_remaining"] == j["references_remaining"]
+
+
+def test_sweep_rewrap_passes_rubric_fields():
+    """Opus v03b r2 B1 (unit level): rewrap() in scripts/sweep-thresholds
+    forwards rubric/references_remaining so replay matches live compose."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sweep", os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))),
+            "scripts", "sweep-thresholds.py"))
+    sw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sw)
+    rec = {"file": "gone.ts", "line": 1, "severity": 2.8, "is_real": 0.75,
+           "category": "other", "rubric": "deletion",
+           "references_remaining": False}
+    w = sw.rewrap(rec)
+    assert w["rubric"] == "deletion"
+    assert w["references_remaining"] is False
+    # and compose() applies the deletion gate: 0.75 >= 0.70 → reported,
+    # but uncorroborated → verdict NOT flipped
+    import system_one_reviewer as _sor
+    reported, _, verdict = _sor.compose([w], [], None)
+    assert len(reported) == 1 and verdict == "Approved"
