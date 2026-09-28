@@ -59,16 +59,14 @@ CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
 DELETION_REAL_THRESHOLD = 0.70  # deletion rubric (provisional; sweep TBD)
 KNOWN_FIXTURES = {"positive", "negative"}
-# v03b (field evals, 2026-09-28, Kurt review round; benchmark refreshed on
-# the r4 commit): model input changed AGAIN — references_remaining in
-# state, three-valued change_type, rewritten deletion rubric, per-rubric
-# thresholds, corroboration gate in compose. The v03 negative-fixture
-# benchmark is superseded (its fixture_head predates the deletion cluster
-# added to the negative fixture); v03b negatives were re-run and are the
-# current record. NOTE (Opus r4 m2): the -1 records were re-run on the
-# r3-fixes build, -2/-3 on the r2-fixes build — same input shape (both
-# post-B1), verified field-identical; labeled order in the file follows
-# run order within each build, not global time.
+# v03b (field evals, 2026-09-28, Kurt review round): model input changed
+# AGAIN — references_remaining in state, three-valued change_type,
+# rewritten deletion rubric, per-rubric thresholds, corroboration gate in
+# compose. Ledger records produced from different input shapes must never
+# share a version tag. (v03 negative benchmark superseded: its
+# fixture_head predates the deletion cluster in the negative fixture.
+# Per-run build provenance lives in
+# docs/benchmarks/2026-09-28-v03b-branch-benchmark.md.)
 PACKAGING_VERSION = "v03b"
 
 

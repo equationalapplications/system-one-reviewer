@@ -30,6 +30,12 @@ NEGATIVE = "negative"
 SHIPPED_THRESHOLD = 0.50
 MARGIN_FLOOR = 0.20
 
+# Versions whose judged ledger entries carry rubric/references_remaining
+# (first: v03b, Opus r2 B1). rewrap() dies on a run from one of these
+# versions whose entries lack `rubric`. Bump PACKAGING_VERSION? Add the
+# new tag here if it still carries the fields (Opus r5 m5).
+RUBRIC_VERSIONS = {"v03b"}
+
 # 0.30 + 0.05*k, k = 0..8 (top of grid: 0.70; 0.75+ excluded by the plateau rule).
 GRID = [round(0.30 + 0.05 * k, 2) for k in range(9)]
 
@@ -142,16 +148,19 @@ def select_runs(recs, expected, label_prefix, packaging_version="v03b"):
 def rewrap(j, run_version=None):
     """Flat judged entry -> the `f['hunk'][...]` shape compose consumes.
 
-    v03b: rubric/references_remaining ride through; older records (no
-    rubric key) replay as code-change — correct, because pre-v03b runs
-    never sent deletion questions. The RUN's packaging_version decides
-    that: judged entries never carry it (Opus r4 M1 — the entry-level
-    check previously here could never fire). Callers pass the run's
-    version; a v03b run whose judged entries lack `rubric` was written by
-    a broken build and dies loudly instead of replaying wrong logic."""
-    if run_version == "v03b" and "rubric" not in j:
-        die(f"v03b run record entry {j.get('file')} has no rubric — "
-            "ledger written by a broken build; re-run")
+    rubric/references_remaining ride through; older records (no rubric
+    key) replay as code-change — correct, because pre-v03b runs never
+    sent deletion questions. The RUN's packaging_version decides that:
+    judged entries never carry it (Opus r4 M1 — the entry-level check
+    previously here could never fire). Callers pass the run's version;
+    any rubric-era run (RUBRIC_VERSIONS) whose judged entries lack
+    `rubric` was written by a broken build and dies loudly instead of
+    replaying wrong logic. Future versions: add to RUBRIC_VERSIONS when
+    they carry the rubric fields, so the gate survives version bumps
+    (Opus r5 m5)."""
+    if run_version in RUBRIC_VERSIONS and "rubric" not in j:
+        die(f"{run_version} run record entry {j.get('file')} has no "
+            "rubric — ledger written by a broken build; re-run")
     return {"hunk": {"file": j["file"], "line": j["line"]},
             "is_real": j["is_real"], "severity": j["severity"],
             "category": j.get("category"), "parse_error": None,

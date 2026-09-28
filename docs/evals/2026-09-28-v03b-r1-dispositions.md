@@ -32,10 +32,11 @@
   (deletes the only test for a kept feature).
 - m3 (stale brief line): **FIXED** — F7 paragraph notes the v0.3b
   auto:<mode> label and that bare-mode labels are historical.
-- m4 (malformed test header): **FIXED** in the r4 round (header rewritten
-  to match bodies exactly: `@@ -1,3 +1,2 @@` and `@@ -1,5 +1,4 @@`); the
-  r3 row overclaimed and is superseded by
-  docs/evals/2026-09-28-v03b-r4-dispositions.md.
+- m4 (malformed test header): **FIXED** in the r2-fixes commit (d80f275):
+  headers rewritten to match bodies exactly (`@@ -1,3 +1,2 @@` and
+  `@@ -1,5 +1,4 @@`). The r3 round initially "corrected" this row with a
+  wrong claim (r4 round) — that correction was itself wrong; this row is
+  the accurate one (verified via `git log -S` pointing at d80f275).
 - m5 (missing test cases): **FIXED** —
   test_two_uncorroborated_deletions_do_not_flip and
   test_deletion_major_verdict_eligible_when_corroborated added.

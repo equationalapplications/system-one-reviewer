@@ -1,35 +1,48 @@
 # v0.3b branch benchmark — fixtures re-run on the corroboration-round code
 
-**Date:** 2026-09-28, branch `v03-field-evals` at the v0.3b review-round
-commit (Opus r2 fixes), provider `jev`, `PACKAGING_VERSION = v03b`.
+**Date:** 2026-09-28, branch `v03-field-evals`, provider `jev`,
+`PACKAGING_VERSION=v03b`.
 
-Why: v0.3b changed every model call's input again (references_remaining in
-state, three-valued change_type, rewritten deletion rubric) and changed
-compose() (per-rubric threshold, corroboration gate). Per the standing
-rule, thresholds and benchmark claims are re-verified on the new code.
+## Build provenance per record (Opus r5 m3)
 
-The NEGATIVE fixture now contains a benign whole-file deletion
-(`src/format_extra.py`, the #45 failure shape) — the FP census judges it
-under the deletion rubric on every run. The v03 negative benchmark file is
-superseded (its fixture_head predates the deletion cluster).
+The six records were NOT all produced by the same commit, but all by
+builds with an IDENTICAL model-input shape (all post-B1: ledger carries
+rubric/references_remaining/change_type; field-identity verified at
+extraction time):
 
-## Results (runs `v03b-pos2-1..3`, `v03b-neg2-1..3`)
+- `v03b-pos2-1`, `v03b-neg2-1`: re-run on the **r3-fixes build**
+  (70b6fcc) to pick up the B1 ledger fields Opus r2 required.
+- `v03b-pos2-2`, `-3`, `v03b-neg2-2`, `-3`: produced on the
+  **r2-fixes build** (d80f275).
 
-- Positive fixture: recall 5/5 (1.00), raw precision 5/6 (0.83),
-  **F1 0.91 — identical across all three runs**, matching the v0.2 record.
-- Negative fixture (incl. the whole-file deletion): **zero reported
-  findings of any kind, all three runs.**
-- The benign deletion cluster scored under the deletion rubric:
-  severity 0.03–0.04, is_real 0.20–0.24, confidence 0.96–0.97 — versus
-  2.73–2.82 severity (BLOCKER-level) under the old generic questions in
-  the #45 field run. The rewritten rubric + 0.70 gate hold it far below
-  the reporting line.
+Labeled order in `2026-09-28-v03b-branch-metrics.jsonl` follows run
+order within each build, not global wall-clock time. No threshold or
+prompt bytes changed between the two builds, so one version tag is
+correct; the split is recorded here rather than silently merged.
 
-Raw records: [2026-09-28-v03b-branch-metrics.jsonl](2026-09-28-v03b-branch-metrics.jsonl).
+## Negative fixture (3 runs; includes the benign whole-file-deletion
+cluster added for the #45 failure shape)
 
-## Standing caveat
+- Verdict: Approved ×3, **0 false positives**.
+- The benign whole-file-deletion cluster scores sev 0.03,
+  is_real ≈ 0.2, confidence 0.97 — vs sev 2.73–2.82 / conf 0.73–0.82
+  under the v0.2 questions that produced the #45 false BLOCKER.
+- `references_remaining` computed False on every deletion cluster
+  (nothing survives that names the removed modules).
 
-DELETION_REAL_THRESHOLD (0.70) is provisional. The sweep tool cannot yet
-sweep the deletion rubric's threshold (tracked as the open F2 executability
-work in docs/evals/2026-09-28-field-evals-cj-prs.md); the fixture numbers
-above verify the current gate does not misfire, not that 0.70 is optimal.
+## Positive fixture (3 runs)
+
+- Verdict: Changes requested ×3; the planted bug is reported each run
+  (some run-to-run variance in which adjacent hunks also get flagged —
+  consistent with the v0.2 record).
+
+## Goldens
+
+`examples/fixture-shas.txt` (positive) and `examples/negative-golden.tsv`
+(negative) pin the fixture heads; every record's `fixture_head` matches.
+
+## Open
+
+Deletion-rubric threshold (0.70) is provisional — sweepable only after
+the curated-journal PRs are re-run under v03b with their own golden set
+(tracked in the eval brief, F2 executability plan).

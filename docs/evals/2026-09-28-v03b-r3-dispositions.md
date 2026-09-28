@@ -24,7 +24,10 @@
   right_ref falls back to HEAD, matching triple_dot's two-dot fill.
 - m4 (rewrap unit test bypassed jr fixture): **FIXED** —
   test_sweep_rewrap_passes_rubric_fields now uses the jr fixture for the
-  compose() assertion (env-safe import per conftest).
+  compose() assertion. NOTE: that change and the header-count fixes
+  claimed here actually landed in the r4-fixes commit (ae40f40), not this
+  one — superseded by
+  docs/evals/2026-09-28-v03b-r4-dispositions.md.
 - m5/m6 (no v03b benchmark committed; deletion threshold not sweepable):
   benchmark file + doc committed in d80f275 and refreshed this round;
   threshold sweepability remains OPEN, tracked in the brief's F2

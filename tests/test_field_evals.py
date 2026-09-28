@@ -467,7 +467,7 @@ def test_references_remaining_relative_imports(jr):
             "diff --git a/pkg/mod.py b/pkg/mod.py\n"
             "--- a/pkg/mod.py\n"
             "+++ b/pkg/mod.py\n"
-            "@@ -1,4 +1,3 @@\n"
+            "@@ -1,3 +1,2 @@\n"
             " import os\n"
             f"-{removed}\n"
             " value = compute(1)\n"
@@ -479,3 +479,8 @@ def test_references_remaining_relative_imports(jr):
         state = jr.hunk_state(hunks[0])
         # surviving context mentions none of the removed module names
         assert state["references_remaining"] is False, removed
+    # positive direction (Opus r5 m6): a surviving line that names the
+    # removed module must flip True — guards against over-correction
+    hunks = jr.package_hunks(_diff("from .utils import helper").replace(
+        " value = compute(1)", " x = utils.helper()"))
+    assert jr.hunk_state(hunks[0])["references_remaining"] is True
