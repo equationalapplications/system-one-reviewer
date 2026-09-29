@@ -245,6 +245,80 @@ def cmd_fetch(args):
     return 0
 
 
+# ---------- sample ----------
+
+
+def group_by_pr(candidates):
+    """{(repo, pr): [candidates]}, errored rows dropped, PR keys sorted."""
+    by_pr: dict[tuple, list] = {}
+    for c in candidates:
+        if c.get("error"):
+            continue
+        by_pr.setdefault((c["repo"], c["pr"]), []).append(c)
+    return {k: by_pr[k] for k in sorted(by_pr)}
+
+
+def repo_quotas(repos, target):
+    """{repo: quota} splitting `target` evenly, remainder to the first repos."""
+    base, extra = divmod(target, len(repos))
+    return {r: base + (1 if i < extra else 0) for i, r in enumerate(sorted(repos))}
+
+
+def sample_candidates(candidates, target, seed=0):
+    """Draw ~`target` findings, whole PRs only, with a per-repo quota.
+
+    PR-atomic by necessity: a corpus sample is a PR and scoring computes
+    precision/recall per sample, so labeling part of a PR would make the
+    reviewer's unlabeled findings in that PR score as false positives.
+
+    Quotas exist because the mined pool is heavily skewed (clanker alone is
+    over half of it), so a uniform draw collapses onto a handful of large PRs
+    and learns nothing about the other repos. Each repo is shuffled under its
+    own seed, so adding or removing a repo does not reshuffle the others.
+    """
+    by_pr = group_by_pr(candidates)
+    per_repo: dict[str, list] = {}
+    for repo, _ in by_pr:
+        per_repo.setdefault(repo, [])
+    for repo in per_repo:
+        per_repo[repo] = [k for k in by_pr if k[0] == repo]
+    out = []
+    for repo, quota in repo_quotas(per_repo, target).items():
+        rng = random.Random(f"{seed}:{repo}")
+        keys = list(per_repo[repo])
+        rng.shuffle(keys)
+        n = 0
+        for k in keys:
+            if n >= quota:
+                break
+            out += by_pr[k]
+            n += len(by_pr[k])
+    return sorted(out, key=lambda c: c["id"])
+
+
+def cmd_sample(args):
+    src = os.path.join(args.corpus, "work", "candidates.jsonl")
+    cands = cl.read_jsonl(src)
+    if not cands:
+        raise cl.CorpusError(f"no candidates at {src}; run fetch first")
+    picked = sample_candidates(cands, args.target, args.seed)
+    dst = os.path.join(args.corpus, "work", "sample.jsonl")
+    cl.write_jsonl(dst, picked)
+    prs = {(c["repo"], c["pr"]) for c in picked}
+    print(f"sample: {len(picked)} findings from {len(prs)} PRs -> {dst}")
+    by_repo: dict[str, list] = {}
+    for c in picked:
+        by_repo.setdefault(c["repo"], []).append(c)
+    for repo in sorted(by_repo):
+        rows = by_repo[repo]
+        disp: dict[str, int] = {}
+        for c in rows:
+            disp[c["disposition"]] = disp.get(c["disposition"], 0) + 1
+        n_prs = len({c["pr"] for c in rows})
+        print(f"  {repo}: {len(rows)} findings / {n_prs} PRs  {disp}")
+    return 0
+
+
 # ---------- spot-check ----------
 
 SPOT_COLS = ["candidate_id", "why", "thread", "code", "disposition", "label",
@@ -501,6 +575,10 @@ def main(argv=None):
     f.add_argument("--force", action="store_true",
                    help="re-mine repos that already have a cached candidates file")
     f.add_argument("--corpus", default=DEFAULT_CORPUS)
+    sm = sub.add_parser("sample")
+    sm.add_argument("--target", type=int, default=100, help="approx findings to draw")
+    sm.add_argument("--seed", type=int, default=0)
+    sm.add_argument("--corpus", default=DEFAULT_CORPUS)
     s = sub.add_parser("spotcheck")
     s.add_argument("--corpus", default=DEFAULT_CORPUS)
     b = sub.add_parser("build")
@@ -510,6 +588,8 @@ def main(argv=None):
     try:
         if args.cmd == "fetch":
             return cmd_fetch(args)
+        if args.cmd == "sample":
+            return cmd_sample(args)
         if args.cmd == "spotcheck":
             return cmd_spotcheck(args)
         if args.cmd == "build":

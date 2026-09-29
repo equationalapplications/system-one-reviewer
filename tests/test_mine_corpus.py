@@ -4,6 +4,7 @@ gh is never called: gh_graphql is monkeypatched with canned responses shaped
 like the live query (Task 3 Step 1). Git checks run against temp repos.
 """
 
+import collections
 import os
 import subprocess
 import sys
@@ -196,3 +197,69 @@ def test_graphql_gives_up_after_retries(monkeypatch):
     with pytest.raises(cl.CorpusError, match="504"):
         mc.gh_graphql("Q", owner="o", _sleep=lambda d: None)
     assert len(calls) == len(mc.RETRY_DELAYS) + 1
+
+
+# ---------- sample ----------
+
+
+def _cand(repo, pr, tid, **kw):
+    c = {"id": f"{repo}#{pr}:{tid}", "repo": repo, "pr": pr, "path": "a.py",
+         "line": 3, "disposition": "fixed", "error": None}
+    c.update(kw)
+    return c
+
+
+def _pool(n_prs, per_pr, repo="o/a"):
+    return [_cand(repo, p, f"T{i}") for p in range(n_prs) for i in range(per_pr)]
+
+
+def test_sample_is_pr_atomic():
+    """Every drawn PR is included whole: no PR is partially labeled."""
+    picked = mc.sample_candidates(_pool(10, 5), target=20)
+    by_pr = collections.defaultdict(list)
+    for c in picked:
+        by_pr[c["pr"]].append(c)
+    assert picked
+    assert all(len(v) == 5 for v in by_pr.values())
+
+
+def test_sample_is_deterministic_and_seed_sensitive():
+    pool = _pool(20, 3)
+    assert mc.sample_candidates(pool, 20, seed=0) == mc.sample_candidates(pool, 20, seed=0)
+    assert mc.sample_candidates(pool, 20, seed=0) != mc.sample_candidates(pool, 20, seed=1)
+
+
+def test_sample_gives_every_repo_a_quota():
+    """A big repo cannot swallow the draw and starve the small ones."""
+    pool = _pool(50, 20, "o/big") + _pool(4, 2, "o/small")
+    picked = mc.sample_candidates(pool, target=30)
+    per_repo = collections.Counter(c["repo"] for c in picked)
+    assert set(per_repo) == {"o/big", "o/small"}
+    assert per_repo["o/small"] == 8  # all 8 findings: the quota floor is one PR
+    assert per_repo["o/big"] <= 30
+
+
+def test_sample_quotas_split_remainder():
+    assert mc.repo_quotas(["a", "b", "c"], 10) == {"a": 4, "b": 3, "c": 3}
+    assert mc.repo_quotas(["a", "b"], 3) == {"a": 2, "b": 1}
+
+
+def test_sample_skips_errored_candidates():
+    pool = _pool(3, 2) + [_cand("o/a", 99, "TX", error="boom")]
+    picked = mc.sample_candidates(pool, target=100)
+    assert all(c["id"] != "o/a#99:TX" for c in picked)
+
+
+def test_sample_writes_file_and_reports(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    cl.write_jsonl(str(corpus / "work" / "candidates.jsonl"),
+                   _pool(6, 2, "o/a") + _pool(3, 2, "o/b"))
+    assert mc.main(["sample", "--target", "8", "--corpus", str(corpus)]) == 0
+    picked = cl.read_jsonl(str(corpus / "work" / "sample.jsonl"))
+    assert picked == sorted(picked, key=lambda c: c["id"])
+    out = capsys.readouterr().out
+    assert "findings from" in out and "o/a:" in out and "o/b:" in out
+
+
+def test_sample_without_candidates_errors(tmp_path):
+    assert mc.main(["sample", "--corpus", str(tmp_path / "corpus")]) == 1
