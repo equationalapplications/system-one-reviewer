@@ -607,7 +607,15 @@ def build_rows(candidates, adjudicated, overrides, notes, agreed, promotions, ve
                 continue
             verified_rows.append((c, a, label))
         seen_anchor: dict[tuple, tuple] = {}
-        for row_t in sorted(verified_rows, key=lambda t: not _human(t)):
+        # Deterministic winner: human rows first; among claude rows prefer
+        # real-bug (a dropped golden issue silently caps recall, a dropped
+        # dismissal only leaves a benign row) — never candidate file order.
+        def _rank(t):
+            c, a, label = t
+            return (not _human(t), 0 if label == "real-bug" else 1,
+                    a["file"], int(a["line"]), c["id"])
+
+        for row_t in sorted(verified_rows, key=_rank):
             c, a, label = row_t
             # Key on (file, line) WITHOUT label: the loader rejects any
             # duplicate anchor across issues+dismissed, so the builder must

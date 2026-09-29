@@ -86,7 +86,10 @@ gitignored `corpus/local/`.
   anchors so this can never ship silently again) and evidence-notes
   (overridden rows carry the judge's refuted text until a rebuild). Both
   fixes will express on a rebuild against `corpus/work/` inputs, which
-  were not available on the machine that made them.
+  were not available on the machine that made them. HAND-EDIT EXCEPTION:
+  these two cell-level repairs (one removed row, one evidence text) are
+  the only manual changes to the generated TSVs; `git diff` against the
+  build output shows exactly this.
 - Agreement on the 21 random rows: **19/21 = 90.5%** (gate ≥85%). 3 rows in
   total were re-adjudicated by a human before the build — 2 from the random
   sample and 1 from the disposition-vs-label scan, per the spot-check sheet

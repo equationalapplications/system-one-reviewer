@@ -158,6 +158,22 @@ def test_build_rows_dedup_is_label_agnostic():
     assert any("duplicate anchor" in w for w in warnings)
 
 
+def test_build_rows_claude_claude_conflict_prefers_real_bug():
+    """Two claude rows, one anchor, contradictory labels: real-bug wins
+    deterministically (a dropped golden caps recall; a dropped dismissal
+    is benign). Order in adjudicated.jsonl must not decide."""
+    a_fp, a_bug = _adj(1, "false-positive"), _adj(2, "real-bug")
+    a_bug["file"], a_bug["line"] = a_fp["file"], a_fp["line"]
+    cands = {c["id"]: c for c in [_cand(1), _cand(2)]}
+    # FP row first in the input — the bug row must still win.
+    out, warnings = mc.build_rows(cands, [a_fp, a_bug], {}, {}, set(), [],
+                                  _fake_verify_ok)
+    prs, issues, dismissed = out["public"]
+    assert len(issues) == 1 and issues[0]["adjudicator"] == "claude"
+    assert len(dismissed) == 0
+    assert any("duplicate anchor" in w for w in warnings)
+
+
 def test_build_rows_dedup_survives_verify_failure_of_preferred_row():
     """The human row fails verify, the claude row at the same anchor passes:
     the anchor must survive via the claude row (dedup runs after verify)."""
