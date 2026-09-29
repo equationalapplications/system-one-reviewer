@@ -72,7 +72,7 @@ PACKAGING_VERSION = "v03b"
 # Release version, stamped by scripts/build_release.py during semantic-release
 # (tags vX.Y.Z). Distinct from PACKAGING_VERSION, which versions the scoring
 # rubric the threshold sweep gates on.
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 def sev_level(v):
