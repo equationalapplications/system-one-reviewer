@@ -609,7 +609,10 @@ def build_rows(candidates, adjudicated, overrides, notes, agreed, promotions, ve
         seen_anchor: dict[tuple, tuple] = {}
         for row_t in sorted(verified_rows, key=lambda t: not _human(t)):
             c, a, label = row_t
-            key = (a["file"], int(a["line"]), label)
+            # Key on (file, line) WITHOUT label: the loader rejects any
+            # duplicate anchor across issues+dismissed, so the builder must
+            # too — one anchor, one verdict, human's label wins.
+            key = (a["file"], int(a["line"]))
             if key in seen_anchor:
                 warnings.append(f"{c['id']}: duplicate anchor "
                                 f"{a['file']}:{a['line']} ({label}) — kept "

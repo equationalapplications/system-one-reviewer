@@ -318,28 +318,21 @@ def test_sample_pass2_fills_gap_pass1_cannot():
 def test_sample_pass2_round_robin_and_overshoot_guard():
     """Pass 2 spreads leftover budget across repos and skips oversized PRs.
 
-    Round-robin layout: a has 5 PRs x 1 finding, b has 3 PRs x 1 finding,
-    target 7. Quotas a=4, b=3. Pass 1: a draws 4 (>= quota, 1 undrawn), b
-    draws 3 (>= quota, 0 undrawn — dry). used = 7 → pass 2 does NOT run.
-    To force a shared pass 2, target 8: unused = 1 after pass 1, only a has
-    an undrawn PR — a gets it. The both-repos case needs b under quota AND
-    non-dry: target 6, quotas a=3, b=3: a draws 3 (2 undrawn), b draws 3
-    (dry). Still one-sided; the honest both-repos layout is unequal PR
-    counts with b under quota: a 5x1, b 3x1, target 8 → a 4, b 3, then
-    pass 2 gives the last to a (only a has PRs left). Round-robin vs
-    alphabetical is only distinguishable when BOTH have leftovers:
-    a 4x1 with quota 2? pass 1 has no fit check — a draws until n>=quota.
-    a: 3 PRs x 1, quota 2 → 2 drawn, 1 left. b: 3 PRs x 1, quota 2 → 2
-    drawn, 1 left. target 5 → used 4, unused 1 → pass 2 takes ONE (round-
-    robin: sorted order 'o/a' first). Both-repo distinction needs unused 2.
+    Verified layout: a:5x1, b:5x1, c:1x1, d:1x1 (1-finding PRs), target 10.
+    Quotas (sorted, remainder to first): a=3, b=3, c=2, d=2. Pass 1:
+    a draws 3 (2 undrawn), b draws 3 (2 undrawn), c draws 1 (dry, 1 under),
+    d draws 1 (dry, 1 under). used = 8, unused = 2 — pass 2 must give ONE
+    PR to a AND one to b (round-robin); alphabetical greedy would stack
+    both on a (a=5, b=3). Assert a=4 and b=4.
     """
-    # unused = 2, both repos have exactly 1 undrawn PR each → one each.
-    pool = _pool(3, 1, "o/a") + _pool(3, 1, "o/b")
-    picked = mc.sample_candidates(pool, target=6)
+    pool = _pool(5, 1, "o/a") + _pool(5, 1, "o/b") + \
+        _pool(1, 1, "o/c") + _pool(1, 1, "o/d")
+    picked = mc.sample_candidates(pool, target=10)
     by_repo = collections.Counter(c["repo"] for c in picked)
     by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
-    assert len(picked) == 6  # target reached exactly
-    assert by_repo["o/a"] == 3 and by_repo["o/b"] == 3  # 2 + 1 from pass 2 each
+    assert len(picked) == 10  # target reached exactly
+    assert by_repo["o/a"] == 4 and by_repo["o/b"] == 4  # one pass-2 PR each
+    assert by_repo["o/c"] == 1 and by_repo["o/d"] == 1
     assert all(v == 1 for v in by_pair.values())
 
     # Overshoot guard: leftover budget 1, every undrawn PR has 5 findings —

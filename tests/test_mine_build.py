@@ -142,6 +142,22 @@ def test_build_rows_dedups_same_anchor_prefers_human():
     assert any("duplicate anchor" in w and "T2" in w for w in warnings)
 
 
+def test_build_rows_dedup_is_label_agnostic():
+    """Same anchor, contradictory verdicts (real-bug + false-positive):
+    one anchor one verdict — the human row wins, loader would reject both."""
+    a1 = _adj(1, "real-bug")
+    a2 = _adj(2, "false-positive")
+    a2["file"], a2["line"] = a1["file"], a1["line"]
+    cands = {c["id"]: c for c in [_cand(1), _cand(2)]}
+    overrides = {"o/r#1:T2": "false-positive"}  # human: it's a false positive
+    out, warnings = mc.build_rows(cands, [a1, a2], overrides, {}, set(), [],
+                                  _fake_verify_ok)
+    prs, issues, dismissed = out["public"]
+    assert len(issues) == 0 and len(dismissed) == 1  # the human's verdict
+    assert dismissed[0]["adjudicator"] == "human"
+    assert any("duplicate anchor" in w for w in warnings)
+
+
 def test_build_rows_dedup_survives_verify_failure_of_preferred_row():
     """The human row fails verify, the claude row at the same anchor passes:
     the anchor must survive via the claude row (dedup runs after verify)."""

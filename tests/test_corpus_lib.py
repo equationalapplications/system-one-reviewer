@@ -88,6 +88,11 @@ def test_load_corpus_empty_dir_is_empty(tmp_path):
     (lambda prs, iss, dis: iss[0].update(line="0"), "bad line"),
     (lambda prs, iss, dis: iss[0].update(severity_class="huge"), "severity_class"),
     (lambda prs, iss, dis: dis[0].update(dismissal_reason="meh"), "dismissal_reason"),
+    # duplicate anchors: within issues, and across issues+dismissed
+    (lambda prs, iss, dis: iss.append(dict(iss[0])), "duplicate anchor"),
+    (lambda prs, iss, dis: dis.append(dict(dis[0]) | {"file": iss[0]["file"],
+                                                      "line": iss[0]["line"]}),
+     "duplicate anchor"),
 ])
 def test_validation_errors(tmp_path, mutate, msg):
     pre = _pr_row("o/r", 1, "pre", "positive")
