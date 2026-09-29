@@ -173,6 +173,16 @@ def validate(prs, issues, dismissed):
         if r["dismissal_reason"] not in DISMISSAL_REASONS:
             raise CorpusError(f"dismissed {r['sample_id']}: bad dismissal_reason "
                               f"{r['dismissal_reason']!r}")
+    seen: set[tuple[str, str, str]] = set()
+    for rows in (issues, dismissed):
+        for r in rows:
+            key = (r["sample_id"], r["file"], r["line"])
+            if key in seen:
+                raise CorpusError(
+                    f"duplicate anchor {key[0]} {key[1]}:{key[2]} — the scorer "
+                    "pairs one golden per finding, so a duplicated anchor caps "
+                    "recall; rebuild (build_rows dedupes) or repair the TSV")
+            seen.add(key)
 
 
 def check_holdout_share(prs, lo=0.25, hi=0.35, min_prs=10):

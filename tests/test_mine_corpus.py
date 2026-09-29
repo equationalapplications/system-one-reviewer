@@ -315,18 +315,48 @@ def test_sample_pass2_fills_gap_pass1_cannot():
     assert all(v == 1 for v in by_pair.values())  # whole PRs, no duplicates
 
 
-def test_sample_pass2_never_exceeds_target():
-    """The greedy fill skips PRs that would overshoot the remaining budget."""
-    # a: 2 PRs x 5 findings; b: 2 PRs x 1 finding; target 6.
-    # Pass 1: a=3, b=3 -> a draws PR#0 (5 >= 3), b draws both (2 < 3, dry).
-    # used = 7 >= 6 -> pass 2 skipped; overshoot is pass-1 granularity.
-    # Now target 8: quotas a=4, b=4: same draws, used = 7 < 8, unused = 1;
-    # every undrawn PR (a's PR#1, 5 findings) is bigger than 1 -> skipped.
+def test_sample_pass2_round_robin_and_overshoot_guard():
+    """Pass 2 spreads leftover budget across repos and skips oversized PRs.
+
+    Round-robin layout: a has 5 PRs x 1 finding, b has 3 PRs x 1 finding,
+    target 7. Quotas a=4, b=3. Pass 1: a draws 4 (>= quota, 1 undrawn), b
+    draws 3 (>= quota, 0 undrawn — dry). used = 7 → pass 2 does NOT run.
+    To force a shared pass 2, target 8: unused = 1 after pass 1, only a has
+    an undrawn PR — a gets it. The both-repos case needs b under quota AND
+    non-dry: target 6, quotas a=3, b=3: a draws 3 (2 undrawn), b draws 3
+    (dry). Still one-sided; the honest both-repos layout is unequal PR
+    counts with b under quota: a 5x1, b 3x1, target 8 → a 4, b 3, then
+    pass 2 gives the last to a (only a has PRs left). Round-robin vs
+    alphabetical is only distinguishable when BOTH have leftovers:
+    a 4x1 with quota 2? pass 1 has no fit check — a draws until n>=quota.
+    a: 3 PRs x 1, quota 2 → 2 drawn, 1 left. b: 3 PRs x 1, quota 2 → 2
+    drawn, 1 left. target 5 → used 4, unused 1 → pass 2 takes ONE (round-
+    robin: sorted order 'o/a' first). Both-repo distinction needs unused 2.
+    """
+    # unused = 2, both repos have exactly 1 undrawn PR each → one each.
+    pool = _pool(3, 1, "o/a") + _pool(3, 1, "o/b")
+    picked = mc.sample_candidates(pool, target=6)
+    by_repo = collections.Counter(c["repo"] for c in picked)
+    by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
+    assert len(picked) == 6  # target reached exactly
+    assert by_repo["o/a"] == 3 and by_repo["o/b"] == 3  # 2 + 1 from pass 2 each
+    assert all(v == 1 for v in by_pair.values())
+
+    # Overshoot guard: leftover budget 1, every undrawn PR has 5 findings —
+    # pass 2 must skip them all rather than exceed the target.
     pool = _pool(2, 5, "o/a") + _pool(2, 1, "o/b")
     picked = mc.sample_candidates(pool, target=8)
-    by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
-    assert sum(len(by_pr_map) for by_pr_map in [by_pair]) == len(by_pair)
     assert len(picked) == 7  # 5 + 1 + 1: unused=1 unfillable, not overshot
+
+
+def test_graphql_retries_on_malformed_json(monkeypatch):
+    """A truncated 200 body is treated as retryable, not a crash."""
+    outs = [subprocess.CompletedProcess([], 0, '{"data": {"ok"', ""),  # truncated
+            subprocess.CompletedProcess([], 0, '{"data": {"ok": 1}}', "")]
+    slept = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **k: outs.pop(0))
+    assert mc.gh_graphql("Q", owner="o", _sleep=slept.append) == {"data": {"ok": 1}}
+    assert slept == [2]  # one retry after the malformed body
 
 
 def test_sample_writes_file_and_reports(tmp_path, capsys):

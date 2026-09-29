@@ -127,6 +127,40 @@ def test_build_rows_drops_rows_that_fail_verification():
     assert len(warnings) == 1 and "lacks x" in warnings[0]
 
 
+def test_build_rows_dedups_same_anchor_prefers_human():
+    """Two candidates anchoring the same (file, line): one row, the human's."""
+    # T1 and T2 differ only in id; give them the SAME adjudication anchor.
+    a1, a2 = _adj(1, "real-bug"), _adj(2, "real-bug")
+    a2["file"], a2["line"] = a1["file"], a1["line"]
+    cands = {c["id"]: c for c in [_cand(1), _cand(2)]}
+    overrides = {"o/r#1:T2": "real-bug"}  # human blessed the T2 copy
+    out, warnings = mc.build_rows(cands, [a1, a2], overrides, {}, set(), [],
+                                  _fake_verify_ok)
+    _, issues, _ = out["public"]
+    assert len(issues) == 1
+    assert issues[0]["adjudicator"] == "human"
+    assert any("duplicate anchor" in w and "T2" in w for w in warnings)
+
+
+def test_build_rows_dedup_survives_verify_failure_of_preferred_row():
+    """The human row fails verify, the claude row at the same anchor passes:
+    the anchor must survive via the claude row (dedup runs after verify)."""
+    a1, a2 = _adj(1, "real-bug"), _adj(2, "real-bug")
+    a2["file"], a2["line"] = a1["file"], a1["line"]
+    a1["verify_substring"], a2["verify_substring"] = "x1", "x2"
+    cands = {c["id"]: c for c in [_cand(1), _cand(2)]}
+    overrides = {"o/r#1:T2": "real-bug"}
+
+    def verify2(repo, sha, pr, file, line, substring):
+        return "gone" if substring == "x2" else None  # the HUMAN copy fails
+
+    out, warnings = mc.build_rows(cands, [a1, a2], overrides, {}, set(), [], verify2)
+    _, issues, _ = out["public"]
+    assert len(issues) == 1
+    assert issues[0]["adjudicator"] == "claude"  # the surviving copy
+    assert any("dropped" in w for w in warnings)
+
+
 def test_build_rows_private_repo_goes_local_and_promotions_apply():
     cands = {c["id"]: c for c in [_cand(1, repo="o/p")]}
     adj = [_adj(1, "real-bug", repo="o/p")]

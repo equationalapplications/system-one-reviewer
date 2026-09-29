@@ -28,7 +28,7 @@ and per-repo thread anchors from `gh api graphql`.
 | ↳ `kind=positive`      |        16 |                  3 |    19 |
 | ↳ `split=train`        |        23 |                  9 |    32 |
 | ↳ `split=holdout`      |        13 |                  2 |    15 |
-| Issues                 |        47 |                  9 |    56 |
+| Issues                 |        46 |                  9 |    55 |
 | Dismissed              |        16 |                 13 |    29 |
 | Dropped (verify fail)  |          |                   |    18 |
 
@@ -59,11 +59,11 @@ gitignored `corpus/local/`.
 | severity_class | issues | dismissed |
 |----------------|-------:|----------:|
 | major          |     11 |         2 |
-| minor          |     36 |        27 |
+| minor          |     35 |        27 |
 
 | category       | issues |
 |----------------|-------:|
-| bug-risk       |     29 |
+| bug-risk       |     28 |
 | maintainability|      8 |
 | security       |      5 |
 | test           |      5 |
@@ -78,13 +78,15 @@ gitignored `corpus/local/`.
 
 ### Adjudication and spot-check
 
-- All 85 rows were auto-adjudicated; the spot-check sampled 21 random rows
+- All 84 rows were auto-adjudicated; the spot-check sampled 21 random rows
   plus every disposition-vs-label disagreement for human verification
-  against the cached repo clones. NOTE: the v1 build predates the anchor
-  dedup fix (duplicate `curated-journal#27` anchor) and the evidence-note
-  fix (overridden rows carry the judge's refuted text); both are fixed in
-  `build_rows` and a rebuild against `corpus/work/` inputs will pick them
-  up — the inputs were not available on the machine that made these fixes.
+  against the cached repo clones. NOTE: the v1 build predates two builder
+  fixes — anchor dedup (the duplicate `curated-journal#27` row is removed
+  from issues.tsv by hand, one row; `load_corpus` now REJECTS duplicate
+  anchors so this can never ship silently again) and evidence-notes
+  (overridden rows carry the judge's refuted text until a rebuild). Both
+  fixes will express on a rebuild against `corpus/work/` inputs, which
+  were not available on the machine that made them.
 - Agreement on the 21 random rows: **19/21 = 90.5%** (gate ≥85%). 3 rows in
   total were re-adjudicated by a human before the build — 2 from the random
   sample and 1 from the disposition-vs-label scan, per the spot-check sheet

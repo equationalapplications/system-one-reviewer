@@ -62,7 +62,7 @@ RETRYABLE = re.compile(r"\b(429|500|502|503|504)\b|timeout|timed out|connection 
                        r"|malformed json", re.I)
 RETRY_DELAYS = (2, 5, 15, 40)
 # `fetch` re-mines a cached repo while its cache holds errored candidates —
-# but only ERROR_RETRY_LIMIT-1 retries after the initial mine: some candidate
+# but only ERROR_RETRY_LIMIT retries after the initial mine: some candidate
 # errors are permanent (the pinned commit was force-pushed away), and endless
 # retries would undo resumability. When the limit is hit the cache is reused
 # and fetch prints an explicit warning about the stranded candidates.
@@ -251,6 +251,7 @@ def cmd_fetch(args):
     for repo in args.repo:
         cached = os.path.join(per_repo, repo.replace("/", "__") + ".jsonl")
         cands = cl.read_jsonl(cached) if os.path.exists(cached) else None
+        error_retry = False
         # `is not None`, not truthiness: an EMPTY cache is still a cache, and
         # its recorded scope must gate reuse exactly like a non-empty one.
         if cands is not None and not args.force:
@@ -274,10 +275,11 @@ def cmd_fetch(args):
                     # ERROR_RETRY_LIMIT times: some errors are permanent (a
                     # force-pushed-away commit), and re-mining those forever
                     # would undo fetch's resumability.
-                    print(f"mine: {repo}: {n_err} errored candidate(s), attempt "
+                    print(f"mine: {repo}: {n_err} errored candidate(s), retry "
                           f"{attempts + 1}/{ERROR_RETRY_LIMIT} — re-mining",
                           file=sys.stderr)
                     cands = None
+                    error_retry = True  # this re-mine EXISTS to retry errors
         if cands is not None and not args.force:
             n_err = sum(1 for c in cands if c.get("error"))
             warn = (f" — WARNING: {n_err} errored candidate(s) excluded from "
@@ -285,15 +287,11 @@ def cmd_fetch(args):
             print(f"mine: {repo}: {len(cands)} candidates (cached){warn}")
         else:
             prev = cl.read_meta(cached) if os.path.exists(cached) else {}
-            prev_errors = any(c.get("error") for c in
-                              (cl.read_jsonl(cached) if os.path.exists(cached) else []))
             cands, totals = mine_repo(repo, args.limit)
             n_err = sum(1 for c in cands if c.get("error"))
-            # The counter tracks retries-for-errors only: a re-mine caused by
-            # a wider scope or --force starts the new cache's error budget
-            # fresh, because those errors were not retried before.
-            was_error_retry = n_err > 0 and prev_errors
-            attempts = (prev.get("error_attempts", 0) + 1) if was_error_retry else 0
+            # The counter advances only on re-mines made to retry errors; a
+            # scope/--force re-mine starts the new cache's budget fresh.
+            attempts = (prev.get("error_attempts", 0) + 1) if error_retry else 0
             cl.write_jsonl(cached, cands,
                            meta={"limit": args.limit, "error_attempts": attempts})
             print(f"mine: {repo}: {len(cands)} candidates from {totals}")
