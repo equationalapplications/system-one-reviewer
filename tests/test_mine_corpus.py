@@ -170,6 +170,26 @@ def test_fetch_force_remines(tmp_path, monkeypatch):
     assert calls == ["o/r", "o/r"]
 
 
+def test_fetch_retries_errored_cache_but_stops(tmp_path, monkeypatch):
+    """Errored caches re-mine up to ERROR_RETRY_LIMIT times, then stay cached."""
+    calls = []
+
+    def fake_mine(repo, limit):
+        calls.append(1)
+        c, _ = mc.candidates_from_pr(repo, _pr(7, [_thread("T1", "a.py", 3)]))
+        c[0]["error"] = "permanent: commit gone"
+        return c, {"prs": 1}
+
+    monkeypatch.setattr(mc, "mine_repo", fake_mine)
+    corpus = tmp_path / "corpus"
+    argv = ["fetch", "--repo", "o/r", "--corpus", str(corpus)]
+    mc.main(argv)  # attempt 1 (initial mine)
+    mc.main(argv)  # attempt 2
+    assert len(calls) == 2
+    mc.main(argv)  # limit reached: cache reused, no re-mine
+    assert len(calls) == 2
+
+
 def test_graphql_retries_transient_then_succeeds(monkeypatch):
     outs = [subprocess.CompletedProcess([], 1, "", "gh: HTTP 504"),
             subprocess.CompletedProcess([], 0, '{"data": {"ok": 1}}', "")]
@@ -271,12 +291,18 @@ def test_sample_redistributes_unused_quota():
 
 
 def test_sample_quota_floor_survives_redistribution():
-    """The one-PR-per-draw floor stays, but redistribution fills the target."""
-    pool = _pool(10, 5, "o/a") + _pool(1, 2, "o/b")
+    """Pass 2 actually runs: quota overshoot stranding is back-filled."""
+    # a: 2 PRs x 5 findings, b: 1 PR x 1 finding, target 12.
+    # Pass 1: quotas a=6, b=6 -> a draws one PR (5; the second would hit 10>6),
+    # b draws its PR (1). unused = 6 -> pass 2 must draw a's second PR (5).
+    pool = _pool(2, 5, "o/a") + _pool(1, 1, "o/b")
     picked = mc.sample_candidates(pool, target=12)
     by_repo = collections.Counter(c["repo"] for c in picked)
-    assert by_repo["o/b"] == 2          # the small repo's whole PR
-    assert sum(by_repo.values()) == 12  # target reached despite b's exhaust
+    by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
+    assert by_repo["o/a"] == 10  # both of a's PRs — only pass 2 can do this
+    assert by_repo["o/b"] == 1
+    assert sum(by_repo.values()) == 11  # 12 is unreachable at whole-PR granularity
+    assert all(v == 5 for k, v in by_pair.items() if k[0] == "o/a")
 
 
 def test_sample_writes_file_and_reports(tmp_path, capsys):

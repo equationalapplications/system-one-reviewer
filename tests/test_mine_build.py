@@ -56,7 +56,7 @@ def test_spotcheck_markdown_roundtrip(tmp_path):
     adj = [_adj(i, "real-bug") for i in range(5)]
     path = str(tmp_path / "spot-check.md")
     mc.write_spot_check(path, mc.spotcheck_rows(adj, cands, seed=0, frac=0.4))
-    overrides, agreed, agreement = mc.read_spot_check(path)
+    overrides, notes, agreed, agreement = mc.read_spot_check(path)
     assert agreement is None  # unfilled
     text = open(path).read()
     assert "\\|" in text  # the pipe in evidence is escaped
@@ -71,7 +71,7 @@ def test_spotcheck_markdown_roundtrip(tmp_path):
             ln = "| " + " | ".join(cells) + " |"
         filled.append(ln)
     open(path, "w").write("\n".join(filled) + "\n")
-    overrides, agreed, agreement = mc.read_spot_check(path)
+    overrides, notes, agreed, agreement = mc.read_spot_check(path)
     assert agreement == 0.5
     assert list(overrides.values()) == ["false-positive"] and len(agreed) == 1
 
@@ -83,7 +83,7 @@ def _fake_verify_ok(repo, sha, pr, file, line, substring):
 def test_build_rows_pairs_pre_and_final():
     cands = {c["id"]: c for c in [_cand(1), _cand(2, disp="not-applied")]}
     adj = [_adj(1, "real-bug"), _adj(2, "false-positive")]
-    out, warnings = mc.build_rows(cands, adj, {}, set(), [], _fake_verify_ok)
+    out, warnings = mc.build_rows(cands, adj, {}, {}, set(), [], _fake_verify_ok)
     prs, issues, dismissed = out["public"]
     kinds = {r["sample_id"]: r["kind"] for r in prs}
     assert kinds == {"o/r#1@pre": "positive", "o/r#1@final": "clean"}
@@ -97,7 +97,7 @@ def test_build_rows_pairs_pre_and_final():
 
 def test_build_rows_no_real_bug_gives_single_clean_pre():
     cands = {c["id"]: c for c in [_cand(2, disp="not-applied")]}
-    out, _ = mc.build_rows(cands, [_adj(2, "false-positive")], {}, set(), [], _fake_verify_ok)
+    out, _ = mc.build_rows(cands, [_adj(2, "false-positive")], {}, {}, set(), [], _fake_verify_ok)
     prs, issues, dismissed = out["public"]
     assert [(r["sample_id"], r["kind"]) for r in prs] == [("o/r#1@pre", "clean")]
     assert issues == [] and len(dismissed) == 1
@@ -107,7 +107,7 @@ def test_build_rows_unfixed_bug_drops_final_and_overrides_apply():
     cands = {c["id"]: c for c in [_cand(1), _cand(3)]}
     adj = [_adj(1, "real-bug", fixed_at_final=False), _adj(3, "real-bug")]
     overrides = {"o/r#1:T3": "false-positive"}
-    out, _ = mc.build_rows(cands, adj, overrides, {"o/r#1:T1"}, [], _fake_verify_ok)
+    out, _ = mc.build_rows(cands, adj, overrides, {}, {"o/r#1:T1"}, [], _fake_verify_ok)
     prs, issues, dismissed = out["public"]
     assert [r["sample_id"] for r in prs] == ["o/r#1@pre"]
     assert issues[0]["spot_checked"] == "y"
@@ -121,7 +121,7 @@ def test_build_rows_drops_rows_that_fail_verification():
 
     def verify(repo, sha, pr, file, line, substring):
         return "lacks x" if line == 14 else None
-    out, warnings = mc.build_rows(cands, adj, {}, set(), [], verify)
+    out, warnings = mc.build_rows(cands, adj, {}, {}, set(), [], verify)
     _, issues, _ = out["public"]
     assert [i["line"] for i in issues] == ["11"]
     assert len(warnings) == 1 and "lacks x" in warnings[0]
@@ -132,7 +132,7 @@ def test_build_rows_private_repo_goes_local_and_promotions_apply():
     adj = [_adj(1, "real-bug", repo="o/p")]
     promo = [{"sample_id": "o/p#1@final", "file": "b.py", "line": 5, "verify_substring": "y",
               "severity_class": "minor", "category": "bug-risk", "evidence": "missed"}]
-    out, _ = mc.build_rows(cands, adj, {}, set(), promo, _fake_verify_ok,
+    out, _ = mc.build_rows(cands, adj, {}, {}, set(), promo, _fake_verify_ok,
                            private={"o/p"})
     assert out["public"] == ([], [], [])
     prs, issues, _ = out["private"]
@@ -145,9 +145,9 @@ def test_build_rows_rejects_bad_adjudication():
     cands = {c["id"]: c for c in [_cand(1)]}
     with pytest.raises(cl.CorpusError, match="dismissal_reason"):
         mc.build_rows(cands, [_adj(1, "false-positive", dismissal_reason=None)], {},
-                      set(), [], _fake_verify_ok)
+                      {}, set(), [], _fake_verify_ok)
     with pytest.raises(cl.CorpusError, match="unknown candidate"):
-        mc.build_rows(cands, [_adj(7, "real-bug")], {}, set(), [], _fake_verify_ok)
+        mc.build_rows(cands, [_adj(7, "real-bug")], {}, {}, set(), [], _fake_verify_ok)
 
 
 def test_build_cli_enforces_spot_check_gate(tmp_path):

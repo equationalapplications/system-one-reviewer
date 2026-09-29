@@ -28,11 +28,14 @@ and per-repo thread anchors from `gh api graphql`.
 | ↳ `kind=positive`      |        16 |                  3 |    19 |
 | ↳ `split=train`        |        23 |                  9 |    32 |
 | ↳ `split=holdout`      |        13 |                  2 |    15 |
-| Issues                 |        47 |                  9 |    56 |
+| Issues                 |        46 |                  9 |    55 |
 | Dismissed              |        16 |                 13 |    29 |
 | Dropped (verify fail)  |          |                   |    18 |
 
-Holdout share over the 47 distinct PRs is 0.32 (gate `[0.25, 0.35]`).
+Holdout share over the committed set's 23 distinct PRs is 8/23 = 0.35
+(gate `[0.25, 0.35]`; `check_holdout_share` computes over distinct
+`(repo, pr)` pairs). The private repos add 11 samples; combined holdout
+accounting lives with the private build.
 Private repos: `equationalapplications/axon`,
 `equationalapplications/equationalapplications.com` — written to the
 gitignored `corpus/local/`.
@@ -56,24 +59,27 @@ gitignored `corpus/local/`.
 | severity_class | issues | dismissed |
 |----------------|-------:|----------:|
 | blocker        |      1 |         0 |
-| major          |     17 |         2 |
-| minor          |     38 |        27 |
+| major          |     11 |         2 |
+| minor          |     35 |        27 |
 
 | category       | issues |
 |----------------|-------:|
-| bug-risk       |     35 |
+| bug-risk       |     28 |
 | maintainability|      8 |
-| security       |      7 |
-| test           |      6 |
+| security       |      5 |
+| test           |      5 |
 
-| dismissal_reason | count |
-|------------------|------:|
-| false-positive   |    20 |
-| style            |     9 |
+| dismissal label | count |
+|----------------|------:|
+| false-positive |    10 |
+| style          |     6 |
+
+(`dismissal_reason` breakdown across the 16: 9 hallucinated,
+3 missing-context, 3 style-nit, 1 change-reaction.)
 
 ### Adjudication and spot-check
 
-- All 85 rows were auto-adjudicated; the spot-check sampled 21 random rows
+- All 84 rows were auto-adjudicated; the spot-check sampled 21 random rows
   plus every disposition-vs-label disagreement for human verification
   against the cached repo clones.
 - Agreement on the 21 random rows: **19/21 = 90.5%** (gate ≥85%). 3 rows in

@@ -61,6 +61,10 @@ query($owner: String!, $name: String!, $cursor: String) {
 RETRYABLE = re.compile(r"\b(429|500|502|503|504)\b|timeout|timed out|connection reset",
                        re.I)
 RETRY_DELAYS = (2, 5, 15, 40)
+# `fetch` re-mines a cached repo while its cache holds errored candidates —
+# but only this many times: some candidate errors are permanent (the pinned
+# commit was force-pushed away), and endless retries would undo resumability.
+ERROR_RETRY_LIMIT = 2
 
 
 def gh_graphql(query, _sleep=None, **variables):
@@ -87,7 +91,12 @@ def gh_graphql(query, _sleep=None, **variables):
             sleep(RETRY_DELAYS[attempt - 1])
         r = subprocess.run(args, capture_output=True, text=True)
         if r.returncode == 0:
-            payload = json.loads(r.stdout)
+            try:
+                payload = json.loads(r.stdout)
+            except json.JSONDecodeError:
+                # e.g. a truncated body after a 200; treat as transient-shaped
+                # so the existing retry/backoff path applies.
+                payload = {"errors": [{"message": "malformed JSON from gh"}]}
             if not payload.get("errors"):
                 return payload
             last = f"graphql errors: {str(payload['errors'])[:500]}"
@@ -254,18 +263,28 @@ def cmd_fetch(args):
                 print(f"mine: {repo}: cache limit {cached_limit} < requested "
                       f"{args.limit} — re-mining", file=sys.stderr)
                 cands = None
-            elif any(c.get("error") for c in cands):
-                # Error-bearing candidates are dropped from sampling, so a
-                # cache holding them is incomplete — re-mine to retry them.
+            else:
                 n_err = sum(1 for c in cands if c.get("error"))
-                print(f"mine: {repo}: cache has {n_err} errored candidate(s) "
-                      "— re-mining", file=sys.stderr)
-                cands = None
+                attempts = scope.get("error_attempts", 0)
+                if n_err and attempts < ERROR_RETRY_LIMIT:
+                    # Error-bearing candidates are dropped from sampling, so a
+                    # cache holding them is incomplete — retry them, but only
+                    # ERROR_RETRY_LIMIT times: some errors are permanent (a
+                    # force-pushed-away commit), and re-mining those forever
+                    # would undo fetch's resumability.
+                    print(f"mine: {repo}: {n_err} errored candidate(s), attempt "
+                          f"{attempts + 1}/{ERROR_RETRY_LIMIT} — re-mining",
+                          file=sys.stderr)
+                    cands = None
         if cands is not None and not args.force:
             print(f"mine: {repo}: {len(cands)} candidates (cached)")
         else:
+            prev = cl.read_meta(cached) if os.path.exists(cached) else {}
             cands, totals = mine_repo(repo, args.limit)
-            cl.write_jsonl(cached, cands, meta={"limit": args.limit})
+            n_err = sum(1 for c in cands if c.get("error"))
+            attempts = (prev.get("error_attempts", 0) + 1) if n_err else 0
+            cl.write_jsonl(cached, cands,
+                           meta={"limit": args.limit, "error_attempts": attempts})
             print(f"mine: {repo}: {len(cands)} candidates from {totals}")
         all_cands += cands
     cl.write_jsonl(os.path.join(args.corpus, "work", "candidates.jsonl"), all_cands)
@@ -355,23 +374,22 @@ def sample_candidates(candidates, target, seed=0):
     if unused > 0:
         # Whole-PR granularity overshoots some quotas and small repos run
         # dry (a repo under quota is always an exhausted repo — the other
-        # loop exit is n >= quota). Hand the unused quota to repos that
-        # still have undrawn PRs; they may exceed their pass-1 quota by
-        # the split, drawing whole PRs only.
-        absorb = [r for r in sorted(per_repo) if len(per_repo[r]) > len(drawn[r])]
-        quotas2 = repo_quotas(absorb, unused)
-        for repo in absorb:
-            n = used[repo]
-            cap = n + quotas2[repo]
+        # loop exit is n >= quota). Greedily fill the gap with whole PRs
+        # from repos that still have undrawn ones, in per-repo seed order
+        # and within a repo in its shuffled order; never exceeds target
+        # (a PR that would overshoot is skipped in favor of later ones).
+        for repo in sorted(per_repo):
+            if unused <= 0:
+                break
             for k in shuffled[repo]:
+                if unused <= 0:
+                    break
                 if k in drawn[repo]:
                     continue
-                # Draw only if the whole PR still fits the repo's pass-2
-                # budget: caps the total at `target` despite PR granularity.
-                if n + len(by_pr[k]) > cap:
+                if len(by_pr[k]) > unused:
                     continue
                 out += by_pr[k]
-                n += len(by_pr[k])
+                unused -= len(by_pr[k])
     return sorted(out, key=lambda c: c["id"])
 
 
@@ -459,8 +477,13 @@ def write_spot_check(path, rows):
 
 
 def read_spot_check(path):
-    """(overrides id->label, agreed ids, agreement over random rows | None if unfilled)."""
-    overrides, agreed = {}, set()
+    """(overrides id->label, human notes, agreed ids, agreement | None if unfilled).
+
+    `notes` carries the human rationale from overridden rows so the build can
+    replace the auto-judge's evidence (which argues for the ORIGINAL label)
+    with the human's reasoning on exactly the rows a human corrected.
+    """
+    overrides, notes, agreed = {}, {}, set()
     n_random = n_agree = 0
     unfilled = False
     with open(path) as f:
@@ -484,25 +507,30 @@ def read_spot_check(path):
                 if row["correct_label"] not in cl.LABELS:
                     raise cl.CorpusError(f"bad correct_label {row['correct_label']!r}")
                 overrides[row["candidate_id"]] = row["correct_label"]
+                if row["note"]:
+                    notes[row["candidate_id"]] = row["note"]
             else:
                 overrides[row["candidate_id"]] = "unclear"
+                if row["note"]:
+                    notes[row["candidate_id"]] = row["note"]
     if unfilled or n_random == 0:
-        return overrides, agreed, None
-    return overrides, agreed, n_agree / n_random
+        return overrides, notes, agreed, None
+    return overrides, notes, agreed, n_agree / n_random
 
 
 # ---------- build ----------
 
-def _issue_row(sid, a, fix_sha, adjudicator, spot_checked):
+def _issue_row(sid, a, fix_sha, adjudicator, spot_checked, note=None):
     return {"sample_id": sid, "file": a["file"], "line": str(a["line"]),
             "verify_substring": a["verify_substring"],
             "severity_class": a.get("severity_class") or "minor",
-            "category": a.get("category") or "", "evidence": _esc(a.get("evidence") or ""),
+            "category": a.get("category") or "",
+            "evidence": _esc(note or a.get("evidence") or ""),
             "fix_sha": fix_sha or "", "adjudicator": adjudicator,
             "spot_checked": spot_checked}
 
 
-def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
+def build_rows(candidates, adjudicated, overrides, notes, agreed, promotions, verify,
                private=frozenset()):
     """Adjudications -> {"public"|"private": (prs, issues, dismissed)}, warnings.
 
@@ -545,6 +573,25 @@ def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
         pre_sid = cl.sample_id(repo, pr, "pre")
         source = "fix-pr" if any(c["disposition_source"] == "fix-pr"
                                  for c, _, _ in rows) else "thread-fix"
+        # Two thread comments can anchor the same (file, line). The scorer
+        # pairs each golden issue with at most one reported finding, so
+        # duplicate golden rows would cap recall at 50% and reward
+        # double-reporting. Keep one row per anchor, preferring the
+        # human-adjudicated one (its label won the override).
+        seen_anchor: dict[tuple, tuple] = {}
+        deduped: list[tuple] = []
+        for row_t in rows:
+            c, a, label = row_t
+            key = (a["file"], int(a["line"]), label)
+            prev = seen_anchor.get(key)
+            if prev is not None and not (c["id"] in overrides
+                                         and prev[0]["id"] not in overrides):
+                continue  # duplicate anchor: keep the human row only
+            if prev is not None:
+                deduped.remove(prev)
+            seen_anchor[key] = row_t
+            deduped.append(row_t)
+        rows = deduped
         verified_real_bug_rows = []
         for c, a, label in rows:
             err = verify(repo, pre_head, pr, a["file"], int(a["line"]), a["verify_substring"])
@@ -555,7 +602,7 @@ def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
             human = cid in overrides
             checked = "y" if (human or cid in agreed) else "n"
             row = _issue_row(pre_sid, a, c.get("fix_sha"), "human" if human else "claude",
-                             checked)
+                             checked, notes.get(cid))
             if label == "real-bug":
                 issues.append(row)
                 verified_real_bug_rows.append((c, a, label))
@@ -615,7 +662,7 @@ def cmd_build(args, verify=_verify_via_cache):
     sheet = os.path.join(work, "spot-check.md")
     if not os.path.exists(sheet):
         raise cl.CorpusError("no spot-check.md — run `spotcheck` and fill it in first")
-    overrides, agreed, agreement = read_spot_check(sheet)
+    overrides, notes, agreed, agreement = read_spot_check(sheet)
     if agreement is None:
         raise cl.CorpusError("spot-check.md is not fully filled in")
     if agreement < GATE:
@@ -624,7 +671,7 @@ def cmd_build(args, verify=_verify_via_cache):
     cands = {c["id"]: c for c in cl.read_jsonl(os.path.join(work, "candidates.jsonl"))}
     adj = cl.read_jsonl(os.path.join(work, "adjudicated.jsonl"))
     promos = cl.read_jsonl(os.path.join(work, "promotions.jsonl"))
-    out, warnings = build_rows(cands, adj, overrides, agreed, promos, verify,
+    out, warnings = build_rows(cands, adj, overrides, notes, agreed, promos, verify,
                                private=set(args.private or ()))
     for w in warnings:
         print(f"build: warning: {w}", file=sys.stderr)
