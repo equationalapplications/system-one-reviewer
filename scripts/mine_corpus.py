@@ -21,6 +21,7 @@ import random
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import corpus_lib as cl  # noqa: E402
@@ -57,19 +58,41 @@ query($owner: String!, $name: String!, $cursor: String) {
 """
 
 
-def gh_graphql(query, **variables):
-    """The only network call in this module (tests monkeypatch it)."""
+RETRYABLE = re.compile(r"\b(429|500|502|503|504)\b|timeout|timed out|connection reset",
+                       re.I)
+RETRY_DELAYS = (2, 5, 15, 40)
+
+
+def gh_graphql(query, _sleep=None, **variables):
+    """The only network call in this module (tests monkeypatch it).
+
+    GitHub answers heavy paginated queries with 5xx/504 often enough that a
+    single transient failure must not abort a multi-repo mine, so retryable
+    errors are re-issued with backoff before giving up. `_sleep` is a test seam.
+    """
+    sleep = _sleep or time.sleep
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
     for k, v in variables.items():
         if v is not None:
             args += ["-f", f"{k}={v}"]
-    r = subprocess.run(args, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise cl.CorpusError(f"gh api graphql failed: {r.stderr.strip()[:500]}")
-    payload = json.loads(r.stdout)
-    if payload.get("errors"):
-        raise cl.CorpusError(f"graphql errors: {str(payload['errors'])[:500]}")
-    return payload
+    last = ""
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        if attempt:
+            sleep(RETRY_DELAYS[attempt - 1])
+        r = subprocess.run(args, capture_output=True, text=True)
+        if r.returncode == 0:
+            payload = json.loads(r.stdout)
+            if not payload.get("errors"):
+                return payload
+            last = f"graphql errors: {str(payload['errors'])[:500]}"
+        else:
+            last = f"gh api graphql failed: {r.stderr.strip()[:500]}"
+        if not RETRYABLE.search(last):
+            break
+        if attempt < len(RETRY_DELAYS):
+            print(f"  graphql retry {attempt + 1}/{len(RETRY_DELAYS)}: {last[:120]}",
+                  file=sys.stderr)
+    raise cl.CorpusError(last)
 
 
 def fetch_prs(repo, limit):
@@ -205,10 +228,18 @@ def mine_repo(repo, limit, url=None):
 
 
 def cmd_fetch(args):
+    per_repo = os.path.join(args.corpus, "work", "candidates")
+    os.makedirs(per_repo, exist_ok=True)
     all_cands = []
     for repo in args.repo:
-        cands, totals = mine_repo(repo, args.limit)
-        print(f"mine: {repo}: {len(cands)} candidates from {totals}")
+        cached = os.path.join(per_repo, repo.replace("/", "__") + ".jsonl")
+        if os.path.exists(cached) and not args.force:
+            cands = cl.read_jsonl(cached)
+            print(f"mine: {repo}: {len(cands)} candidates (cached)")
+        else:
+            cands, totals = mine_repo(repo, args.limit)
+            cl.write_jsonl(cached, cands)
+            print(f"mine: {repo}: {len(cands)} candidates from {totals}")
         all_cands += cands
     cl.write_jsonl(os.path.join(args.corpus, "work", "candidates.jsonl"), all_cands)
     return 0
@@ -467,6 +498,8 @@ def main(argv=None):
     f = sub.add_parser("fetch")
     f.add_argument("--repo", action="append", required=True)
     f.add_argument("--limit", type=int, default=None, help="max merged PRs per repo")
+    f.add_argument("--force", action="store_true",
+                   help="re-mine repos that already have a cached candidates file")
     f.add_argument("--corpus", default=DEFAULT_CORPUS)
     s = sub.add_parser("spotcheck")
     s.add_argument("--corpus", default=DEFAULT_CORPUS)

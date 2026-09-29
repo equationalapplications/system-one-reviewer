@@ -8,6 +8,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import corpus_lib as cl  # noqa: E402
@@ -126,3 +128,71 @@ def test_fetch_writes_candidates(tmp_path, monkeypatch):
     (c,) = cl.read_jsonl(str(corpus / "work" / "candidates.jsonl"))
     assert (c["disposition"], c["disposition_source"], c["fix_sha"]) == \
         ("fixed", "thread-fix", "e" * 40)
+
+
+def test_fetch_resumes_cached_repos(tmp_path, monkeypatch):
+    """A repo mined earlier is not re-queried; a failing later repo keeps the first."""
+    calls = []
+
+    def fake_mine(repo, limit):
+        calls.append(repo)
+        if repo == "o/boom":
+            raise cl.CorpusError("gh api graphql failed: HTTP 504")
+        cands, _ = mc.candidates_from_pr(repo, _pr(7, [_thread("T1", "a.py", 3)]))
+        return cands, {"prs": 1}
+
+    monkeypatch.setattr(mc, "mine_repo", fake_mine)
+    corpus = tmp_path / "corpus"
+    argv = ["fetch", "--repo", "o/ok", "--repo", "o/boom", "--corpus", str(corpus)]
+    assert mc.main(argv) == 1
+    assert calls == ["o/ok", "o/boom"]
+    # The successful repo survives the failure in its per-repo cache.
+    assert len(cl.read_jsonl(str(corpus / "work" / "candidates" / "o__ok.jsonl"))) == 1
+    assert not os.path.exists(str(corpus / "work" / "candidates.jsonl"))
+
+    # Re-running skips the cached repo and retries only the failed one.
+    calls.clear()
+    assert mc.main(argv) == 1
+    assert calls == ["o/boom"]
+
+
+def test_fetch_force_remines(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(mc, "mine_repo", lambda repo, limit: (
+        calls.append(repo), ([], {"prs": 0}))[1])
+    corpus = tmp_path / "corpus"
+    argv = ["fetch", "--repo", "o/r", "--corpus", str(corpus)]
+    mc.main(argv)
+    mc.main(argv)
+    assert calls == ["o/r"]
+    mc.main(argv + ["--force"])
+    assert calls == ["o/r", "o/r"]
+
+
+def test_graphql_retries_transient_then_succeeds(monkeypatch):
+    outs = [subprocess.CompletedProcess([], 1, "", "gh: HTTP 504"),
+            subprocess.CompletedProcess([], 0, '{"data": {"ok": 1}}', "")]
+    slept = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **k: outs.pop(0))
+    assert mc.gh_graphql("Q", owner="o", _sleep=slept.append) == {"data": {"ok": 1}}
+    assert slept == [2]
+
+
+def test_graphql_does_not_retry_permanent_error(monkeypatch):
+    outs = [subprocess.CompletedProcess([], 1, "", "gh: could not resolve to a Repository")]
+    slept = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **k: outs.pop(0))
+    with pytest.raises(cl.CorpusError, match="could not resolve"):
+        mc.gh_graphql("Q", owner="o", _sleep=slept.append)
+    assert slept == []
+
+
+def test_graphql_gives_up_after_retries(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        mc.subprocess, "run",
+        lambda *a, **k: (calls.append(1),
+                          subprocess.CompletedProcess([], 1, "", "HTTP 504"))[1])
+    with pytest.raises(cl.CorpusError, match="504"):
+        mc.gh_graphql("Q", owner="o", _sleep=lambda d: None)
+    assert len(calls) == len(mc.RETRY_DELAYS) + 1
