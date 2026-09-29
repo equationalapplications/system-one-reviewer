@@ -73,10 +73,12 @@ gitignored `corpus/local/`.
 
 ### Adjudication and spot-check
 
-- All 85 rows were auto-adjudicated; the spot-check (21 random rows) was
-  human-verified against the cached repo clones.
-- Agreement on random rows: **19/21 = 90.5%** (gate ≥85%).
-- 3 disagreement rows were re-adjudicated by a human before the build
+- All 85 rows were auto-adjudicated; the spot-check sampled 21 random rows
+  plus every disposition-vs-label disagreement for human verification
+  against the cached repo clones.
+- Agreement on the 21 random rows: **19/21 = 90.5%** (gate ≥85%). The other
+  2 random-sample rows disagreed, and 1 further disagreement came from the
+  disposition-vs-label scan — 3 re-adjudicated rows in total
   (curated-journal#27, curated-thoughts#73,
   equationalapplications.com#35); the spot-check sheet records the
   correct labels and rationales.
@@ -85,8 +87,8 @@ gitignored `corpus/local/`.
 
 18 rows were dropped at verify time because the anchored line fell
 outside the cited file at the pinned SHA — files shrank, lines moved, or
-the cited substring wasn't present at the head. The build logs the
-specific `(repo, file, line, reason)` for each. Rebuild against current
+the cited substring wasn't present at the head. The build logs a
+candidate ID and verifier error for each. Rebuild against current
 heads to recover rows whose fix was already merged (e.g.
 `system-one-reviewer#7` PRRT_kwDOUusgms6m539R is fixed at the head SHA
 this build ran against but anchored at the pre-fix commit).

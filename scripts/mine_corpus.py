@@ -69,6 +69,12 @@ def gh_graphql(query, _sleep=None, **variables):
     GitHub answers heavy paginated queries with 5xx/504 often enough that a
     single transient failure must not abort a multi-repo mine, so retryable
     errors are re-issued with backoff before giving up. `_sleep` is a test seam.
+
+    Classification is text-based and can be wrong in both directions: `gh`
+    exposes no structured HTTP status here, only returncode + stderr, so an
+    error whose text happens to contain e.g. "500" retries needlessly and an
+    unmatched transient failure stops immediately. Acceptable for an offline,
+    rerunnable mining script — a wrong skip just re-runs.
     """
     sleep = _sleep or time.sleep
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
@@ -233,12 +239,31 @@ def cmd_fetch(args):
     all_cands = []
     for repo in args.repo:
         cached = os.path.join(per_repo, repo.replace("/", "__") + ".jsonl")
-        if os.path.exists(cached) and not args.force:
-            cands = cl.read_jsonl(cached)
+        cands = cl.read_jsonl(cached) if os.path.exists(cached) else None
+        if cands and not args.force:
+            scope = cl.read_meta(cached)
+            cached_limit = scope.get("limit")
+            fresh = (args.limit is None and cached_limit is None) or \
+                    (args.limit is not None and cached_limit is not None
+                     and args.limit <= cached_limit)
+            if not fresh:
+                # Cache was mined with a narrower --limit than now requested:
+                # re-mine so the broader scope can't silently omit PRs.
+                print(f"mine: {repo}: cache limit {cached_limit} < requested "
+                      f"{args.limit} — re-mining", file=sys.stderr)
+                cands = None
+            elif any(c.get("error") for c in cands):
+                # Error-bearing candidates are dropped from sampling, so a
+                # cache holding them is incomplete — re-mine to retry them.
+                n_err = sum(1 for c in cands if c.get("error"))
+                print(f"mine: {repo}: cache has {n_err} errored candidate(s) "
+                      "— re-mining", file=sys.stderr)
+                cands = None
+        if cands is not None and not args.force:
             print(f"mine: {repo}: {len(cands)} candidates (cached)")
         else:
             cands, totals = mine_repo(repo, args.limit)
-            cl.write_jsonl(cached, cands)
+            cl.write_jsonl(cached, cands, meta={"limit": args.limit})
             print(f"mine: {repo}: {len(cands)} candidates from {totals}")
         all_cands += cands
     cl.write_jsonl(os.path.join(args.corpus, "work", "candidates.jsonl"), all_cands)
@@ -249,12 +274,22 @@ def cmd_fetch(args):
 
 
 def group_by_pr(candidates):
-    """{(repo, pr): [candidates]}, errored rows dropped, PR keys sorted."""
+    """{(repo, pr): [candidates]}, PR keys sorted.
+
+    PR-atomic sampling means a partially-mined PR is a biased sample — the
+    missing candidate is often the interesting one — so a PR with ANY errored
+    candidate is excluded whole. Errored rows stay in candidates.jsonl for
+    retry (re-running `fetch` re-mines repos whose cache holds errors).
+    """
+    errored = {(c["repo"], c["pr"]) for c in candidates if c.get("error")}
     by_pr: dict[tuple, list] = {}
     for c in candidates:
         if c.get("error"):
             continue
-        by_pr.setdefault((c["repo"], c["pr"]), []).append(c)
+        key = (c["repo"], c["pr"])
+        if key in errored:
+            continue
+        by_pr.setdefault(key, []).append(c)
     return {k: by_pr[k] for k in sorted(by_pr)}
 
 
@@ -275,6 +310,10 @@ def sample_candidates(candidates, target, seed=0):
     over half of it), so a uniform draw collapses onto a handful of large PRs
     and learns nothing about the other repos. Each repo is shuffled under its
     own seed, so adding or removing a repo does not reshuffle the others.
+    Unused quota flows back: repos that fall short of their quota (too few
+    PRs, or the one-PR-per-draw granularity) hand the remainder to a second
+    pass over the still-under-quota repos, so `target` is approximated even
+    when one repo cannot fill its share.
     """
     by_pr = group_by_pr(candidates)
     per_repo: dict[str, list] = {}
@@ -282,17 +321,47 @@ def sample_candidates(candidates, target, seed=0):
         per_repo.setdefault(repo, [])
     for repo in per_repo:
         per_repo[repo] = [k for k in by_pr if k[0] == repo]
+
+    # Two-pass draw. Pass 1 gives each repo its even share. Pass 2 redistributes
+    # unused quota (a whole PR can overshoot a quota; a small repo runs dry) to
+    # repos that can still take whole PRs, so `target` is approximated even
+    # when one repo cannot fill its share. Each repo is shuffled under its own
+    # seed, so adding or removing a repo does not reshuffle the others.
+    quotas = repo_quotas(sorted(per_repo), target)
     out = []
-    for repo, quota in repo_quotas(per_repo, target).items():
+    used: dict[str, int] = {}
+    shuffled: dict[str, list] = {}
+    drawn: dict[str, set] = {}
+    for repo, quota in quotas.items():
         rng = random.Random(f"{seed}:{repo}")
         keys = list(per_repo[repo])
         rng.shuffle(keys)
+        shuffled[repo] = keys
         n = 0
+        taken: set = set()
         for k in keys:
             if n >= quota:
                 break
             out += by_pr[k]
             n += len(by_pr[k])
+            taken.add(k)
+        used[repo] = n
+        drawn[repo] = taken
+    unused = target - sum(used.values())
+    if unused > 0:
+        # Only repos still under their pass-1 quota can absorb extra PRs
+        # without re-skewing the draw; give them the unused quota split.
+        shortfall = [r for r in sorted(per_repo) if used[r] < quotas[r]]
+        quotas2 = repo_quotas(shortfall, unused)
+        for repo in shortfall:
+            n = used[repo]
+            for k in shuffled[repo]:
+                if n >= quotas[repo] + quotas2[repo]:
+                    break
+                if k in drawn[repo]:
+                    continue
+                out += by_pr[k]
+                n += len(by_pr[k])
     return sorted(out, key=lambda c: c["id"])
 
 
