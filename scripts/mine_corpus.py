@@ -66,7 +66,10 @@ def gh_graphql(query, **variables):
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
         raise cl.CorpusError(f"gh api graphql failed: {r.stderr.strip()[:500]}")
-    return json.loads(r.stdout)
+    payload = json.loads(r.stdout)
+    if payload.get("errors"):
+        raise cl.CorpusError(f"graphql errors: {str(payload['errors'])[:500]}")
+    return payload
 
 
 def fetch_prs(repo, limit):
@@ -82,7 +85,10 @@ def fetch_prs(repo, limit):
             yield node
         if not conn["pageInfo"]["hasNextPage"]:
             return
-        cursor = conn["pageInfo"]["endCursor"]
+        nxt = conn["pageInfo"]["endCursor"]
+        if not nxt or nxt == cursor:
+            raise cl.CorpusError(f"{repo}: pagination cursor did not advance")
+        cursor = nxt
 
 
 # ---------- dispositions ----------
@@ -221,7 +227,8 @@ def is_disagreement(disposition, label):
 
 
 def spotcheck_rows(adjudicated, candidates, seed=0, frac=0.2):
-    rows = sorted(adjudicated, key=lambda a: a["candidate_id"])
+    rows = [a for a in sorted(adjudicated, key=lambda a: a["candidate_id"])
+            if not candidates[a["candidate_id"]].get("error")]
     k = max(1, round(len(rows) * frac)) if rows else 0
     random_ids = {a["candidate_id"] for a in random.Random(seed).sample(rows, k)}
     out = []
@@ -322,6 +329,8 @@ def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
         cid = a["candidate_id"]
         if cid not in candidates:
             raise cl.CorpusError(f"adjudication for unknown candidate {cid}")
+        if candidates[cid].get("error"):
+            continue  # retain in candidates.jsonl for retry; drop from corpus output
         label = overrides.get(cid, a["label"])
         if label not in cl.LABELS:
             raise cl.CorpusError(f"{cid}: bad label {label!r}")
@@ -352,9 +361,7 @@ def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
         pre_sid = cl.sample_id(repo, pr, "pre")
         source = "fix-pr" if any(c["disposition_source"] == "fix-pr"
                                  for c, _, _ in rows) else "thread-fix"
-        prs.append({"sample_id": pre_sid, "repo": repo, "base_sha": c0["base_ref_oid"],
-                    "head_sha": pre_head, "kind": "positive" if bugs else "clean",
-                    "split": split, "source": source})
+        verified_real_bug_rows = []
         for c, a, label in rows:
             err = verify(repo, pre_head, pr, a["file"], int(a["line"]), a["verify_substring"])
             if err:
@@ -367,31 +374,45 @@ def build_rows(candidates, adjudicated, overrides, agreed, promotions, verify,
                              checked)
             if label == "real-bug":
                 issues.append(row)
+                verified_real_bug_rows.append((c, a, label))
             else:
                 row["label"] = label
                 row["dismissal_reason"] = ("other" if human and not a.get("dismissal_reason")
                                            else a.get("dismissal_reason") or "other")
                 dismissed.append(row)
-        if bugs and all(a.get("fixed_at_final") is True for _, a, _ in bugs):
+        if issues or dismissed:
+            prs.append({"sample_id": pre_sid, "repo": repo, "base_sha": c0["base_ref_oid"],
+                        "head_sha": pre_head,
+                        "kind": "positive" if verified_real_bug_rows else "clean",
+                        "split": split, "source": source})
+        if verified_real_bug_rows and all(
+                a.get("fixed_at_final") is True for _, a, _ in verified_real_bug_rows):
             fin_sid = cl.sample_id(repo, pr, "final")
             promos = promo_by_sid.get(fin_sid, [])
-            prs.append({"sample_id": fin_sid, "repo": repo, "base_sha": c0["base_ref_oid"],
-                        "head_sha": c0["head_ref_oid"],
-                        "kind": "positive" if promos else "clean", "split": split,
-                        "source": "promoted" if promos else source})
+            verified_promos = []
             for p in promos:
                 err = verify(repo, c0["head_ref_oid"], pr, p["file"], int(p["line"]),
                              p["verify_substring"])
                 if err:
                     warnings.append(f"{fin_sid} promotion {p['file']}:{p['line']}: {err}")
                     continue
+                verified_promos.append(p)
                 issues.append(_issue_row(fin_sid, p, "", "claude", "n"))
+            if not promos or verified_promos:
+                prs.append({"sample_id": fin_sid, "repo": repo, "base_sha": c0["base_ref_oid"],
+                            "head_sha": c0["head_ref_oid"],
+                            "kind": "positive" if verified_promos else "clean",
+                            "split": split,
+                            "source": "promoted" if verified_promos else source})
     return out, warnings
 
 
 def _verify_via_cache(repo, sha, pr, file, line, substring):
-    d = cl.ensure_clone(repo)
-    cl.ensure_commit(d, sha, pr)
+    try:
+        d = cl.ensure_clone(repo)
+        cl.ensure_commit(d, sha, pr)
+    except cl.CorpusError as e:
+        return str(e)
     return cl.verify_row(d, sha, file, line, substring)
 
 

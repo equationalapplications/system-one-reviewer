@@ -70,10 +70,12 @@ def run_all(specs, tool, corpus_dir, config, force=False, prepare=prepare_checko
             runner=subprocess.run):
     env = dict(os.environ)
     env["JEV_REVIEW_METRICS"] = ledger_path(corpus_dir, config)
+    ledger_labels = {r.get("label") for r in cl.read_jsonl(env["JEV_REVIEW_METRICS"])}
     os.makedirs(run_dir(corpus_dir, config), exist_ok=True)
     failed = []
     for i, spec in enumerate(specs, 1):
-        if os.path.exists(spec["out"]) and not force:
+        if (os.path.exists(spec["out"]) and spec["label"] in ledger_labels
+                and not force):
             continue
         os.makedirs(os.path.dirname(spec["out"]), exist_ok=True)
         r = runner(build_cmd(tool, prepare(spec), spec), env=env,
