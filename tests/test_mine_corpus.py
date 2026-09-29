@@ -4,9 +4,12 @@ gh is never called: gh_graphql is monkeypatched with canned responses shaped
 like the live query (Task 3 Step 1). Git checks run against temp repos.
 """
 
+import collections
 import os
 import subprocess
 import sys
+
+import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
@@ -126,3 +129,239 @@ def test_fetch_writes_candidates(tmp_path, monkeypatch):
     (c,) = cl.read_jsonl(str(corpus / "work" / "candidates.jsonl"))
     assert (c["disposition"], c["disposition_source"], c["fix_sha"]) == \
         ("fixed", "thread-fix", "e" * 40)
+
+
+def test_fetch_resumes_cached_repos(tmp_path, monkeypatch):
+    """A repo mined earlier is not re-queried; a failing later repo keeps the first."""
+    calls = []
+
+    def fake_mine(repo, limit):
+        calls.append(repo)
+        if repo == "o/boom":
+            raise cl.CorpusError("gh api graphql failed: HTTP 504")
+        cands, _ = mc.candidates_from_pr(repo, _pr(7, [_thread("T1", "a.py", 3)]))
+        return cands, {"prs": 1}
+
+    monkeypatch.setattr(mc, "mine_repo", fake_mine)
+    corpus = tmp_path / "corpus"
+    argv = ["fetch", "--repo", "o/ok", "--repo", "o/boom", "--corpus", str(corpus)]
+    assert mc.main(argv) == 1
+    assert calls == ["o/ok", "o/boom"]
+    # The successful repo survives the failure in its per-repo cache.
+    assert len(cl.read_jsonl(str(corpus / "work" / "candidates" / "o__ok.jsonl"))) == 1
+    assert not os.path.exists(str(corpus / "work" / "candidates.jsonl"))
+
+    # Re-running skips the cached repo and retries only the failed one.
+    calls.clear()
+    assert mc.main(argv) == 1
+    assert calls == ["o/boom"]
+
+
+def test_fetch_force_remines(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(mc, "mine_repo", lambda repo, limit: (
+        calls.append(repo), ([], {"prs": 0}))[1])
+    corpus = tmp_path / "corpus"
+    argv = ["fetch", "--repo", "o/r", "--corpus", str(corpus)]
+    mc.main(argv)
+    mc.main(argv)
+    assert calls == ["o/r"]
+    mc.main(argv + ["--force"])
+    assert calls == ["o/r", "o/r"]
+
+
+def test_fetch_retries_errored_cache_but_stops(tmp_path, monkeypatch):
+    """Errored caches re-mine ERROR_RETRY_LIMIT times, then stay cached.
+
+    Run 1: initial mine (error) -> attempts 0. Run 2: error retry 1 ->
+    attempts 1. Run 3: error retry 2 -> attempts 2 (limit). Run 4: limit
+    reached — cache reused with a warning, no re-mine.
+    """
+    calls = []
+
+    def fake_mine(repo, limit):
+        calls.append(1)
+        c, _ = mc.candidates_from_pr(repo, _pr(7, [_thread("T1", "a.py", 3)]))
+        c[0]["error"] = "permanent: commit gone"
+        return c, {"prs": 1}
+
+    monkeypatch.setattr(mc, "mine_repo", fake_mine)
+    corpus = tmp_path / "corpus"
+    argv = ["fetch", "--repo", "o/r", "--corpus", str(corpus)]
+    mc.main(argv)  # initial mine
+    mc.main(argv)  # error retry 1
+    assert len(calls) == 2
+    mc.main(argv)  # error retry 2 — limit now reached
+    assert len(calls) == 3
+    mc.main(argv)  # cached, warning printed
+    assert len(calls) == 3
+
+
+def test_graphql_retries_transient_then_succeeds(monkeypatch):
+    outs = [subprocess.CompletedProcess([], 1, "", "gh: HTTP 504"),
+            subprocess.CompletedProcess([], 0, '{"data": {"ok": 1}}', "")]
+    slept = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **k: outs.pop(0))
+    assert mc.gh_graphql("Q", owner="o", _sleep=slept.append) == {"data": {"ok": 1}}
+    assert slept == [2]
+
+
+def test_graphql_does_not_retry_permanent_error(monkeypatch):
+    outs = [subprocess.CompletedProcess([], 1, "", "gh: could not resolve to a Repository")]
+    slept = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **k: outs.pop(0))
+    with pytest.raises(cl.CorpusError, match="could not resolve"):
+        mc.gh_graphql("Q", owner="o", _sleep=slept.append)
+    assert slept == []
+
+
+def test_graphql_gives_up_after_retries(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        mc.subprocess, "run",
+        lambda *a, **k: (calls.append(1),
+                          subprocess.CompletedProcess([], 1, "", "HTTP 504"))[1])
+    with pytest.raises(cl.CorpusError, match="504"):
+        mc.gh_graphql("Q", owner="o", _sleep=lambda d: None)
+    assert len(calls) == len(mc.RETRY_DELAYS) + 1
+
+
+# ---------- sample ----------
+
+
+def _cand(repo, pr, tid, **kw):
+    c = {"id": f"{repo}#{pr}:{tid}", "repo": repo, "pr": pr, "path": "a.py",
+         "line": 3, "disposition": "fixed", "error": None}
+    c.update(kw)
+    return c
+
+
+def _pool(n_prs, per_pr, repo="o/a"):
+    return [_cand(repo, p, f"T{i}") for p in range(n_prs) for i in range(per_pr)]
+
+
+def test_sample_is_pr_atomic():
+    """Every drawn PR is included whole: no PR is partially labeled."""
+    picked = mc.sample_candidates(_pool(10, 5), target=20)
+    by_pr = collections.defaultdict(list)
+    for c in picked:
+        by_pr[c["pr"]].append(c)
+    assert picked
+    assert all(len(v) == 5 for v in by_pr.values())
+
+
+def test_sample_is_deterministic_and_seed_sensitive():
+    pool = _pool(20, 3)
+    assert mc.sample_candidates(pool, 20, seed=0) == mc.sample_candidates(pool, 20, seed=0)
+    assert mc.sample_candidates(pool, 20, seed=0) != mc.sample_candidates(pool, 20, seed=1)
+
+
+def test_sample_gives_every_repo_a_quota():
+    """A big repo cannot swallow the draw and starve the small ones."""
+    pool = _pool(50, 20, "o/big") + _pool(4, 2, "o/small")
+    picked = mc.sample_candidates(pool, target=30)
+    per_repo = collections.Counter(c["repo"] for c in picked)
+    assert set(per_repo) == {"o/big", "o/small"}
+    assert per_repo["o/small"] == 8  # all 8 findings: the quota floor is one PR
+    assert per_repo["o/big"] <= 30
+
+
+def test_sample_quotas_split_remainder():
+    assert mc.repo_quotas(["a", "b", "c"], 10) == {"a": 4, "b": 3, "c": 3}
+    assert mc.repo_quotas(["a", "b"], 3) == {"a": 2, "b": 1}
+
+
+def test_sample_skips_errored_candidates():
+    pool = _pool(3, 2) + [_cand("o/a", 99, "TX", error="boom")]
+    picked = mc.sample_candidates(pool, target=100)
+    assert all(c["id"] != "o/a#99:TX" for c in picked)
+
+
+def test_sample_excludes_whole_pr_with_any_error():
+    """PR-atomic rule holds for partially-errored PRs: no half-sampled PRs."""
+    pool = _pool(3, 2) + [_cand("o/a", 99, "TX", error="boom"),
+                          _cand("o/a", 99, "TY")]
+    picked = mc.sample_candidates(pool, target=100)
+    assert all(c["pr"] != 99 for c in picked)
+
+
+def test_sample_redistributes_unused_quota():
+    """Small repos that run dry hand their quota back; target is approximated."""
+    # 1 finding-PR vs 50 finding-PRs: the small repo exhausts its quota
+    # immediately, so its unused share must flow to the big one.
+    pool = _pool(50, 1, "o/big") + _pool(1, 1, "o/small")
+    picked = mc.sample_candidates(pool, target=20)
+    by_repo = collections.Counter(c["repo"] for c in picked)
+    assert by_repo["o/small"] == 1
+    assert by_repo["o/big"] == 19
+    assert sum(by_repo.values()) == 20
+
+
+def test_sample_pass2_fills_gap_pass1_cannot():
+    """Pass 2 is load-bearing: without it the draw falls short of target.
+
+    a: 4 PRs x 1 finding, b: 1 PR x 1 finding, target 5.
+    Quotas: a=3 (remainder), b=2. Pass 1: a draws 3 PRs (n=3 >= quota;
+    one undrawn PR remains), b draws its only PR and runs dry at 1 < 2.
+    used = 4 < 5, so unused = 1: only a pass-2 draw of a's last PR
+    (1 finding <= 1) reaches the target. Deleting pass 2 fails this test.
+    """
+    pool = _pool(4, 1, "o/a") + _pool(1, 1, "o/b")
+    picked = mc.sample_candidates(pool, target=5)
+    by_repo = collections.Counter(c["repo"] for c in picked)
+    by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
+    assert len(picked) == 5                     # target reached
+    assert by_repo["o/a"] == 4 and by_repo["o/b"] == 1
+    assert all(v == 1 for v in by_pair.values())  # whole PRs, no duplicates
+
+
+def test_sample_pass2_round_robin_and_overshoot_guard():
+    """Pass 2 spreads leftover budget across repos and skips oversized PRs.
+
+    Verified layout: a:5x1, b:5x1, c:1x1, d:1x1 (1-finding PRs), target 10.
+    Quotas (sorted, remainder to first): a=3, b=3, c=2, d=2. Pass 1:
+    a draws 3 (2 undrawn), b draws 3 (2 undrawn), c draws 1 (dry, 1 under),
+    d draws 1 (dry, 1 under). used = 8, unused = 2 — pass 2 must give ONE
+    PR to a AND one to b (round-robin); alphabetical greedy would stack
+    both on a (a=5, b=3). Assert a=4 and b=4.
+    """
+    pool = _pool(5, 1, "o/a") + _pool(5, 1, "o/b") + \
+        _pool(1, 1, "o/c") + _pool(1, 1, "o/d")
+    picked = mc.sample_candidates(pool, target=10)
+    by_repo = collections.Counter(c["repo"] for c in picked)
+    by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
+    assert len(picked) == 10  # target reached exactly
+    assert by_repo["o/a"] == 4 and by_repo["o/b"] == 4  # one pass-2 PR each
+    assert by_repo["o/c"] == 1 and by_repo["o/d"] == 1
+    assert all(v == 1 for v in by_pair.values())
+
+    # Overshoot guard: leftover budget 1, every undrawn PR has 5 findings —
+    # pass 2 must skip them all rather than exceed the target.
+    pool = _pool(2, 5, "o/a") + _pool(2, 1, "o/b")
+    picked = mc.sample_candidates(pool, target=8)
+    assert len(picked) == 7  # 5 + 1 + 1: unused=1 unfillable, not overshot
+
+
+def test_graphql_retries_on_malformed_json(monkeypatch):
+    """A truncated 200 body is treated as retryable, not a crash."""
+    outs = [subprocess.CompletedProcess([], 0, '{"data": {"ok"', ""),  # truncated
+            subprocess.CompletedProcess([], 0, '{"data": {"ok": 1}}', "")]
+    slept = []
+    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **k: outs.pop(0))
+    assert mc.gh_graphql("Q", owner="o", _sleep=slept.append) == {"data": {"ok": 1}}
+    assert slept == [2]  # one retry after the malformed body
+
+
+def test_sample_writes_file_and_reports(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    cl.write_jsonl(str(corpus / "work" / "candidates.jsonl"),
+                   _pool(6, 2, "o/a") + _pool(3, 2, "o/b"))
+    assert mc.main(["sample", "--target", "8", "--corpus", str(corpus)]) == 0
+    picked = cl.read_jsonl(str(corpus / "work" / "sample.jsonl"))
+    assert picked == sorted(picked, key=lambda c: c["id"])
+    out = capsys.readouterr().out
+    assert "findings from" in out and "o/a:" in out and "o/b:" in out
+
+
+def test_sample_without_candidates_errors(tmp_path):
+    assert mc.main(["sample", "--corpus", str(tmp_path / "corpus")]) == 1

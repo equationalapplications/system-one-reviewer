@@ -86,17 +86,33 @@ def write_tsv(path, cols, rows, comment=""):
 
 
 def read_jsonl(path):
+    """Rows from a JSONL file, ignoring `# ` comment lines (write_jsonl meta)."""
     if not os.path.exists(path):
         return []
     with open(path) as f:
-        return [json.loads(line) for line in f if line.strip()]
+        return [json.loads(line) for line in f
+                if line.strip() and not line.startswith("# ")]
 
 
-def write_jsonl(path, rows):
+def write_jsonl(path, rows, meta=None):
+    """Write rows as JSONL. `meta` dict goes on an optional `# ` first line."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w") as f:
+        if meta:
+            f.write("# " + json.dumps(meta, sort_keys=True) + "\n")
         for r in rows:
             f.write(json.dumps(r, sort_keys=True) + "\n")
+
+
+def read_meta(path):
+    """{} or the parsed `# {...}` first line written by write_jsonl(meta=...)."""
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            return json.loads(line[2:]) if line.startswith("# ") else {}
+    return {}
 
 
 # ---------- corpus ----------
@@ -157,6 +173,16 @@ def validate(prs, issues, dismissed):
         if r["dismissal_reason"] not in DISMISSAL_REASONS:
             raise CorpusError(f"dismissed {r['sample_id']}: bad dismissal_reason "
                               f"{r['dismissal_reason']!r}")
+    seen: set[tuple[str, str, str]] = set()
+    for rows in (issues, dismissed):
+        for r in rows:
+            key = (r["sample_id"], r["file"], r["line"])
+            if key in seen:
+                raise CorpusError(
+                    f"duplicate anchor {key[0]} {key[1]}:{key[2]} — the scorer "
+                    "pairs one golden per finding, so a duplicated anchor caps "
+                    "recall; rebuild (build_rows dedupes) or repair the TSV")
+            seen.add(key)
 
 
 def check_holdout_share(prs, lo=0.25, hi=0.35, min_prs=10):
