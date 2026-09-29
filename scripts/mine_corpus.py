@@ -240,7 +240,9 @@ def cmd_fetch(args):
     for repo in args.repo:
         cached = os.path.join(per_repo, repo.replace("/", "__") + ".jsonl")
         cands = cl.read_jsonl(cached) if os.path.exists(cached) else None
-        if cands and not args.force:
+        # `is not None`, not truthiness: an EMPTY cache is still a cache, and
+        # its recorded scope must gate reuse exactly like a non-empty one.
+        if cands is not None and not args.force:
             scope = cl.read_meta(cached)
             cached_limit = scope.get("limit")
             fresh = (args.limit is None and cached_limit is None) or \
@@ -295,6 +297,8 @@ def group_by_pr(candidates):
 
 def repo_quotas(repos, target):
     """{repo: quota} splitting `target` evenly, remainder to the first repos."""
+    if not repos:
+        return {}
     base, extra = divmod(target, len(repos))
     return {r: base + (1 if i < extra else 0) for i, r in enumerate(sorted(repos))}
 
@@ -310,10 +314,10 @@ def sample_candidates(candidates, target, seed=0):
     over half of it), so a uniform draw collapses onto a handful of large PRs
     and learns nothing about the other repos. Each repo is shuffled under its
     own seed, so adding or removing a repo does not reshuffle the others.
-    Unused quota flows back: repos that fall short of their quota (too few
-    PRs, or the one-PR-per-draw granularity) hand the remainder to a second
-    pass over the still-under-quota repos, so `target` is approximated even
-    when one repo cannot fill its share.
+    Unused quota flows back: whole-PR granularity overshoots some quotas and
+    small repos run dry, so a second pass hands the remainder to repos that
+    still have undrawn PRs (even past their pass-1 quota), so `target` is
+    approximated when one repo cannot fill its share.
     """
     by_pr = group_by_pr(candidates)
     per_repo: dict[str, list] = {}
@@ -349,16 +353,22 @@ def sample_candidates(candidates, target, seed=0):
         drawn[repo] = taken
     unused = target - sum(used.values())
     if unused > 0:
-        # Only repos still under their pass-1 quota can absorb extra PRs
-        # without re-skewing the draw; give them the unused quota split.
-        shortfall = [r for r in sorted(per_repo) if used[r] < quotas[r]]
-        quotas2 = repo_quotas(shortfall, unused)
-        for repo in shortfall:
+        # Whole-PR granularity overshoots some quotas and small repos run
+        # dry (a repo under quota is always an exhausted repo — the other
+        # loop exit is n >= quota). Hand the unused quota to repos that
+        # still have undrawn PRs; they may exceed their pass-1 quota by
+        # the split, drawing whole PRs only.
+        absorb = [r for r in sorted(per_repo) if len(per_repo[r]) > len(drawn[r])]
+        quotas2 = repo_quotas(absorb, unused)
+        for repo in absorb:
             n = used[repo]
+            cap = n + quotas2[repo]
             for k in shuffled[repo]:
-                if n >= quotas[repo] + quotas2[repo]:
-                    break
                 if k in drawn[repo]:
+                    continue
+                # Draw only if the whole PR still fits the repo's pass-2
+                # budget: caps the total at `target` despite PR granularity.
+                if n + len(by_pr[k]) > cap:
                     continue
                 out += by_pr[k]
                 n += len(by_pr[k])

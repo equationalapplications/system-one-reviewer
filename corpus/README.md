@@ -76,12 +76,12 @@ gitignored `corpus/local/`.
 - All 85 rows were auto-adjudicated; the spot-check sampled 21 random rows
   plus every disposition-vs-label disagreement for human verification
   against the cached repo clones.
-- Agreement on the 21 random rows: **19/21 = 90.5%** (gate ≥85%). The other
-  2 random-sample rows disagreed, and 1 further disagreement came from the
-  disposition-vs-label scan — 3 re-adjudicated rows in total
+- Agreement on the 21 random rows: **19/21 = 90.5%** (gate ≥85%). 3 rows in
+  total were re-adjudicated by a human before the build — 2 from the random
+  sample and 1 from the disposition-vs-label scan, per the spot-check sheet
   (curated-journal#27, curated-thoughts#73,
-  equationalapplications.com#35); the spot-check sheet records the
-  correct labels and rationales.
+  equationalapplications.com#35); the sheet records the correct labels and
+  rationales.
 
 ### Known losses
 

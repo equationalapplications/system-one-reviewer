@@ -250,6 +250,35 @@ def test_sample_skips_errored_candidates():
     assert all(c["id"] != "o/a#99:TX" for c in picked)
 
 
+def test_sample_excludes_whole_pr_with_any_error():
+    """PR-atomic rule holds for partially-errored PRs: no half-sampled PRs."""
+    pool = _pool(3, 2) + [_cand("o/a", 99, "TX", error="boom"),
+                          _cand("o/a", 99, "TY")]
+    picked = mc.sample_candidates(pool, target=100)
+    assert all(c["pr"] != 99 for c in picked)
+
+
+def test_sample_redistributes_unused_quota():
+    """Small repos that run dry hand their quota back; target is approximated."""
+    # 1 finding-PR vs 50 finding-PRs: the small repo exhausts its quota
+    # immediately, so its unused share must flow to the big one.
+    pool = _pool(50, 1, "o/big") + _pool(1, 1, "o/small")
+    picked = mc.sample_candidates(pool, target=20)
+    by_repo = collections.Counter(c["repo"] for c in picked)
+    assert by_repo["o/small"] == 1
+    assert by_repo["o/big"] == 19
+    assert sum(by_repo.values()) == 20
+
+
+def test_sample_quota_floor_survives_redistribution():
+    """The one-PR-per-draw floor stays, but redistribution fills the target."""
+    pool = _pool(10, 5, "o/a") + _pool(1, 2, "o/b")
+    picked = mc.sample_candidates(pool, target=12)
+    by_repo = collections.Counter(c["repo"] for c in picked)
+    assert by_repo["o/b"] == 2          # the small repo's whole PR
+    assert sum(by_repo.values()) == 12  # target reached despite b's exhaust
+
+
 def test_sample_writes_file_and_reports(tmp_path, capsys):
     corpus = tmp_path / "corpus"
     cl.write_jsonl(str(corpus / "work" / "candidates.jsonl"),
