@@ -171,7 +171,12 @@ def test_fetch_force_remines(tmp_path, monkeypatch):
 
 
 def test_fetch_retries_errored_cache_but_stops(tmp_path, monkeypatch):
-    """Errored caches re-mine up to ERROR_RETRY_LIMIT times, then stay cached."""
+    """Errored caches re-mine ERROR_RETRY_LIMIT times, then stay cached.
+
+    Run 1: initial mine (error) -> attempts 0. Run 2: error retry 1 ->
+    attempts 1. Run 3: error retry 2 -> attempts 2 (limit). Run 4: limit
+    reached — cache reused with a warning, no re-mine.
+    """
     calls = []
 
     def fake_mine(repo, limit):
@@ -183,11 +188,13 @@ def test_fetch_retries_errored_cache_but_stops(tmp_path, monkeypatch):
     monkeypatch.setattr(mc, "mine_repo", fake_mine)
     corpus = tmp_path / "corpus"
     argv = ["fetch", "--repo", "o/r", "--corpus", str(corpus)]
-    mc.main(argv)  # attempt 1 (initial mine)
-    mc.main(argv)  # attempt 2
+    mc.main(argv)  # initial mine
+    mc.main(argv)  # error retry 1
     assert len(calls) == 2
-    mc.main(argv)  # limit reached: cache reused, no re-mine
-    assert len(calls) == 2
+    mc.main(argv)  # error retry 2 — limit now reached
+    assert len(calls) == 3
+    mc.main(argv)  # cached, warning printed
+    assert len(calls) == 3
 
 
 def test_graphql_retries_transient_then_succeeds(monkeypatch):
@@ -290,19 +297,36 @@ def test_sample_redistributes_unused_quota():
     assert sum(by_repo.values()) == 20
 
 
-def test_sample_quota_floor_survives_redistribution():
-    """Pass 2 actually runs: quota overshoot stranding is back-filled."""
-    # a: 2 PRs x 5 findings, b: 1 PR x 1 finding, target 12.
-    # Pass 1: quotas a=6, b=6 -> a draws one PR (5; the second would hit 10>6),
-    # b draws its PR (1). unused = 6 -> pass 2 must draw a's second PR (5).
-    pool = _pool(2, 5, "o/a") + _pool(1, 1, "o/b")
-    picked = mc.sample_candidates(pool, target=12)
+def test_sample_pass2_fills_gap_pass1_cannot():
+    """Pass 2 is load-bearing: without it the draw falls short of target.
+
+    a: 4 PRs x 1 finding, b: 1 PR x 1 finding, target 5.
+    Quotas: a=3 (remainder), b=2. Pass 1: a draws 3 PRs (n=3 >= quota;
+    one undrawn PR remains), b draws its only PR and runs dry at 1 < 2.
+    used = 4 < 5, so unused = 1: only a pass-2 draw of a's last PR
+    (1 finding <= 1) reaches the target. Deleting pass 2 fails this test.
+    """
+    pool = _pool(4, 1, "o/a") + _pool(1, 1, "o/b")
+    picked = mc.sample_candidates(pool, target=5)
     by_repo = collections.Counter(c["repo"] for c in picked)
     by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
-    assert by_repo["o/a"] == 10  # both of a's PRs — only pass 2 can do this
-    assert by_repo["o/b"] == 1
-    assert sum(by_repo.values()) == 11  # 12 is unreachable at whole-PR granularity
-    assert all(v == 5 for k, v in by_pair.items() if k[0] == "o/a")
+    assert len(picked) == 5                     # target reached
+    assert by_repo["o/a"] == 4 and by_repo["o/b"] == 1
+    assert all(v == 1 for v in by_pair.values())  # whole PRs, no duplicates
+
+
+def test_sample_pass2_never_exceeds_target():
+    """The greedy fill skips PRs that would overshoot the remaining budget."""
+    # a: 2 PRs x 5 findings; b: 2 PRs x 1 finding; target 6.
+    # Pass 1: a=3, b=3 -> a draws PR#0 (5 >= 3), b draws both (2 < 3, dry).
+    # used = 7 >= 6 -> pass 2 skipped; overshoot is pass-1 granularity.
+    # Now target 8: quotas a=4, b=4: same draws, used = 7 < 8, unused = 1;
+    # every undrawn PR (a's PR#1, 5 findings) is bigger than 1 -> skipped.
+    pool = _pool(2, 5, "o/a") + _pool(2, 1, "o/b")
+    picked = mc.sample_candidates(pool, target=8)
+    by_pair = collections.Counter((c["repo"], c["pr"]) for c in picked)
+    assert sum(len(by_pr_map) for by_pr_map in [by_pair]) == len(by_pair)
+    assert len(picked) == 7  # 5 + 1 + 1: unused=1 unfillable, not overshot
 
 
 def test_sample_writes_file_and_reports(tmp_path, capsys):

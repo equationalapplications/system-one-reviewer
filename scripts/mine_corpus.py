@@ -58,12 +58,14 @@ query($owner: String!, $name: String!, $cursor: String) {
 """
 
 
-RETRYABLE = re.compile(r"\b(429|500|502|503|504)\b|timeout|timed out|connection reset",
-                       re.I)
+RETRYABLE = re.compile(r"\b(429|500|502|503|504)\b|timeout|timed out|connection reset"
+                       r"|malformed json", re.I)
 RETRY_DELAYS = (2, 5, 15, 40)
 # `fetch` re-mines a cached repo while its cache holds errored candidates —
-# but only this many times: some candidate errors are permanent (the pinned
-# commit was force-pushed away), and endless retries would undo resumability.
+# but only ERROR_RETRY_LIMIT-1 retries after the initial mine: some candidate
+# errors are permanent (the pinned commit was force-pushed away), and endless
+# retries would undo resumability. When the limit is hit the cache is reused
+# and fetch prints an explicit warning about the stranded candidates.
 ERROR_RETRY_LIMIT = 2
 
 
@@ -277,12 +279,21 @@ def cmd_fetch(args):
                           file=sys.stderr)
                     cands = None
         if cands is not None and not args.force:
-            print(f"mine: {repo}: {len(cands)} candidates (cached)")
+            n_err = sum(1 for c in cands if c.get("error"))
+            warn = (f" — WARNING: {n_err} errored candidate(s) excluded from "
+                    "sampling; --force to retry" if n_err else "")
+            print(f"mine: {repo}: {len(cands)} candidates (cached){warn}")
         else:
             prev = cl.read_meta(cached) if os.path.exists(cached) else {}
+            prev_errors = any(c.get("error") for c in
+                              (cl.read_jsonl(cached) if os.path.exists(cached) else []))
             cands, totals = mine_repo(repo, args.limit)
             n_err = sum(1 for c in cands if c.get("error"))
-            attempts = (prev.get("error_attempts", 0) + 1) if n_err else 0
+            # The counter tracks retries-for-errors only: a re-mine caused by
+            # a wider scope or --force starts the new cache's error budget
+            # fresh, because those errors were not retried before.
+            was_error_retry = n_err > 0 and prev_errors
+            attempts = (prev.get("error_attempts", 0) + 1) if was_error_retry else 0
             cl.write_jsonl(cached, cands,
                            meta={"limit": args.limit, "error_attempts": attempts})
             print(f"mine: {repo}: {len(cands)} candidates from {totals}")
@@ -374,22 +385,28 @@ def sample_candidates(candidates, target, seed=0):
     if unused > 0:
         # Whole-PR granularity overshoots some quotas and small repos run
         # dry (a repo under quota is always an exhausted repo — the other
-        # loop exit is n >= quota). Greedily fill the gap with whole PRs
-        # from repos that still have undrawn ones, in per-repo seed order
-        # and within a repo in its shuffled order; never exceeds target
-        # (a PR that would overshoot is skipped in favor of later ones).
-        for repo in sorted(per_repo):
-            if unused <= 0:
-                break
-            for k in shuffled[repo]:
+        # loop exit is n >= quota). Fill the gap with whole PRs from repos
+        # that still have undrawn ones, round-robin over repos (no single
+        # repo re-swallows the draw) and within a repo in its shuffled
+        # order; never exceeds target (a PR that would overshoot is
+        # skipped in favor of later ones).
+        pending = {r: [k for k in shuffled[r] if k not in drawn[r]]
+                   for r in sorted(per_repo)}
+        while unused > 0 and any(pending.values()):
+            progressed = False
+            for repo in sorted(pending):
                 if unused <= 0:
                     break
-                if k in drawn[repo]:
-                    continue
-                if len(by_pr[k]) > unused:
-                    continue
-                out += by_pr[k]
-                unused -= len(by_pr[k])
+                while pending[repo]:
+                    k = pending[repo].pop(0)
+                    if len(by_pr[k]) > unused:
+                        continue  # would overshoot; try the repo's next PR
+                    out += by_pr[k]
+                    unused -= len(by_pr[k])
+                    progressed = True
+                    break
+            if not progressed:
+                break  # every remaining PR is bigger than the leftover budget
     return sorted(out, key=lambda c: c["id"])
 
 
@@ -577,27 +594,33 @@ def build_rows(candidates, adjudicated, overrides, notes, agreed, promotions, ve
         # pairs each golden issue with at most one reported finding, so
         # duplicate golden rows would cap recall at 50% and reward
         # double-reporting. Keep one row per anchor, preferring the
-        # human-adjudicated one (its label won the override).
-        seen_anchor: dict[tuple, tuple] = {}
-        deduped: list[tuple] = []
-        for row_t in rows:
-            c, a, label = row_t
-            key = (a["file"], int(a["line"]), label)
-            prev = seen_anchor.get(key)
-            if prev is not None and not (c["id"] in overrides
-                                         and prev[0]["id"] not in overrides):
-                continue  # duplicate anchor: keep the human row only
-            if prev is not None:
-                deduped.remove(prev)
-            seen_anchor[key] = row_t
-            deduped.append(row_t)
-        rows = deduped
-        verified_real_bug_rows = []
+        # human-adjudicated one (its label won the override). Dedup runs
+        # AFTER verify below: if the preferred row fails verification, the
+        # other row at the same anchor must still be eligible.
+        def _human(t):
+            return t[0]["id"] in overrides
+
+        verified_rows = []
         for c, a, label in rows:
-            err = verify(repo, pre_head, pr, a["file"], int(a["line"]), a["verify_substring"])
+            err = verify(repo, pre_head, pr, a["file"], int(a["line"]),
+                         a["verify_substring"])
             if err:
                 warnings.append(f"{c['id']}: dropped — {err}")
                 continue
+            verified_rows.append((c, a, label))
+        seen_anchor: dict[tuple, tuple] = {}
+        for row_t in sorted(verified_rows, key=lambda t: not _human(t)):
+            c, a, label = row_t
+            key = (a["file"], int(a["line"]), label)
+            if key in seen_anchor:
+                warnings.append(f"{c['id']}: duplicate anchor "
+                                f"{a['file']}:{a['line']} ({label}) — kept "
+                                f"{seen_anchor[key][0]['id']}")
+                continue
+            seen_anchor[key] = row_t
+        rows = list(seen_anchor.values())
+        verified_real_bug_rows = []
+        for c, a, label in rows:
             cid = c["id"]
             human = cid in overrides
             checked = "y" if (human or cid in agreed) else "n"
