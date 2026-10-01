@@ -1,9 +1,11 @@
 # Investigation: the `hunk>120 lines` coverage hole
 
-**Status:** step-zero investigation, rev 14 — **APPROVE WITH NITS**
+**Status:** step-zero investigation, rev 15 — **APPROVE WITH NITS**
 per Opus r13 (f02d4998); all nits applied (m1 bucket-sum name, m2
 retry-cost attribution + wall-clock bound, m3 header count, m4 "≤54
-of 108").
+of 108"). **Rev 15 adds Kurt-decision 10 (time policy): no fixed
+wall-clock timeout — the review budget scales with review size;
+long PRs are fully reviewed whenever the window budget allows.**
 **Ask:** 2–3 architectural approaches to close the coverage hole without
 turning sor into a slow reviewer. Kurt's prior: "some kind of loop" —
 algorithmically fast; a bounded, measured latency increase is acceptable.
@@ -422,18 +424,25 @@ regresses fixture-by-design behavior.
 
 ## Latency budget (honest version)
 
+**Time policy (Kurt ruling, 2026-10-01): no fixed wall-clock limit —
+the budget scales with the length of the review task**
+(Kurt-decision 10). Concretely: run time = windows × ≈165 ms/call, so
+it already grows linearly with PR size; the per-run window cap is the
+budget and exceeding it degrades honestly (partial, never abort); the
+per-call 15 s timeout (`:134`) and the window breaker bound worst-case
+behavior; `wall_clock_ms` in the ledger keeps the reporting honest.
+
 Measured today: median 1.4 s, max 7.1 s (`total_latency_ms`, not
 wall-clock), 165–300 ms/call. Chunking `sor_7_final`'s 8 clusters:
 **≥3.3 s serial; upper bound unmeasured** (full 120-line windows are
 larger inputs than the per-call band was measured on); ordinary
 clusters stay serial and run first, so only the oversize tail pays.
-The spec gates on measured `wall_clock_ms` before vs after; pool size
+The spec reports measured `wall_clock_ms` before vs after; pool size
 set by the Jev policy answer, not assumed throughput. Levers: bounded
 pool + a per-run window cap whose remainder lands its clusters in
 `n_windowed_partial_cap` so a huge PR degrades honestly rather than
-slowly.
-README states the wall-clock budget as a new explicit number;
-`wall_clock_ms` enters the ledger.
+slowly. README states the wall-clock baseline as a *reporting*
+number, not a kill switch; `wall_clock_ms` enters the ledger.
 
 ## Validation gates (strict)
 
@@ -527,8 +536,25 @@ README states the wall-clock budget as a new explicit number;
    allow corroboration only at sev ≥2 — decides whether window
    findings can ever unlock a deletion finding into a verdict-relevant
    severity.
+10. **Time policy (KURT RULING 2026-10-01, Discord): no fixed global
+    wall-clock timeout; the review budget scales with review size.**
+    Workable because run time is already length-proportional by
+    construction (windows × per-call): (a) there is deliberately NO
+    global timeout that aborts a run — the only timeouts are the
+    per-call 15 s network timeout (`:134`) and the window-phase
+    breaker; (b) the per-run window cap (decision 2) is set
+    generously and IS the length-proportional budget — exceeding it
+    degrades through the honest path (remaining windows unjudged →
+    partially judged → incomplete verdict), never a mid-run kill;
+    (c) `wall_clock_ms` is logged per run so the README p95 number
+    stays a *reporting* baseline, not a kill switch; (d) long PRs
+    should be fully reviewed whenever the window budget allows — a
+    hard time cap that truncates review regardless of progress is
+    explicitly rejected. If a future hard wall-clock cap is ever
+    wanted, it must degrade through the same honest partial path,
+    never abort.
 
-## Verification performed (rev 14)
+## Verification performed (rev 15)
 
 - All r1–r8 file:line claims re-verified on this branch; the r1
   "sqlite" error, rev-3 wrong-fixture error, rev-4 `score_corpus:112`
