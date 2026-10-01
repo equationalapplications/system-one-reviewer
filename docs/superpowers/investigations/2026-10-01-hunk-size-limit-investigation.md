@@ -1,11 +1,12 @@
 # Investigation: the `hunk>120 lines` coverage hole
 
-**Status:** step-zero investigation, rev 15 — **APPROVE WITH NITS**
-per Opus r13 (f02d4998); all nits applied (m1 bucket-sum name, m2
-retry-cost attribution + wall-clock bound, m3 header count, m4 "≤54
-of 108"). **Rev 15 adds Kurt-decision 10 (time policy): no fixed
-wall-clock timeout — the review budget scales with review size;
-long PRs are fully reviewed whenever the window budget allows.**
+**Status:** step-zero investigation, rev 16 — **APPROVE WITH NITS**
+per Opus r13 (f02d4998). **Clearance: Gemini architectural review
+(2026-10-01, concurred with all recommendations); Kurt approved
+proceeding to implementation on Decisions 2 (2× measured cap), 3
+(deletions stay skipped), 5 (pool 2), 9 (corroboration exclusion),
+and 10 (no wall-clock cap); Decisions 4, 6, 7, 8 remain open with
+defaults noted.**
 **Ask:** 2–3 architectural approaches to close the coverage hole without
 turning sor into a slow reviewer. Kurt's prior: "some kind of loop" —
 algorithmically fast; a bounded, measured latency increase is acceptable.
@@ -510,32 +511,38 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
 
 1. Architecture: A (bounded chunked windows) vs B (summarize).
    Recommendation: **A**, Step 0′ + `gate_run` change as one commit.
+   **RULED (2026-10-01): A.** Step 0′ first.
 2. Per-run window cap value (Gate 2 requires cap ≥ Gate 7's measured
    per-run max) — or pool-only with no cap.
+   **RULED (2026-10-01, via Gemini review): cap = 2× the maximum
+   per-run window count measured in Gate 7** — guarantees zero
+   regression on existing corpus PRs with headroom for outliers.
 3. Deletion clusters over 120 lines: stay skipped (current scoping;
    ≤1/52 observed, holds 0 goldens) or bounded treatment later.
+   **RULED (2026-10-01): stay skipped.**
 4. Two gate-passing MAJOR windows in one source cluster: 1 or 2
    toward the `len(majors) >= 2` verdict flip (guard-band option:
    escalate the cluster, not the verdict, and say so in the report).
+   *(still open — default if unruled at spec time: guard-band)*
 5. Jev concurrency/rate-limit policy (pool 2 default until answered).
+   **RULED (2026-10-01): pool 2, conservative** (limits remain
+   undocumented; revisit only if the breaker trips in practice).
 6. Minimum `+`-line ratio for `HUNK_QUESTIONS` windows (rewrite
-   guard); value TBD in spec.
-7. Accept the interim last-line `Incomplete` signal loss (54 ledgers,
-   including "Changes requested" runs) between Step 0′ and A, with
-   consumers moved to `Verdict:`/`base_verdict` — or pull A's
-   windowing forward into the same delivery. (**Count is an upper
-   bound: ≤54 of 108** — Step 0′ triggers on code-change size-skips
-   only; the exact number lands once skip records carry
-   `change_type`, r13-m4.)
+   guard); value TBD in spec. *(still open — spec parameter)*
+7. Accept the interim last-line `Incomplete` signal loss (≤54 of 108
+   ledgers, incl. "Changes requested" runs) between Step 0′ and A,
+   with consumers moved to `Verdict:`/`base_verdict` — or pull A's
+   windowing forward into the same delivery. *(still open)*
 8. **Wall-clock latency budget** (r9-m2): the README number (p95
    wall-clock per run) and the allowed post-A increase (e.g. p95
    delta ≤ N ms measured by Gate 1's before/after passes) — without
-   this the latency gate cannot fail.
-9. **Window corroboration policy** (r12-M1): exclude `windowed: true`
-   findings from `corroboration_pool` (recommended, conservative) or
-   allow corroboration only at sev ≥2 — decides whether window
-   findings can ever unlock a deletion finding into a verdict-relevant
-   severity.
+   this the latency gate cannot fail. *(still open — but Decision 10
+   makes it a reporting baseline, not a gate; the spec proposes the
+   p95 number for Kurt's sign-off)*
+9. **Window corroboration policy (RULED 2026-10-01): exclude
+   `windowed: true` findings from `corroboration_pool`** (the
+   conservative option a; the #45-revival risk is not worth the
+   recall).
 10. **Time policy (KURT RULING 2026-10-01, Discord): no fixed global
     wall-clock timeout; the review budget scales with review size.**
     Workable because run time is already length-proportional by
@@ -554,7 +561,7 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
     wanted, it must degrade through the same honest partial path,
     never abort.
 
-## Verification performed (rev 15)
+## Verification performed (rev 16)
 
 - All r1–r8 file:line claims re-verified on this branch; the r1
   "sqlite" error, rev-3 wrong-fixture error, rev-4 `score_corpus:112`
