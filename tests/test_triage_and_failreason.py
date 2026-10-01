@@ -102,6 +102,11 @@ def _args(**kw):
 
 
 def test_non_git_repo_is_a_clear_error(jr, tmp_path):
+    # tmp_path can inherit a parent repo via GIT_DIR discovery on
+    # dev machines whose TMPDIR sits inside a git work tree (e.g.
+    # Hermes scratch under ~/.hermes/.git) — make the check hermetic
+    # with a broken .git gitfile (a .git DIRECTORY would be valid).
+    (tmp_path / ".git").write_text("gitdir: /nonexistent/repo\n")
     with pytest.raises(SystemExit, match="not a git repository"):
         jr.resolve_diff(str(tmp_path), _args(range="HEAD~1..HEAD"))
 
@@ -116,6 +121,70 @@ def test_pr_without_local_ref_gives_fetch_hint(jr, tmp_path):
     with pytest.raises(SystemExit,
                        match=r"git fetch origin pull/7/head:pr/7"):
         jr.resolve_diff(str(repo), _args(pr=7))
+
+
+# ---------- Step 0′: size-skip change_type + honest downgrade ----------
+
+def _oversize_hunk(change_type="code-change", file="big.ts"):
+    h = _hunk(1, file=file)
+    h["too_large"] = True
+    h["change_type"] = change_type
+    return h
+
+
+def test_triage_size_skip_carries_change_type(jr):
+    _, skipped = jr.triage([_oversize_hunk("code-change"),
+                            _oversize_hunk("deletion-only", file="old.py")])
+    by_file = {s["file"]: s for s in skipped}
+    assert by_file["big.ts"]["change_type"] == "code-change"
+    assert by_file["old.py"]["change_type"] == "deletion-only"
+
+
+def test_triage_non_size_skips_omit_change_type(jr):
+    _, skipped = jr.triage([_hunk(1, file="docs/README.md")])
+    assert skipped and "change_type" not in skipped[0]
+
+
+def test_main_downgrades_on_size_skipped_code(jr, monkeypatch, tmp_path):
+    """Step 0′ core: a bare Approved is impossible when code was skipped.
+
+    Feeds a real 150-line insertion diff through package_hunks so triage
+    size-skips it (code-change), then asserts: the downgrade fires, the
+    denominator counts the skipped cluster, base_verdict stays clean,
+    and the PR-level digest sees the unjudged file.
+    """
+    diff = "\n".join(
+        ["diff --git a/big.py b/big.py", "new file mode 100644",
+         "index 0000000..1111111", "--- /dev/null", "+++ b/big.py",
+         "@@ -0,0 +1,150 @@"] + [f"+line {i}" for i in range(1, 151)])
+    pr_calls = []
+    records = []
+
+    def fake_pr_level(findings, ask, size_skipped_code=None):
+        pr_calls.append(size_skipped_code)
+        return {"overall_risk": 1.0, "needs_human_review": 0.5,
+                "latency_ms": 1.0}
+
+    def fake_judge(kept, ask, errors=None):
+        assert kept == [], "an oversize-only diff must judge nothing"
+        return [], []
+
+    monkeypatch.setattr(jr, "judge_pr_level", fake_pr_level)
+    monkeypatch.setattr(jr, "judge", fake_judge)
+    monkeypatch.setattr(jr, "resolve_diff",
+                        lambda repo, args: (diff, "0" * 40, "staged"))
+    monkeypatch.setattr(jr, "log_run", lambda rec: records.append(rec))
+    monkeypatch.setattr(jr, "load_api_key", lambda: "k")
+    monkeypatch.setattr(jr.sys, "argv",
+                        ["system-one-reviewer", "--repo", str(tmp_path),
+                         "--staged"])
+    jr.main()
+    rec = records[0]
+    assert len(pr_calls) == 1 and pr_calls[0], \
+        "size skips must reach the PR-level digest"
+    assert rec["n_size_skipped_code"] == 1
+    assert rec["base_verdict"] == "Approved"  # compose saw no findings
+    assert "(incomplete review — 0 of 1 clusters judged)" in rec["verdict"]
 
 
 # ---------- report readability ----------
