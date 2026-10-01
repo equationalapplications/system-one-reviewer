@@ -1,12 +1,11 @@
 # Investigation: the `hunk>120 lines` coverage hole
 
-**Status:** step-zero investigation, rev 16 — **APPROVE WITH NITS**
-per Opus r13 (f02d4998). **Clearance: Gemini architectural review
-(2026-10-01, concurred with all recommendations); Kurt approved
-proceeding to implementation on Decisions 2 (2× measured cap), 3
-(deletions stay skipped), 5 (pool 2), 9 (corroboration exclusion),
-and 10 (no wall-clock cap); Decisions 4, 6, 7, 8 remain open with
-defaults noted.**
+**Status:** step-zero investigation, rev 17 — **APPROVE WITH NITS**
+per Opus r13 (f02d4998). **ALL DECISIONS RULED (2026-10-01):**
+clearance batch 1 via Gemini review + Kurt approval (D1, 2, 3, 5, 9,
+10); batch 2 via Kurt (D4 guard-band, D6 measured in implementation,
+D7 interim loss accepted, D8 p95 measured in implementation).
+**Investigation COMPLETE — implementation phase cleared.**
 **Ask:** 2–3 architectural approaches to close the coverage hole without
 turning sor into a slow reviewer. Kurt's prior: "some kind of loop" —
 algorithmically fast; a bounded, measured latency increase is acceptable.
@@ -523,22 +522,32 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
 4. Two gate-passing MAJOR windows in one source cluster: 1 or 2
    toward the `len(majors) >= 2` verdict flip (guard-band option:
    escalate the cluster, not the verdict, and say so in the report).
-   *(still open — default if unruled at spec time: guard-band)*
+   **RULED (2026-10-01, second batch): guard-band** — escalate the
+   cluster's severity, do NOT flip the verdict on one cluster alone;
+   the report says so.
 5. Jev concurrency/rate-limit policy (pool 2 default until answered).
    **RULED (2026-10-01): pool 2, conservative** (limits remain
    undocumented; revisit only if the breaker trips in practice).
 6. Minimum `+`-line ratio for `HUNK_QUESTIONS` windows (rewrite
-   guard); value TBD in spec. *(still open — spec parameter)*
+   guard); value TBD in spec. **RULED (2026-10-01, second batch):
+   pinned by measurement during implementation** (spec-time Gate-7
+   data decides the value; recorded as a spec parameter with its
+   derivation).
 7. Accept the interim last-line `Incomplete` signal loss (≤54 of 108
    ledgers, incl. "Changes requested" runs) between Step 0′ and A,
    with consumers moved to `Verdict:`/`base_verdict` — or pull A's
-   windowing forward into the same delivery. *(still open)*
+   windowing forward into the same delivery.
+   **RULED (2026-10-01, second batch): accept the interim loss** —
+   consumers (incl. the shadow tally) migrate to the structured
+   `base_verdict` JSON, which heavily mitigates the grep breakage.
 8. **Wall-clock latency budget** (r9-m2): the README number (p95
    wall-clock per run) and the allowed post-A increase (e.g. p95
    delta ≤ N ms measured by Gate 1's before/after passes) — without
-   this the latency gate cannot fail. *(still open — but Decision 10
-   makes it a reporting baseline, not a gate; the spec proposes the
-   p95 number for Kurt's sign-off)*
+   this the latency gate cannot fail. **RULED (2026-10-01, second
+   batch): the p95 baseline number is pinned by actual measurements
+   during implementation** (Decision 10 already makes it a reporting
+   baseline, not a gate; the implementation-phase before/after passes
+   produce the number for the README).
 9. **Window corroboration policy (RULED 2026-10-01): exclude
    `windowed: true` findings from `corroboration_pool`** (the
    conservative option a; the #45-revival risk is not worth the
@@ -561,7 +570,7 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
     wanted, it must degrade through the same honest partial path,
     never abort.
 
-## Verification performed (rev 16)
+## Verification performed (rev 17)
 
 - All r1–r8 file:line claims re-verified on this branch; the r1
   "sqlite" error, rev-3 wrong-fixture error, rev-4 `score_corpus:112`
