@@ -124,3 +124,90 @@ Open questions for review:
    goldens, strict recall not dropped) still measure the right things for
    an AST+batched design? What new gate is needed for batching-induced
    cross-contamination?
+
+## Smoke-test results (rev 2, 2026-10-01 evening — live Jev, real corpus PRs)
+
+Reviewer subagent's full report: /tmp/ast-arch-review.md (REQUEST
+CHANGES verdict, answered all 6 open questions). My live runs confirm
+and sharpen its findings:
+
+**S1 — batching cross-contamination is REAL and systematic (the
+headline).** PR curated-journal #43 (commit 99711a4, 30 judged
+clusters):
+- Per-cluster (today's way): 30 calls, 12,915 ms. One batched call
+  (array state, 90 questions): 345 ms — 37x faster.
+- But **0/30 clusters agree** between arms. Batched scores are
+  systematically LOWER (severity shrink toward 0; e.g. sev 2.13 → 0.60,
+  2.08 → 0.33). Control run proved it isn't noise: single-vs-single
+  repeats agree 5/5 within ±0.09. A second control (tagged questions,
+  single-cluster state) agrees with untagged singles on code clusters
+  — the drop comes from the **array state**, not question tagging.
+- The reviewer's 2-cluster probe showed the same direction (±0.25–0.37
+  contrast shift). Reproduced 3x at n=5: batched sevs are stable
+  across repeats ([0.09, 0.03, 1.25…] three times) — consistent
+  bias, not variance.
+- **Ruling implication: per-PR mega-batching is dead as a judgment
+  path.** Per-FILE batching is still open (contamination bounded to one
+  file's own clusters — context a human sees anyway) but must be
+  A/B-tested on single-file multi-cluster cases before adoption.
+  Meanwhile batching IS proven safe and 37x faster for the PR-level
+  digest question set.
+
+**S4 — state-size degradation is CONTENT-dependent, not size-dependent.**
+Synthetic filler + 5 planted defects:
+- Neutral-text filler: found 1/4 specifics at 20k AND 80k — but one
+  2-defect probe at 20k found both, at front/middle/back equally
+  (position irrelevant). 80k finds only 1/4 with confidence 0.88–0.99
+  (confidently wrong).
+- Code-like filler: 3/4 found at 20k AND 80k — identical at both
+  sizes. Latency flat 143–266 ms across all rungs (5k → 80k chars,
+  14.3k input tokens at 80k).
+- **Reading: dilution/salience in the content, not a hard size wall.
+  Whole-file states of real code (≤25k chars, the corpus max is 24.0k)
+  look safe; the 80k ceiling is not the working target.** The proper
+  guard is per-call input_tokens reporting (payload has it) — R4 of
+  the review — plus a measured cap near 40k chars for synthetic-risk
+  content. NOTE: the neutral-filler result also means our synthetic
+  test fixtures understate Jev's real-code performance.
+
+**S2 — AST units on the real PR #43 offenders (tree-sitter, live).**
+- `importMachine.test.ts` (151 changed lines): naive = 2 windows with
+  arbitrary cuts; AST = 16 top-level units, largest 117 lines — fits.
+- `importMachine.ts` (273 changed lines): naive = 3 windows; AST = 9
+  units, largest 199 lines (`createImportMachine` — one xstate machine
+  factory). One giant function is the honest unit; cutting it
+  mid-body (naive) is strictly worse. Hybrid AST-then-line-window
+  fallback confirmed necessary for units > any chosen cap.
+- Reviewer's dry-run (Python stdlib ast): the 491-line `mine_corpus.py`
+  = 21 units, largest 87 lines — all fit. `wisdom.ts` (542 lines, the
+  CTI PR #22 blind spot) = 50 units, largest 4.9k chars.
+- **Coverage story: Arch 1 alone (batch transport, no size limit) +
+  Arch 2 (AST units) removes the hunk>120 skip class entirely; Arch 2
+  alone changes cut quality.**
+
+**S3 — call-graph blast radius on PR #43.** `importMachine.ts`
+exports 5 symbols; exactly 2 files import them (`import.tsx`,
+its test). Hop-1 enrichment ≈ a handful of lines per unit on this
+corpus. Cheap to build, low context cost — but its value is UNPROVEN
+(the only architecture of the four with no quality evidence). Deferred
+per the reviewer's recommendation, revisit after S1 settles.
+
+## Architecture answer (rev 2, pending Opus + Kurt)
+
+**Adopt: Arch 1 restricted to per-file batching + Arch 2 AST units
+(stdlib `ast` first, tree-sitter optional extra, line-window
+fallback). Batch the PR-level digest aggressively (proven 37x). Do NOT
+batch judgment questions across files. Keep Step 0′ + honest-verdict +
+Gate-3 framework; cancel the window-cutting core of Approach A rev 8
+(proportional pairing, ratio floors, window breakers — cause removed).
+Arch 3 deferred pending evidence; Arch 4 documented escape hatch only,
+never default.**
+
+Guard replacing MAX_HUNK_LINES: per-call input_tokens logged; soft cap
+~40k chars/call with AST-fragment splitting beyond; 80k = hard error.
+(Consistent with measured flat latency and the corpus's 24k max file.)
+
+Remaining before plan: (a) S1b per-file A/B on multi-cluster files
+(settles the last batching question), (b) S5 verdict-equivalence replay
+(free, 108 ledgers), (c) Opus review of this rev-2 brief after reset
+(1:20am America/Toronto), (d) Kurt sign-off.
