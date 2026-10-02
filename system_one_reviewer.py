@@ -1222,6 +1222,17 @@ def eval_against_golden(reported, golden_path):
 
 # ---------- report ----------
 
+def size_skipped_code(skipped):
+    """Size-skipped CODE-change clusters (Step 0′): unjudged coverage, not
+    deliberate triage. Deletion/whole-file size-skips stay triage. Single
+    source for both the PR-level digest and the incomplete-review counters,
+    which must agree."""
+    return [s for s in skipped
+            if str(s.get("reason", "")).startswith("hunk>")
+            and s.get("change_type", "code-change")
+            not in ("deletion-only", "whole-file-deleted")]
+
+
 def render(reported, skipped, verdict, pr_level, jitter, meta):
     prov = meta.get("provider", "jev")
     model = meta.get("model")
@@ -1338,11 +1349,7 @@ def main():
     elif hunks:  # empty diff: nothing for the PR-level call to judge
         pr_level = judge_pr_level(
             findings, ask,
-            size_skipped_code=[s for s in skipped
-                               if str(s.get("reason", "")).startswith("hunk>")
-                               and s.get("change_type", "code-change")
-                               not in ("deletion-only",
-                                       "whole-file-deleted")])
+            size_skipped_code=size_skipped_code(skipped))
     # M1 (r9): a fail-open run must never carry a clean "Approved" — the
     # verdict is forced to "Unavailable" and flows into JSON/metrics/last
     # line, so nothing downstream reads it as a pass.
@@ -1357,11 +1364,7 @@ def main():
     # it joins the downgrade trigger and the denominator, never the
     # numerator. Deletion/whole-file size-skips stay deliberate triage
     # (Kurt-decision 3: ≤1/52 observed clusters, holds zero goldens).
-    n_size_skipped_code = sum(
-        1 for s in skipped
-        if str(s.get("reason", "")).startswith("hunk>")
-        and s.get("change_type", "code-change") not in
-        ("deletion-only", "whole-file-deleted"))
+    n_size_skipped_code = len(size_skipped_code(skipped))
     if fail_open:
         verdict = "Unavailable — provider failed (fail-open)"
     elif n_unjudged or n_dropped or n_size_skipped_code:
