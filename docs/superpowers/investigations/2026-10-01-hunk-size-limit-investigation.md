@@ -1,11 +1,15 @@
 # Investigation: the `hunk>120 lines` coverage hole
 
-**Status:** step-zero investigation, rev 17 — **APPROVE WITH NITS**
+**Status:** step-zero investigation, rev 18 — **APPROVE WITH NITS**
 per Opus r13 (f02d4998). **ALL DECISIONS RULED (2026-10-01):**
 clearance batch 1 via Gemini review + Kurt approval (D1, 2, 3, 5, 9,
 10); batch 2 via Kurt (D4 guard-band, D6 measured in implementation,
 D7 interim loss accepted, D8 p95 measured in implementation).
-**Investigation COMPLETE — implementation phase cleared.**
+**Rev 18: Gate 3 tolerance made numeric (CodeRabbit/Gemini blocker
+resolved):** windowed-cluster FP rate ≤ 1.5× the ordinary per-cluster
+rate (≈0.315; hard fail >2× ≈0.42), derived from the baseline ledgers
+(14.2 clusters/clean run × fp_per_clean 2.98 ⇒ ≈0.21/cluster).
+**Step 0′ IMPLEMENTED (d2a981e), verified live; Approach A next.**
 **Ask:** 2–3 architectural approaches to close the coverage hole without
 turning sor into a slow reviewer. Kurt's prior: "some kind of loop" —
 algorithmically fast; a bounded, measured latency increase is acceptable.
@@ -460,19 +464,27 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
    to rise materially** (window anchors are new, so a golden within
    ±1 of one can newly match, `:1175` — stated so a flat strict
    number is not misread as failure, r8-m4 softened by r11-m4).
-3. **FP gate on the right denominator (r6-M2): FPs per judged source
-   cluster (and per window) on clean samples does not exceed the
-   ordinary-cluster FP rate by more than a stated tolerance** —
-   "fp_per_clean does not increase" would demand zero FPs on all
-   newly judged code and fail A by construction. **Reported costs,
-   not gates:** the raw per-PR `fp_per_clean` delta, the clean
-   `verdict_accuracy` delta, and **the CJ field FP delta on #43**
-   (`importMachine.ts` + its test are newly judged; #43 is recorded
-   defect-free at merge — these are *reported* field FPs that do **not**
-   drive `sweep_field` KEEP/RAISE, which reads `deletion_total` alone
-   (`:479–481`), code-rubric FPs appearing only in a `note:` line
-   (`:511–515`), while windows stay code-rubric — r7-m3 corrected by
-   r9-m1).
+3. **FP gate on the right denominator (r6-M2), with hard numbers
+   (rev 18 — resolves the CodeRabbit/Gemini "undefined tolerance"
+   blocker):** derived from the baseline ledgers — clean sample-repeats
+   judge a mean of **14.2 clusters** each (median 7.5), and
+   `fp_per_clean` = 2.98, so the **ordinary per-cluster FP rate is
+   ≈0.21**. The gate: **windowed clusters' FP rate (FPs attributed to
+   windowed clusters ÷ windowed clusters judged, on clean samples)
+   must be ≤ 1.5 × that ordinary rate (≈0.315)** — the 1.5× band
+   allows for first-generation noise on newly judged code while still
+   failing a windowing scheme that systematically over-flags. **Hard
+   fail above 2× (≈0.42).** "fp_per_clean does not increase" was
+   withdrawn at r6-M2 — it would demand zero FPs on all newly judged
+   code and fail A by construction. **Reported costs, not gates:** the
+   raw per-PR `fp_per_clean` delta, the clean `verdict_accuracy`
+   delta, the CJ field FP delta on #43 (`importMachine.ts` + its test
+   are newly judged; #43 is recorded defect-free at merge — these are
+   *reported* field FPs that do **not** drive `sweep_field`
+   KEEP/RAISE, which reads `deletion_total` alone (`:479–481`);
+   code-rubric FPs appear only in a `note:` line (`:511–515`), and
+   A's windows stay code-rubric — r7-m3 corrected by r9-m1), and
+   "verdicts flipped by window-sourced corroboration" (r12-M1).
 4. Fixture regression (tolerance form, r7-m2): **per-run TP/FP set
    unchanged on ≥2 of 3 fresh runs per fixture** at the new
    `PACKAGING_VERSION` (exact-F1 is fragile: 0.91 = 5 TP / 1 FP);
@@ -570,7 +582,7 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
     wanted, it must degrade through the same honest partial path,
     never abort.
 
-## Verification performed (rev 17)
+## Verification performed (rev 18)
 
 - All r1–r8 file:line claims re-verified on this branch; the r1
   "sqlite" error, rev-3 wrong-fixture error, rev-4 `score_corpus:112`
