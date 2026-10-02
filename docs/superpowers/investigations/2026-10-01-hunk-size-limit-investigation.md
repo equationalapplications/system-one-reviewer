@@ -1,6 +1,6 @@
 # Investigation: the `hunk>120 lines` coverage hole
 
-**Status:** step-zero investigation, rev 18 — **APPROVE WITH NITS**
+**Status:** step-zero investigation, rev 19 — **APPROVE WITH NITS**
 per Opus r13 (f02d4998). **ALL DECISIONS RULED (2026-10-01):**
 clearance batch 1 via Gemini review + Kurt approval (D1, 2, 3, 5, 9,
 10); batch 2 via Kurt (D4 guard-band, D6 measured in implementation,
@@ -9,6 +9,9 @@ D7 interim loss accepted, D8 p95 measured in implementation).
 resolved):** windowed-cluster FP rate ≤ 1.5× the ordinary per-cluster
 rate (≈0.315; hard fail >2× ≈0.42), derived from the baseline ledgers
 (14.2 clusters/clean run × fp_per_clean 2.98 ⇒ ≈0.21/cluster).
+**Rev 19 amendment: windows INHERIT `change_type: code-change`; no
+per-window recomputation** (zero-`+` windows must not reclassify as
+deletion-shaped — the ratio floor handles them via unplaceable).
 **Step 0′ IMPLEMENTED (d2a981e), verified live; Approach A next.**
 **Ask:** 2–3 architectural approaches to close the coverage hole without
 turning sor into a slow reviewer. Kurt's prior: "some kind of loop" —
@@ -269,8 +272,15 @@ split oversize **code-change** clusters only (51/52 observed), into
   (partly-judged clusters possible), so the bucket precedence is
   reachable. Unplaceable clusters are **not** sent to
   `DELETION_QUESTIONS` (which would revive the #45 over-scoring via
-  `:1100–1105` corroboration and pollute the `field_fp` deletion
-  bucket). `change_type` is recomputed per window. Tests: a
+  `:1118–1137` corroboration and pollute the `field_fp` deletion
+  bucket). **Windows inherit `code-change` from their source cluster —
+  `change_type` is NOT recomputed per window (rev 19 amendment):** a
+  recomputed zero-`+` window would become deletion-shaped and route to
+  `DELETION_QUESTIONS` (forbidden above), while forcing it through
+  `HUNK_QUESTIONS` as a pure removal recreates the `:766–769`
+  over-scoring shape; inheritance keeps every window on the paired
+  code path, and the ratio floor — not reclassification — is the
+  mechanism for hopeless windows. Tests: a
   200`-`/200`+` rewrite yields paired windows, no `-`-only window, and
   no window showing a removal without its replacement; the ratio-floor
   case downgrades honestly instead of misrouting.
@@ -368,8 +378,10 @@ split oversize **code-change** clusters only (51/52 observed), into
   fires only on `status == 429` — other 4xx keep today's exactly-one-
   request contract; the `_NoRetry` docstring (`:152–153`) is amended
   and `tests/test_package.py:515`'s table gains `(429, 2)` alongside
-  an unchanged `(401, 1)`. `--serial-windows` restores exactly
-  today's semantics. Thread-local `HTTPSConnection` per worker —
+  an unchanged `(401, 1)`. `--serial-windows` forces `pool_size=1`
+  (windows are still judged, only serially — it does NOT restore
+  today's no-windowing behavior; rev 19 wording fix). Thread-local
+  `HTTPSConnection` per worker —
   **including `_drop_conn()`, which must close the worker's own
   connection, never the shared global (`:138–145`)** (`_get_conn()`
   is a shared global today, `:130–145`); laya serial; only
@@ -582,7 +594,15 @@ number, not a kill switch; `wall_clock_ms` enters the ledger.
     wanted, it must degrade through the same honest partial path,
     never abort.
 
-## Verification performed (rev 18)
+## Verification performed (rev 19)
+
+- Rev 19 also amends the Step 0′ field plan (r8-MINOR-1): after A
+  ships, the ledger KEEPS writing `n_size_skipped_code` with its
+  current expression, structurally 0 on non-fail-open runs — written
+  for schema stability only (option B, plan rev 4); the word
+  "retired" in the Step 0′ section above means "retired from the
+  verdict arithmetic" (the spec's three trigger/denominator/numerator
+  expressions never mention it), not "removed from the ledger".
 
 - All r1–r8 file:line claims re-verified on this branch; the r1
   "sqlite" error, rev-3 wrong-fixture error, rev-4 `score_corpus:112`
