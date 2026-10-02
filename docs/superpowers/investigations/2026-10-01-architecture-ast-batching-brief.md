@@ -227,9 +227,11 @@ format with documented path addressing — the "contamination is bounded
 per file" assumption is empirically false at PR-#43 scale. Per-PR
 mega-batching stays DEAD. Keep Step 0′ + honest-verdict + Gate-3
 framework; cancel the window-cutting core of Approach A rev 8.
-Arch 3 (enrichment) is now ON the default path (it no longer rides on a
-batching decision); Arch 4 documented escape hatch only, never
-default.**
+**Arch 2's AST context enrichment is now ON the default path (the
+context it adds is per-cluster and rides on the per-cluster transport,
+not on a batching decision); Arch 3 (call-graph enrichment) STAYS
+UNPROVEN AND DEFERRED per its definition — D3 unchanged; Arch 4
+documented escape hatch only, never default.**
 
 ### The wire format (r3-m1)
 

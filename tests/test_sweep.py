@@ -122,6 +122,18 @@ def test_gate_rejects_malformed_base_verdict_record(sw):
         sw.gate_run(rec, EXPECTED)
 
 
+@pytest.mark.parametrize("bad_key", ["n_dropped", "n_unjudged", "n_size_skipped_code"])
+@pytest.mark.parametrize("bad_value", [None, "0", -1, 1.5, True])
+def test_gate_rejects_non_negative_int_counts(sw, bad_key, bad_value):
+    """CodeRabbit r3: presence isn't enough — JSON decodes null to None, so
+    `rec["n_dropped"] > 0` TypeErrors and bubbles past select_runs's
+    SystemExit guard. Require non-negative ints so a malformed record is
+    rejected through die() like every other gate failure."""
+    rec = _run0("x", "positive", [], **{bad_key: bad_value})
+    with pytest.raises(SystemExit, match="malformed"):
+        sw.gate_run(rec, EXPECTED["positive"])
+
+
 def test_gate_legacy_suffix_fallback_still_rejects(sw):
     rec = _run("x", "positive", [])
     rec["verdict"] = "Approved (incomplete review — 3 of 5 clusters judged)"

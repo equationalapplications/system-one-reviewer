@@ -1,5 +1,8 @@
 # Approach A: Bounded Chunked Windows — Implementation Plan
 
+> **STATUS: SUPERSEDED by `docs/superpowers/investigations/2026-10-01-architecture-ast-batching-brief.md` (rev 6, 2026-10-02).**
+> The architecture brief cancels the window-cutting core of this plan: Step 0′ + honest-verdict + Gate-3 framework survive, but the bounded-window work below is replaced by Arch 2 (AST-grouped units, per-cluster transport + AST context enrichment, per-file batching downgraded to G-B-gated). Tasks 0′–1 (windowing unit) and Tasks 2–6 (triage / pooled judge / compose / ledger / sweep gate) DO NOT land as written; the doc carries the full text for traceability only. The only steps that still execute as-is are the investigation-doc Step 0′ patch (already merged at `d2a981e`) and the architectural plan the brief owns. Rev 8 is the final revision of this plan.
+>
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 >
 > **GATE-3 UNIT — PENDING KURT RULING (r8 BLOCKER-1, 2026-10-01).**
@@ -122,7 +125,7 @@
 
 **Steps:**
 1. Read-only script: for each corpus PR diff (shallow clone as needed), run `package_hunks`, select `too_large` code-change clusters, run `window_cluster` with the measured ratio candidates, report: per-cluster window counts, **max per-RUN total**, **W̄ = mean windows per oversize cluster on clean samples + expected Gate-3 parity rate 0.21×W̄ (r8 BLOCKER-1)**, rewrite/insertion split, per-cluster `+`-share distribution.
-2. Derive R per the rule above; record R + derivation + the **cap = 2× max per-run window count** (D2). **Placeability check (r2-m1, reworked r5-MINOR-5): placeability is a structural property, not a scored outcome — verify up front that ALL golden clusters (train AND holdout) remain placeable under the chosen R (including per-window rounding), and say so openly; the [0.1, 0.3] clamp's lower bound is ADVISORY — if the check fails, lower R below 0.1 and record the adjustment. Any adjustment driven by a holdout cluster is recorded as a caveat in the Gate-2 write-up (one-way fit to the holdout).** Without this, Gate 2 fails by construction.
+2. Derive R per the rule above; record R + derivation + the **cap = 2× max per-run window count** (D2). **Placeability check (r2-m1, reworked r5-MINOR-5, CodeRabbit r4-MINOR-1): placeability is a structural property, not a scored outcome — verify up front that ALL TRAINING golden clusters remain placeable under the chosen R (including per-window rounding), and say so openly; the [0.1, 0.3] clamp's lower bound is ADVISORY — if the check fails, lower R below 0.1 and record the adjustment. Holdout goldens are NOT used to drive R: their placeability is reported as a structural observation, and any unplaceable holdout cluster is a Gate-2 fail (it counts toward the 24-golden rescue target's complement), not a reason to retune R. The earlier "one-way fit to the holdout" caveat leaked evaluation data into threshold selection and is retired; an independent fresh holdout (or a held-out subset of the v06-postmerge corpus) is what Gate 2 measures against.** Without this, Gate 2 fails by construction.
 3. Commit: `docs(eval): Gate-7 window measurements — cap <N>, ratio floor <R> (derivation included)`.
 
 **Verification:** eval doc states cap and R; later tasks import these as defaults.

@@ -108,6 +108,19 @@ def gate_run(rec, expected, packaging_version="v03b"):
             die(f"run {rec.get('label')!r}: malformed — has base_verdict "
                 f"but missing counts {missing} (re-run with the current "
                 "tool)")
+        # r3 (CodeRabbit): presence is not enough — JSON decodes null to
+        # None, so `rec["n_dropped"] > 0` would TypeError and bubble past
+        # `select_runs`'s SystemExit guard. Require non-negative ints so
+        # a malformed record is rejected through die() and the sweep can
+        # skip it like every other gate failure.
+        bad = [k for k, v in (("n_dropped", rec["n_dropped"]),
+                              ("n_unjudged", rec["n_unjudged"]),
+                              ("n_size_skipped_code",
+                               rec["n_size_skipped_code"]))
+               if not isinstance(v, int) or isinstance(v, bool) or v < 0]
+        if bad:
+            die(f"run {rec.get('label')!r}: malformed — counts {bad} must "
+                "be non-negative integers (re-run with the current tool)")
         if rec["n_dropped"] > 0 or rec["n_unjudged"] > 0:
             die(f"run {rec.get('label')!r}: incomplete review "
                 f"(n_dropped={rec['n_dropped']}, "

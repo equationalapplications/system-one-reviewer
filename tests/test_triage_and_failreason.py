@@ -101,11 +101,19 @@ def _args(**kw):
     return SimpleNamespace(**base)
 
 
-def test_non_git_repo_is_a_clear_error(jr, tmp_path):
+def test_non_git_repo_is_a_clear_error(jr, tmp_path, monkeypatch):
     # tmp_path can inherit a parent repo via GIT_DIR discovery on
     # dev machines whose TMPDIR sits inside a git work tree (e.g.
     # Hermes scratch under ~/.hermes/.git) — make the check hermetic
     # with a broken .git gitfile (a .git DIRECTORY would be valid).
+    # CodeRabbit r3: GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE inherited
+    # from the test environment would point git at a valid repo and
+    # disable discovery entirely, so the broken gitfile never gets a
+    # chance. Clear them so discovery runs and the "not a git
+    # repository" path is exercised.
+    for var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                "GIT_COMMON_DIR"):
+        monkeypatch.delenv(var, raising=False)
     (tmp_path / ".git").write_text("gitdir: /nonexistent/repo\n")
     with pytest.raises(SystemExit, match="not a git repository"):
         jr.resolve_diff(str(tmp_path), _args(range="HEAD~1..HEAD"))
