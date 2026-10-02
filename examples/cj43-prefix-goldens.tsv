@@ -1,0 +1,19 @@
+# curated-journal PR #43 defect-positive goldens (pre-fix era) — Task 0,
+# impl/ast-units, 2026-10-02.
+# Ground truth: 3 bot majors (aws-cloud-agent-pr-review, mid-PR revisions of
+# #43; see docs/evals/2026-09-28-v03b-cj-field-proof.md) that existed as real
+# defects in the PR-43 development era BEFORE the fixes landed. The PR was
+# developed as a stack of pre-squash commits (refs/pull/43/head), reviewed and
+# fixed in-branch, then squashed to 99711a4. Chosen pre-fix SHA: 11be74c
+# ("perf(import): linear-time OKF import, honest progress, cancel
+# (importMachine)") — the first commit of the stack, where all 3 majors are
+# present unfixed (fixed downstream by 95e011a, bcca842, 929d13f; squash
+# 99711a4 is the merged, defect-free head recorded in cj-field-goldens.tsv).
+# Verifiability (r8-M2): anchors on src/machines/importMachine.ts at this SHA
+# live in a 209-line new-file cluster (>120) — verifiability: band, side file
+# examples/cj43-prefix-band-goldens.tsv. The anchors below are NON-band and
+# verified against the current build (see docs/evals/
+# 2026-10-02-cj43-prefix-verification.md).
+# Format: file<TAB>line<TAB>desc (3 tab-separated fields max)
+src/app/import.tsx	73	Cancel tears the import actor down immediately: the in-flight importDump keeps holding the wiki global import lock for seconds and the next wiki operation can fail with WikiBusyError (no cancelling handshake; fixed by 95e011a)
+src/app/import.tsx	82	Leaving the screen mid-import silently aborts at the chunk boundary and half-imports a journal with no warning (no usePreventRemove guard; fixed by 95e011a)
