@@ -2,30 +2,47 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 >
-> **Rev 2** — revised per adversarial review (/tmp/ast-plan-review.md,
-> NOT READY verdict, 1 BLOCKER / 6 MAJOR / 6 MINOR / 3 nits, all verified
-> against code): **B1** G-B's batched treatment arm needs batching transport
-> code before the gate can run — Task 9 now uses an OUT-OF-TREE harness
-> (`/tmp/gb_harness.py`, experiment scaffolding like the S1′ probe, never
-> shipped), with the per-file wire format specified in the task itself;
-> **M1** budget constants are TOKENS (28k/56k), not chars — estimator
-> returns estimated tokens via a calibrated chars-per-token factor
-> (3.24 prior), recalibrated from `usage.input_tokens` (M4: now logged
-> per call into the ledger); **M2** req-1 both-sides file sources +
-> merge-base computation now owned by Task 4 with per-mode tests;
-> **M3** G-C (5 clean CJ heads stay ≤1 FP major) added to Task 8;
-> **M5** estimator test asserts against state+longest-question (the 32k
-> quantity) and a separate lower-bound check against the full payload;
-> **M6** serialized census recompute moved to Task 1b (before fixtures/
-> implementation, per brief ordering); minors: code cites corrected
-> (ask loop :950–965, routing site :1336–1343, sweep default :570),
-> depth-cap test restated as bounded-termination + recursion-helper
-> test on synthetic multi-unit input, G-D baseline named
-> (v06-postmerge 3-repeat runs), cache key made mode-aware
-> `(mode, rev, path)`, fallback window size gets its own constant
-> `FALLBACK_WINDOW_LINES`, Step 0′ machinery disposition stated (kept
-> as ledger back-compat), CI interpreter (3.10/3.12/3.14) replaces the
-> 3.14-only pin, fixture-stability criterion tied to G-D repeats.
+> **Rev 6** — revised per Opus doc-review round 4 (REQUEST CHANGES: 2 MAJOR /
+> 4 MINOR / 3 nits; verdicts now r1→r4: 1B5M → 4M → 6M → 2M). **M1
+> fixture-vs-definition conflict (folded as option (a), ruling flagged to
+> Kurt):** the plan's own oversize definition (>28k tokens ⇒ >84k serialized
+> chars) made three test fixtures (200/273/200-line files ≈ 3k–8k tokens)
+> incapable of tripping it — both test sets could never be green at once.
+> FOLDED: all oversize fixtures resized to >84k serialized chars (~2,400
+> changed lines); NO new engagement threshold added (that would be a design
+> change vs the ruled brief). **STATED CONSEQUENCE (flagged for Kurt,
+> pending-ruling — numbered options per house convention):** clusters from
+> ~121 lines to ~84k chars, skipped today, are now judged as ONE whole call
+> with a single anchor — wisdom.ts (7.3k tokens whole-file) never splits;
+> the brief's own evidence (importMachine.ts 273 lines → 9 units) sits
+> below the token gate, golden ±1-line matching degrades for findings deep
+> in a single-anchor cluster, and G-A can pass while recall on those
+> clusters silently drops. Options: **1. (recommended — implemented in this
+> rev) token-only engagement + the new G-C/G-D sub-measure tracking
+> verdict changes on previously-skipped 121-line…84k-char clusters, and a
+> revisit after gate data lands; 2. add a separate AST engagement
+> threshold (~120 lines, the old number under a new name) so AST/window
+> splitting engages there while the token cap stays the send-gate
+> guarantee — rewords r1-M4's "defined exactly once"; 3. accept as-is with
+> the stated recall risk only.** (a) and (b) were the reviewer's two
+> options; (b) = option 2 here. **M2 unmatched-symbol rule (folded):**
+> pre-image symbols with no qualified-name counterpart in the post-image
+> (deleted/renamed/moved) form their OWN sub-clusters — cut on pre-image
+> boundaries, anchored via `e[4]`, parent `change_type`, union == original
+> always; deletion-only parents cut on the pre-image AST directly; tests
+> `test_deleted_symbol_forms_own_subcluster` +
+> `test_renamed_function_old_code_not_lost`. Minors: **m1** laya keeps the
+> size sort + truncate (:1338–1339) — order tested both ways (laya
+> size-descending, jev first-come); **m2** `judge()` fail-open paths return
+> `(None, latencies, meta)` too (:959/:1025/:1035; all six 2-tuple stub
+> sites updated; fail-open unpacks 3-tuples, never ValueErrors); **m3**
+> `split_unit` callable injected by `main()` (judge has no images); None ⇒
+> unjudged; `_OverBudget` caught BEFORE the generic `except Exception`
+> (:954); **m4** `whole-file-deleted>cap` feeds `n_triaged` only — excluded
+> from `size_skipped_code()` by its reason prefix (:1231 startsWith
+> "hunk>"); regression test: no "(incomplete" suffix. Nits: Task 5 commit
+> message de-proactive'd; `jev_ask` range :157–193; rev blocks now ordered
+> newest-first.
 >
 > **Rev 5** — revised per Opus doc-review round 3 (REQUEST CHANGES: 6 MAJOR /
 > 7 MINOR / 2 nits; all verified — rev 4's fixes had landed in headers only,
@@ -224,6 +241,31 @@
 
 ---
 
+> **Rev 2** — revised per adversarial review (/tmp/ast-plan-review.md,
+> NOT READY verdict, 1 BLOCKER / 6 MAJOR / 6 MINOR / 3 nits, all verified
+> against code): **B1** G-B's batched treatment arm needs batching transport
+> code before the gate can run — Task 9 now uses an OUT-OF-TREE harness
+> (`/tmp/gb_harness.py`, experiment scaffolding like the S1′ probe, never
+> shipped), with the per-file wire format specified in the task itself;
+> **M1** budget constants are TOKENS (28k/56k), not chars — estimator
+> returns estimated tokens via a calibrated chars-per-token factor
+> (3.24 prior), recalibrated from `usage.input_tokens` (M4: now logged
+> per call into the ledger); **M2** req-1 both-sides file sources +
+> merge-base computation now owned by Task 4 with per-mode tests;
+> **M3** G-C (5 clean CJ heads stay ≤1 FP major) added to Task 8;
+> **M5** estimator test asserts against state+longest-question (the 32k
+> quantity) and a separate lower-bound check against the full payload;
+> **M6** serialized census recompute moved to Task 1b (before fixtures/
+> implementation, per brief ordering); minors: code cites corrected
+> (ask loop :950–965, routing site :1336–1343, sweep default :570),
+> depth-cap test restated as bounded-termination + recursion-helper
+> test on synthetic multi-unit input, G-D baseline named
+> (v06-postmerge 3-repeat runs), cache key made mode-aware
+> `(mode, rev, path)`, fallback window size gets its own constant
+> `FALLBACK_WINDOW_LINES`, Step 0′ machinery disposition stated (kept
+> as ledger back-compat), CI interpreter (3.10/3.12/3.14) replaces the
+> 3.14-only pin, fixture-stability criterion tied to G-D repeats.
+>
 ## Task 0: Defect-positive fixture (plan prerequisite, brief req 8)
 
 **Objective:** Anchor the 3 real pre-fix majors of curated-journal PR #43 (two abort races, one signature contract) as golden anchor rows, and verify per-cluster transport reports them at the pre-fix SHAs. G-B (later task) needs defect-positive ground truth.
@@ -285,16 +327,18 @@
 
 **Steps:**
 1. Failing tests:
-   - `test_oversize_python_splits_on_defs`: synthetic .py post-image with 3 top-level functions (total 200 changed lines) → 3 sub-clusters, each boundary = a function's end line, none mid-function; union of changed lines == original; no line in two sub-clusters.
+   - `test_oversize_python_splits_on_defs`: synthetic .py post-image with 3 top-level functions whose serialized state exceeds `SOFT_CAP_TOKENS` (**r6-M1: ~2,400 changed lines totalling >84k serialized chars at 3.0 chars/token — a 200-line fixture estimates ~3k tokens and is NOT oversize; the old size would contradict `test_oversize_engagement_is_token_based`**) → 3 sub-clusters, each boundary = a function's end line, none mid-function; union of changed lines == original; no line in two sub-clusters.
    - `test_subcluster_inherits_identity`: every sub-cluster carries parent's `file`, `change_type`, and a `parent_cluster` reference; own anchor via the SHARED anchor chain helper (first `+` entry's tracked line → first `-` entry's `e[4]` → context → `hunk_start`); own `line_start/line_end`.
    - `test_deletion_only_subcluster_from_code_change_parent` (r1-M3): a sub-cluster cut from a code-change parent that contains ONLY `-` entries (a removed block between two edited functions) still gets a defined anchor (`e[4]`, the tracked HEAD line — anchor-fallback only, r5-M1) and a correct span; the `-` entries' SYMBOL assignment comes from the PRE-image AST via their `e[1]` old-file lines (r5-M1), matched to the sub-cluster's post-image unit by qualified name.
+   - `test_deleted_symbol_forms_own_subcluster` (r6-M2): a removed top-level function (no post-image counterpart) → its `-` lines form their OWN sub-cluster, cut on PRE-image boundaries, anchored via `e[4]`, keeping the parent `change_type`; NOT dropped, NOT dumped into another unit; union == original.
+   - `test_renamed_function_old_code_not_lost` (r6-M2): old `foo` renamed to `bar` → the pre-image `foo` code lands in its own pre-boundary sub-cluster (no qualified-name match to `bar`'s unit); union == original.
    - `test_parse_error_returns_none`: post-image that doesn't parse → `None` (caller falls back to line windows).
    - `test_deletion_only_cluster_splits` (r5-M2, brief erratum #2): an OVERSIZE in-file deletion-only cluster HAS a post-image and IS split into sub-clusters — `-` lines assigned via `e[1]` → PRE-image AST. Only `change_type == "whole-file-deleted"` returns `None` immediately (that cluster has no post-image at all; brief req 1's "deletion-only … no post-image" parenthetical is wrong and is logged as erratum #2 alongside the r2-m5 changelog erratum).
    - `test_wholefile_deleted_returns_none`: `whole-file-deleted` → `None` immediately.
    - `test_oversize_engagement_is_token_based` (r1-M4): a cluster under `SOFT_CAP_TOKENS` → `None`; a cluster over it → units. (`FALLBACK_WINDOW_LINES` never appears in the engagement decision.)
    - `test_small_cluster_skipped`: cluster under the size threshold → `None` (AST path only engages for oversize regions).
    - `test_determinism`: same input twice → identical output.
-2. Run → FAIL; implement with stdlib `ast.parse` on BOTH images: the `before_text` parameter is PARSED as the pre-image AST (r5-M1: `+` entries map by `e[1]` into the POST-image AST; `-` entries map by `e[1]` into the PRE-image AST — the old-file line advances correctly on deletions — and are matched to the sub-cluster's post-image unit by qualified symbol name; `e[4]` is used ONLY as the anchor fallback, exactly as in main's deletion-anchor rule); walk top-level nodes with `end_lineno` (3.8+); group.
+2. Run → FAIL; implement with stdlib `ast.parse` on BOTH images: the `before_text` parameter is PARSED as the pre-image AST (r5-M1: `+` entries map by `e[1]` into the POST-image AST; `-` entries map by `e[1]` into the PRE-image AST — the old-file line advances correctly on deletions — and are matched to the sub-cluster's post-image unit by qualified symbol name; `e[4]` is used ONLY as the anchor fallback, exactly as in main's deletion-anchor rule). **r6-M2 assignment rule for UNMATCHED symbols: a pre-image symbol with no qualified-name counterpart in the post-image AST (deleted, renamed, or moved function) forms its OWN sub-cluster — cut on the PRE-image AST's boundaries, anchored via `e[4]`, keeping the parent `change_type` — never dropped and never dumped into an arbitrary unit (the union == original invariant holds in every case). For a deletion-only parent, cut on the PRE-image AST DIRECTLY (there is no post-image unit worth matching).** Walk top-level nodes with `end_lineno` (3.8+); group.
 3. Tests → PASS; full suite green (pytest + ruff + mypy).
 4. Commit: `feat(ast): stdlib ast unit extraction for oversize Python clusters`.
 
@@ -322,7 +366,7 @@
 
 ## Task 4: Triage rewiring — MAX_HUNK_LINES retired, oversize → AST sub-clusters
 
-**Objective:** `package_hunks` stops marking `too_large` for skipping **on the jev path only**; `main()` routes oversize code-change clusters through the Task 2/3 extractor and judges sub-clusters as first-class units. `--max-hunks` becomes units-per-run (ceiling 40, run-level, jev). **Run counters are recomputed in UNITS after expansion (r1-B1)** — the honesty machinery keeps working. **r2-M1/r5-M4: this entire task is gated on `provider == "jev"` — `triage()` gains a `provider` (or `size_policy`) parameter so the gate is MECHANICAL, and LAYA KEEPS TODAY'S EXACT BEHAVIOR: `h[\"too_large\"]` (:696) and the `hunk>` skip append (:722–724) stay live for laya — "MAX_HUNK_LINES retired" means retired FOR JEV; it remains laya's skip gate. Whole-file-deleted clusters that are themselves over-cap keep a deliberate-triage skip under a NEW reason string `whole-file-deleted>cap` (r5-M3: they have no post-image to parse and no lines to window — the alternative, line-window splitting, judges dead context; the skip is deliberate triage feeding `n_triaged`/`size_skipped_code` exactly like today's size-skips, so no Incomplete regression, and `gate_run` already admits deliberate skips).**
+**Objective:** `package_hunks` stops marking `too_large` for skipping **on the jev path only**; `main()` routes oversize code-change clusters through the Task 2/3 extractor and judges sub-clusters as first-class units. `--max-hunks` becomes units-per-run (ceiling 40, run-level, jev). **Run counters are recomputed in UNITS after expansion (r1-B1)** — the honesty machinery keeps working. **r2-M1/r5-M4: this entire task is gated on `provider == "jev"` — `triage()` gains a `provider` (or `size_policy`) parameter so the gate is MECHANICAL, and LAYA KEEPS TODAY'S EXACT BEHAVIOR: `h[\"too_large\"]` (:696) and the `hunk>` skip append (:722–724) stay live for laya — "MAX_HUNK_LINES retired" means retired FOR JEV; it remains laya's skip gate. Whole-file-deleted clusters that are themselves over-cap keep a deliberate-triage skip under a NEW reason string `whole-file-deleted>cap` (r5-M3: they have no post-image to parse and no lines to window — the alternative, line-window splitting, judges dead context; the skip is deliberate triage feeding `n_triaged` ONLY — r6-m4: `size_skipped_code()` matches `reason.startswith("hunk>")` (:1231), so the new reason is correctly EXCLUDED from the size-skip counter and `n_size_skipped_code`; `gate_run` already admits deliberate skips).**
 
 **Files:**
 - Modify: `system_one_reviewer.py` (`MAX_HUNK_LINES` :50 comment→"retired for jev; laya's skip gate" note; `package_hunks` gains an `old_file` field on clusters (r5-m1: rename-from is currently DROPPED at :502 and the old path is overwritten by `+++` at :486–498 — capture it while `---` is parsed; anchors unaffected); `triage()` gains a `provider`/`size_policy` param (r5-M4): the `hunk>` skip append :722–724 runs for laya only, replaced by token-based routing for jev; oversize routing in `main()` — post-triage pre-judge, jev only; `kept.sort`/`kept[: args.max_hunks]` at :1338–1339 replaced; counter block :1337–1340 and Incomplete-verdict block :1370–1374 recomputed in units; whole-file-deleted over-cap ⇒ deliberate skip `whole-file-deleted>cap` (r5-M3); new `git_show_or_none` helper next to `run_git` :333; argparse `--max-hunks` help text)
@@ -331,13 +375,13 @@
 **Steps:**
 1. Failing tests:
    - `test_no_hunk_skip_reason_ever_jev` (r5-M4: scoped to jev): any cluster, any size, provider jev → no skip record with reason starting `hunk>` (except the deliberate `whole-file-deleted>cap`, r5-M3).
-   - **`test_laya_keeps_size_skip` (r5-M4):** the same oversize cluster under provider laya → whole cluster judged (no AST, no split), a `hunk>` skip record IS appended, `n_size_skipped_code > 0`, and laya's state carries no `ast_context` key.
-   - `test_oversize_python_becomes_subclusters`: 273-line .ts-equivalent (Python for stdlib path) → N judged units, each with own anchor/triple, `parent_cluster` set.
-   - `test_oversize_fallback_judged_as_windows`: unparseable oversize → line-window sub-clusters, all judged.
+   - **`test_laya_keeps_size_skip` (r5-M4):** the same oversize cluster under provider laya → whole cluster judged (no AST, no split), a `hunk>` skip record IS appended, `n_size_skipped_code > 0`, and laya's state carries no `ast_context` key. **r6-m1: laya ALSO keeps the size sort and truncate at :1338–1339 (`sort(key=-size)` + `[:max_hunks]`) — order affects what laya drops at the ceiling and the consecutive-failure sequence; the test asserts the kept order is size-descending for laya, while jev's is first-come (r1-m8).**
+   - `test_oversize_python_becomes_subclusters`: a >84k-serialized-char Python file (r6-M1 sizing — multiple thousands of changed lines; NOT 273 lines, which estimates ~7–8k tokens and is not oversize) → N judged units, each with own anchor/triple, `parent_cluster` set.
+   - `test_oversize_fallback_judged_as_windows`: unparseable oversize (>84k serialized chars, r6-M1) → line-window sub-clusters, all judged.
    - **`test_unit_counters_stay_consistent` (r1-B1 — the BLOCKER regression guard):** 5 clusters, one splitting into 4 units ⇒ `n_dropped == 0`, `n_unjudged == 0`, verdict carries NO "(incomplete" suffix, and the denominator in the verdict/ledger equals the UNIT count (8 of 8), not the parent count. Plus a property assertion: `n_dropped >= 0` for every fixture combination (split, truncate, skip).
    - **`test_gate_run_accepts_v08_split_ledger` (r1-B1):** a v08-ast ledger whose run contains splits passes `gate_run` (non-negative counters, completeness check passes) — the sweep must never again reject a legal split run as malformed.
    - `test_max_hunks_is_run_level`: 3 oversize files × windows with `--max-hunks 40` → nothing dropped file-wise; dropping happens only at the run ceiling, in FIRST-COME-ACROSS-FILES order (r1-m8: file order, then cluster order — NOT `sort(key=-size)`, which can drop arbitrary sub-clusters of one parent), and dropped units produce explicit unjudged records (feeding Incomplete), never a silent file skip. Test asserts the KEPT set equals the first-40 in traversal order.
-   - `test_deletion_wholefile_stay_cluster_based`: whole-file deletion (no post-image) → judged as a single cluster (no AST), deletion rubric — **unless it is itself over-cap (r5-M3): then it takes the deliberate `whole-file-deleted>cap` skip instead of a judged call.** r2-m4: an in-file deletion-only oversize cluster is NOT this case — it HAS a post-image and is sub-clustered like any oversize cluster, with `-` lines assigned by OLD-FILE symbol (see below).
+   - `test_deletion_wholefile_stay_cluster_based`: whole-file deletion (no post-image) → judged as a single cluster (no AST), deletion rubric — **unless it is itself over-cap (r5-M3): then it takes the deliberate `whole-file-deleted>cap` skip instead of a judged call; r6-m4 regression test: the run carries NO "(incomplete" verdict suffix from this deliberate skip and `n_size_skipped_code` does NOT count it.** r2-m4: an in-file deletion-only oversize cluster is NOT this case — it HAS a post-image and is sub-clustered like any oversize cluster, with `-` lines assigned by OLD-FILE symbol (see below).
    - **`test_deletion_run_assigned_by_old_symbol` (r2-M3):** a 3-function rewrite emitted as one `-` block + one `+` block (the `new_line` never advances on `-` entries — :569–572 — so all `-` lines share ONE `e[4]`). Each sub-cluster's before-text must contain the OLD code of its own function (assigned via `e[1]` → PRE-image AST, qualified-name match to the post-image unit), and no sub-cluster may receive another function's old code. `e[4]` remains only the anchor fallback.
    - **Per-mode file sources (r2-M2 — req 1 is binding; r2-m6):** `test_mode_sources_range`: `--range`/`--pr` reads post from `git show <head>:<path>` and PRE from `git show <merge_base>:<path>` — merge base computed here; r2-m6 names the inputs: `--pr` base = `origin/main` (what :412 diffs against), `--range` base = the LEFT side of the range spec (triple-dot parsed; `A..`/`..B` forms tested; implicit HEAD allowed). `test_mode_sources_staged`: post = `git show :<path>`, pre = `git show HEAD:<path>`. `test_mode_sources_uncommitted`: post = worktree read, pre = `git show :<path>`. Each asserts the correct refs are fetched (monkeypatch capture).
    - **`test_missing_images_degrade_not_die` (r1-M2):** for EACH mode: an ADDED file (no pre-image exists), a RENAMED file (pre-image exists only under the old path — the cluster's NEW `old_file` field (r5-m1) carries the rename-from path `package_hunks` now captures; it does NOT come from the diff's carried data alone, which :502 drops), and a BINARY file (no text image) all complete the run — `git_show_or_none` returns None, no `sys.exit`, `-` lines get symbol-free enrichment, and a missing POST-image leaves the cluster whole. (Regression guard for `run_git`'s `sys.exit` at :346.)
@@ -351,10 +395,10 @@
 
 ## Task 5: Budget guard — send gate + _OverBudget runtime handling
 
-**Objective:** The SEND gate + runtime-400 handling only — **r5-M5: Task 5 does NO proactive splitting** (all proactive trimming/splitting already happened pre-`judge()` in Task 4, re-run after enrichment in Task 6; Task 5 owns the defense-in-depth assert that nothing over-cap is ever sent, and the typed `_OverBudget` runtime-400 path: raised INSIDE `jev_ask`, halve-and-retry driven by `judge()`, depth-capped, one-attempt accounting, unjudged at the leaf). **r5-m6 — `judge()`'s return contract is now `(findings, latencies, meta)` where `meta = {"added_units": N, "avg_input_tokens": float|None}`: `added_units` feeds `n_units_total`/`n_analyzed` in `main()` (runtime-split counter consistency), `avg_input_tokens` comes from the payload's `usage.input_tokens` (jev only — laya payloads carry no `usage`, so it is `None` for laya); EVERY caller and every test stub updated.**
+**Objective:** The SEND gate + runtime-400 handling only — **r5-M5: Task 5 does NO proactive splitting** (all proactive trimming/splitting already happened pre-`judge()` in Task 4, re-run after enrichment in Task 6; Task 5 owns the defense-in-depth assert that nothing over-cap is ever sent, and the typed `_OverBudget` runtime-400 path: raised INSIDE `jev_ask`, halve-and-retry driven by `judge()`, depth-capped, one-attempt accounting, unjudged at the leaf). **r5-m6 — `judge()`'s return contract is now `(findings, latencies, meta)` where `meta = {"added_units": N, "avg_input_tokens": float|None}`: `added_units` feeds `n_units_total`/`n_analyzed` in `main()` (runtime-split counter consistency), `avg_input_tokens` comes from the payload's `usage.input_tokens` (jev only — laya payloads carry no `usage`, so it is `None` for laya); EVERY caller and every test stub updated.** **r6-m3 runtime-split mechanics: `judge()` has no pre/post images and no extractor (those live in `main()`), so `main()` INJECTS a `split_unit` callable (closing over the fetched images + Tasks 2/3 extractors + trim helpers); when the callable is `None` (or the unit cannot be split further), the unit is marked unjudged — never a crash. And `judge()` must catch `_OverBudget` BEFORE its generic `except Exception` (:954) — otherwise the over-budget error counts as an ordinary call failure and inflates the consecutive-failure counter.**
 
 **Files:**
-- Modify: `system_one_reviewer.py` (`jev_ask` :157–190 — `_OverBudget` raised at the `resp.status >= 400` branch next to `_NoRetry` :179–183; `judge()` ask loop :950–965 — `payload, ms = ask(...)` at :951, split loop lives here; `_NoRetry` neighborhood :148 for the `_OverBudget` class)
+- Modify: `system_one_reviewer.py` (`jev_ask` :157–193 — `_OverBudget` raised at the `resp.status >= 400` branch next to `_NoRetry` :179–183; `judge()` ask loop :950–965 — `payload, ms = ask(...)` at :951, split loop lives here, `_OverBudget` caught BEFORE the generic `except Exception` :954 (r6-m3), `split_unit` injected parameter; `_NoRetry` neighborhood :148 for the `_OverBudget` class)
 - Test: `tests/test_budget.py` (extend)
 
 **Steps:**
@@ -365,13 +409,13 @@
    - `test_budget_termination_bounded`: transport always 400s → the split recursion terminates in bounded attempts (test the recursion helper DIRECTLY on synthetic multi-unit input — r2-m2: the ⌈log2(24)⌉+1 depth bound belongs to multi-unit batched calls, not this plan's 1-unit-per-call transport; the property tested here is "terminates, unit marked unjudged, run continues, no infinite loop, no fail-open").
    - `test_other_400_still_NoRetry`: 401 → `_NoRetry` immediately (existing behavior intact).
    - `test_send_payload_under_hard_cap` (r1-m2): the SEND gate asserts state + ALL questions ≤ `HARD_CAP_TOKENS` (the wire-total rule the brief :273–274 requires) — a payload over the hard cap is never sent; over-hard-cap ⇒ split, same machinery as soft cap. **r2-m2: the test uses SYNTHETIC oversized questions (once state + longest ≤28k, real questions cannot exceed 56k — the check is defense-in-depth and is labeled as such).**
-   - **`test_judge_return_contract` (r5-m6):** `judge()` returns `(findings, latencies, meta)`; `meta["added_units"] == 0` on a clean run and == the leaf count after a runtime split; `meta["avg_input_tokens"]` is a float for jev (stub payload carrying `usage.input_tokens`) and `None` for laya (payload without `usage`); every existing caller/stub updated to the 3-tuple.
+   - **`test_judge_return_contract` (r5-m6):** `judge()` returns `(findings, latencies, meta)`; `meta["added_units"] == 0` on a clean run and == the leaf count after a runtime split; `meta["avg_input_tokens"]` is a float for jev (stub payload carrying `usage.input_tokens`) and `None` for laya (payload without `usage`); every existing caller/stub updated to the 3-tuple. **r6-m2: EVERY early-return path too — `judge()`'s three fail-open returns (today `(None, latencies)` at :959/:1025/:1035) become `(None, latencies, meta)`; the existing 2-tuple unpacking stubs (tests/test_triage_and_failreason.py :24/:34/:42/:176, test_package.py :341, test_line_span.py :42) are all updated in the same commit; a test asserts a fail-open run unpacks 3-tuples at every call site and reports Unavailable (never a ValueError crash).**
    - **`test_runtime_split_counts_consistent` (r2-M2):** a run where one unit 400s then splits at runtime ⇒ `judge()`'s `added_units` report makes `len(judged) == n_analyzed` (the completeness check :97–102 passes), each split leaf is its OWN judged entry (never merged), and the Incomplete verdict does not fire from a legal runtime split.
    - `test_consecutive_accounting_single`: a full over-budget chain counts once toward consecutive failures (brief r3-M5).
    - **`test_input_tokens_logged` (r2-M4):** a successful call's `usage.input_tokens` from the payload reaches the ledger (`avg_input_tokens` in log_run via `judge()`'s meta); the chars-per-token recalibration story depends on it; laya runs log `None`.
 2. Run → FAIL; implement.
 3. Tests → PASS; full suite green (pytest + ruff + mypy).
-4. Commit: `feat(budget): proactive 28k split + typed _OverBudget in jev_ask with depth-capped termination`.
+4. Commit: `feat(budget): send gate + typed _OverBudget runtime split with injected splitter and depth-capped termination` (r6-nit: the old message said "proactive 28k split" — Task 5 no longer does that).
 
 ---
 
@@ -425,7 +469,7 @@
 **Steps:**
 1. Fixture run (v08): all fixtures judged or deliberately triaged (r5-M3's `whole-file-deleted>cap` is a legitimate deliberate skip), no `too_large` skips, verdicts byte-comparable modulo documented differences; TP/FP stability tied to G-D's repeat protocol — the fixture set is run 3× (same repeats mechanism) and counts as stable if 2 of 3 repeats agree exactly (r2-n2).
 2. Corpus replay: `run_corpus` on the v08 build; census recompute — 0 size-skips; write.rs/wisdom.ts-class files produce send-legal batches (units-level numbers cross-checked against Task 1b's projections).
-3. **G-C:** run the 5 CJ heads (`examples/cj-field-goldens.tsv`) on the v08 transport — each stays ≤1 reported FP major (the AST-split machinery turns previously-skipped files into findings on CLEAN heads; this is where that would bite).
+3. **G-C:** run the 5 CJ heads (`examples/cj-field-goldens.tsv`) on the v08 transport — each stays ≤1 reported FP major (the AST-split machinery turns previously-skipped files into findings on CLEAN heads; this is where that would bite). **r6-M1 sub-measure (mandatory): for each CJ head, separately report verdict changes on clusters in the 121-line…84k-char band — previously SKIPPED by the line gate, now judged WHOLE under the token gate — so a recall drop on that band is visible and cannot hide behind a passing G-A.**
 4. **G-D (r2-M4 + r5-M4/M6 — three arms, control + live are MANDATORY):** (a) **CONTROL arm:** current main build (v03b transport), LIVE model, 3 repeats, same samples — contemporaneous with the v08 runs, so same-day model state; the agreement BASELINE is computed from these repeats (v06-postmerge stored ledgers = cross-era sanity reference only). (b) **v08 live arm:** the v08 build, LIVE model, same samples — verdict-agreement + findings-Jaccard vs the control baseline. (c) **enrichment-off arm (mandatory; origin r2-m4, flag from r5-m2):** v08 with `--no-enrichment`, isolating enrichment's effect from the split's. Runs affected by the truncation-order change (r1-m8: size-sorted → first-come) are reported SEPARATELY from unchanged-order runs so the two effects never blend. Skipped-case improvements exempt.
 5. **Threshold re-sweep (r1-M1):** sweep on v08 fixtures; if the 0.50/0.70 values no longer hold, STOP and take the new numbers to Kurt before landing (threshold change = ruling-class decision).
 6. Any gate failure → stop, diagnose, fix, re-run. No partial claims.
@@ -481,6 +525,7 @@
 - **Anchor drift:** ordinary (non-oversize) clusters keep their ANCHORS, spans, and cluster identity byte-identical — asserted in Task 4 tests. Their STATES are NOT untouched: Task 6 adds `ast_context` to ordinary clusters too (D3 default path), so golden comparability for ordinary clusters is structural for anchors only; state-level comparison is G-D's job (control arm + enrichment-off arm, r5-M4).
 - **Split inflation:** more units = more calls on oversize files. Accepted: time policy is none (Kurt ruling); cost logged via input_tokens.
 - **write.rs (114k chars)**: exercises the depth cap for real. Task 8 includes it explicitly.
+- **The 121-line…84k-char band (r6-M1, pending-ruling):** clusters in this band were skipped under the line gate and are now judged as ONE whole call with a single anchor (wisdom.ts never splits; importMachine.ts-scale evidence sits below the token gate). Mitigation implemented: fixture resize + the G-C/G-D sub-measure; revisit ruled option 2 (separate engagement threshold) if gate data shows recall drop. See the Rev 6 header for the full numbered options Kurt holds.
 - **Laya regression risk (r5-M4 corrected):** near-zero, and now MECHANICAL — the AST/budget path is gated on `provider == "jev"` via `triage()`'s size_policy param and `main()`'s enrichment attachment; laya keeps `MAX_HUNK_LINES` skips + whole-cluster judging. One honest correction (r3-M4): the r1 claim "the split loop runs in `judge()`, which laya's transport never enters" was FALSE — laya runs through `judge()` too (:1343); the real laya safety is the provider gate (no sub-clusters/`ast_context` ever created) plus `_OverBudget` being raisable only inside `jev_ask`, which laya's transport never calls.
 - **Tree-sitter wheel choice** (tree-sitter-languages vs per-language): verify maintained wheel at implementation time (brief req 6); either way the import stays lazy, loader-injected, and optional.
 - **Fossil-string tests (r5-m7):** `test_render_collapses_duplicate_skips` (tests/test_triage_and_failreason.py :222–229) hardcodes `"hunk>120 lines"` — it STAYS VALID as-is (r5-m7: laya still emits that string, so it remains a live expectation, not a fossil); do NOT update it. `tests/test_score_corpus.py:97` also contains the string as OLD-LEDGER fixture data exercising the back-compat path — intentional, leave as-is with a comment.
