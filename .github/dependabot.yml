@@ -1,3 +1,9 @@
+# Alerts whose path is node_modules/npm/node_modules/* are bundled inside the
+# npm CLI (pulled in by semantic-release -> @semantic-release/npm). npm
+# `overrides` cannot patch bundled deps; only a new npm release can. We don't
+# configure @semantic-release/npm in .releaserc.json, so that CLI never runs.
+# Check the newest npm tarball's bundled version; if it's still vulnerable,
+# dismiss as "not used" rather than trying overrides.
 version: 2
 updates:
   - package-ecosystem: "npm"
