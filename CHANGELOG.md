@@ -1,3 +1,9 @@
+## [0.7.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.6.0...v0.7.0) (2026-10-02)
+
+### Features
+
+* **honesty:** Step 0′ — size-skipped code clusters count as unjudged ([d2a981e](https://github.com/equationalapplications/system-one-reviewer/commit/d2a981e22772e30e70f565255a97a1a33154dfa0)), closes [#9](https://github.com/equationalapplications/system-one-reviewer/issues/9)
+
 ## [0.6.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.5.0...v0.6.0) (2026-09-29)
 
 ### Features
