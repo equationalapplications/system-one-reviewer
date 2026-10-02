@@ -1,3 +1,12 @@
+# Alerts under node_modules/npm/node_modules/* are bundled inside the
+# npm CLI package (pulled in transitively via semantic-release ->
+# @semantic-release/npm). npm `overrides` cannot patch bundled deps;
+# only a new npm release can. @semantic-release/npm isn't a configured
+# plugin, so semantic-release never invokes its npm publishing plugin
+# (CI uses the runner-provided npm for `npm ci`/`npx semantic-release`,
+# not the bundled CLI). If the newest npm tarball still ships a
+# vulnerable version and the affected package isn't loaded by the
+# workflow, dismiss as "not used" rather than trying overrides.
 version: 2
 updates:
   - package-ecosystem: "npm"
