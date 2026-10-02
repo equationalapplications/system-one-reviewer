@@ -28,6 +28,7 @@ Usage:
 """
 
 import argparse
+import ast
 import json
 import math
 import os
@@ -58,6 +59,12 @@ MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
 SOFT_CAP_TOKENS = 28_000      # over this: split before judging (Task 5)
 HARD_CAP_TOKENS = 56_000      # over this: never send (Task 5 send-gate)
 CHARS_PER_TOKEN = 3.0
+# Line-window fallback SIZE (plan Task 3, FALLBACK_WINDOW_LINES): this is
+# a window SIZE choice only, never an engagement or skip test — the
+# arbitrary-ness concern was about SKIPPING on a line count, not about
+# how wide a fallback window is. Engagement is token-based everywhere
+# (r1-M4: estimate_call_size > SOFT_CAP_TOKENS).
+FALLBACK_WINDOW_LINES = 120
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 # Rubric thresholds (v0.3b, Kurt review): the 0.50 plateau was calibrated
 # on code-change answers. The deletion rubric asks a different question, so
@@ -463,6 +470,24 @@ def triple_dot(rng):
     return rng
 
 
+def _cluster_anchor(entries, seg_start, seg_end, hunk_start):
+    """Shared anchor chain (plan Task 2, r1-M3): first '+' tracked line in
+    seg[seg_start:seg_end] -> first '-' entry's e[4] (the tracked HEAD
+    position where the line was removed — anchor-FALLBACK only, r5-M1)
+    -> first context entry's line at/after the run -> the run's
+    hunk_start. Used by BOTH package_hunks and sub-cluster assembly, so
+    parent clusters and their sub-clusters anchor by the same rule."""
+    anchor = next((e[1] for e in entries[seg_start:seg_end]
+                   if e[0] == "+" and e[1] is not None), None)
+    if anchor is None:
+        anchor = next((e[4] for e in entries[seg_start:seg_end]
+                       if e[0] == "-" and e[4] is not None), None)
+    if anchor is None:
+        anchor = next((e[1] for e in entries[seg_end:]
+                       if e[0] == " " and e[1] is not None), None)
+    return anchor if anchor is not None else hunk_start
+
+
 def package_hunks(diff):
     """Cluster-level packaging: contiguous changed lines form a cluster, each
     with +/-4 context lines. Windows are clamped at @@ hunk boundaries (a
@@ -653,25 +678,11 @@ def package_hunks(diff):
                 while hi < min(len(seg), g[-1] + CTX + 1) and hi not in foreign:
                     hi += 1
                 window = seg[lo:hi]
-                # anchor chain (plan Task 2): first '+' in the cluster's own
-                # run, never a neighbouring cluster's window; then the first
-                # context entry with a lineno at/after the run; then the run's
-                # hunk_start
-                anchor = next((e[1] for e in seg[g[0]:g[-1] + 1]
-                               if e[0] == "+" and e[1] is not None), None)
-                if anchor is None:
-                    # deletion-only cluster: anchor at the position in HEAD
-                    # where the line was removed (M2, r2) — the '-' entry's
-                    # tracked new_line, correct even when earlier lines in
-                    # the hunk shifted the count (the old-file line is kept
-                    # on the entry for display)
-                    anchor = next((e[4] for e in seg[g[0]:g[-1] + 1]
-                                   if e[0] == "-" and e[4] is not None), None)
-                if anchor is None:
-                    anchor = next((e[1] for e in seg[g[-1] + 1:hi]
-                                   if e[0] == " " and e[1] is not None), None)
-                if anchor is None:
-                    anchor = seg_hunk_start
+                # anchor chain via the SHARED helper (plan Task 2, r1-M3):
+                # first '+' in the cluster's own run, never a neighbouring
+                # cluster's window; then the first context entry with a
+                # lineno at/after the run; then the run's hunk_start
+                anchor = _cluster_anchor(seg, g[0], g[-1] + 1, seg_hunk_start)
                 lines, n_changed = [], 0
                 for w in window:
                     k, n, t, _ = (w[0], w[1], w[2], w[3])
@@ -722,6 +733,487 @@ def package_hunks(diff):
         h["size"] = len(h["lines"])
         h["too_large"] = h["size"] > MAX_HUNK_LINES
     return hunks
+
+
+# ---------- AST unit extraction (plan Tasks 2/3) ----------
+
+# entry tuples in sub-clusters keep package_hunks' exact shapes:
+#   ('+', new_line, text, hunk_start)
+#   ('-', old_line, text, hunk_start, tracked_head_line)
+
+
+def _top_level_units(tree_src):
+    """(name, start_line, end_line) for a parsed module's top-level
+    def/class nodes (end_lineno is 3.8+). Deterministic source order."""
+    try:
+        tree = ast.parse(tree_src)
+    except SyntaxError:
+        return None
+    units = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            end = getattr(node, "end_lineno", None)
+            if end is None:
+                return None
+            units.append((node.name, node.lineno, end))
+    return units
+
+
+def _qualified_matches(pre_units, post_units):
+    """Pre-unit index -> matching post-unit index by qualified name
+    (r5-M1/r2-M3: '-' lines map by old-file line into the PRE-image AST
+    and join the sub-cluster of the same-named post-image unit)."""
+    post_by_name = {name: i for i, (name, _s, _e) in enumerate(post_units)}
+    return {i: post_by_name[name]
+            for i, (name, _s, _e) in enumerate(pre_units)
+            if name in post_by_name}
+
+
+def _subcluster(parent, entries, change_type=None, hunk_start=None):
+    """Assemble one sub-cluster record from `entries`, sharing the parent's
+    identity (D8) and anchoring via the SHARED anchor chain."""
+    anchor = _cluster_anchor(entries, 0, len(entries),
+                             hunk_start if hunk_start is not None
+                             else parent["hunk_start"])
+    span = [e[4] if e[0] == "-" else e[1] for e in entries]
+    span = [n for n in span if n is not None] or [anchor]
+    lines = []
+    for w in entries:
+        k, n, t, _hs = w[0], w[1], w[2], w[3]
+        if k == "+":
+            lines.append(f"{n}: + {t}")
+        elif k == "-":
+            lines.append("    - " + t)
+        else:
+            lines.append(f"{n}:   {t}")
+    return {
+        "file": parent["file"],
+        "line": anchor,
+        "line_start": min(span), "line_end": max(span),
+        "hunk_start": hunk_start if hunk_start is not None
+        else parent["hunk_start"],
+        "header": (f"@@ {parent['file']} around line {anchor} "
+                   f"({len(entries)} changed lines) @@"),
+        "lines": lines, "entries": list(entries),
+        "n_changed": len(entries),
+        "change_type": change_type or parent.get("change_type",
+                                                 "code-change"),
+        "parent_cluster": parent,
+    }
+
+
+def _changed_entries(entries):
+    return [e for e in entries if e[0] != " "]
+
+
+def _entry_sort_key(e):
+    # '+' entries sort by tracked new line, '-' by old-file line (the
+    # position the content occupies in ITS image); e[4] (head anchor)
+    # never orders assignment (r5-M1) — it is the tiebreaker only.
+    if e[0] == "+":
+        return (e[1], 0)
+    return (e[1], 1, e[4] if len(e) > 4 and e[4] is not None else 0)
+
+
+def ast_units(path, before_text, after_text, entries, change_type="code-change",
+              parent_cluster=None):
+    """Sub-cluster an OVERSIZE code-change cluster on Python unit
+    boundaries (plan Task 2). stdlib `ast` only.
+
+    Engagement is TOKEN-based only (r1-M4): the caller's serialized
+    estimate must exceed SOFT_CAP_TOKENS — `ast_units` is only CALLED for
+    oversize clusters; small clusters and whole-file deletions return
+    None. `before_text` is parsed as the PRE-image AST ('-' entries map
+    by e[1] into it, r5-M1); `after_text` as the POST-image ('+' by e[1]).
+
+    Returns sub-clusters (boundaries on top-level def/class ends, own
+    anchor + full question triple per D8, parent change_type inherited,
+    union == original always) or None when the AST cannot help (parse
+    error, non-Python, no units cover the span) — the caller then falls
+    back to line windows."""
+    if change_type == "whole-file-deleted":
+        return None  # no post-image to parse (r5-M3); Task 4 skips these
+    changed = _changed_entries(entries)
+    if not changed:
+        return None
+    # TOKEN-based engagement (r1-M4): only proceed when the cluster's own
+    # serialized state exceeds SOFT_CAP_TOKENS — a small cluster is never
+    # split, whatever its line count.
+    if estimate_call_size(
+            hunk_state({"file": path, "line": 1, "entries": changed,
+                        "change_type": change_type}), HUNK_QUESTIONS) \
+            <= SOFT_CAP_TOKENS:
+        return None
+    parent = parent_cluster if parent_cluster is not None else {
+        "file": path, "hunk_start": next(
+            (e[3] for e in changed if len(e) > 3), 1),
+        "change_type": change_type}
+    try:
+        post_units = _top_level_units(after_text)
+    except (ValueError, TypeError):
+        post_units = None
+    pre_units = None
+    if before_text:
+        try:
+            pre_units = _top_level_units(before_text)
+        except (ValueError, TypeError):
+            pre_units = None
+    if not post_units:
+        return None  # parse error / non-Python -> line-window fallback
+    parent = parent_cluster if parent_cluster is not None else {
+        "file": path, "hunk_start": next(
+            (e[3] for e in changed if len(e) > 3), 1),
+        "change_type": change_type}
+    match = _qualified_matches(pre_units, post_units) if pre_units else {}
+
+    # assignment: '+' -> enclosing post unit by e[1]; '-' -> matched post
+    # unit via the PRE-image enclosing symbol by e[1]; unmatched '-' ->
+    # its own PRE-boundary sub-cluster (r6-M2); context rides with the
+    # nearest '+'/'-' assignment (window glue, never changes the union).
+    by_post: dict[int, list] = {}
+    own: list = []
+    context: list = []
+    for e in entries:
+        if e[0] == " ":
+            context.append(e)
+            continue
+        lineno = e[1]
+        if e[0] == "+":
+            unit = next((i for i, (_n, s, en) in enumerate(post_units)
+                         if s <= lineno <= en), None)
+            if unit is not None:
+                by_post.setdefault(unit, []).append(e)
+                continue
+            own.append(e)  # outside every unit: glued below (union == orig)
+        else:  # '-': pre-image symbol by e[1], joined by qualified name
+            if pre_units:
+                pre_i = next((i for i, (_n, s, en) in enumerate(pre_units)
+                              if s <= lineno <= en), None)
+                if pre_i is not None and pre_i in match:
+                    by_post.setdefault(match[pre_i], []).append(e)
+                    continue
+            own.append(e)
+    # '+' entries outside every unit (blank separators, module-level
+    # stragglers) glue to the NEAREST unit by line — union == original
+    # always (r6-M2); ties go to the earlier unit (deterministic).
+    own_pluses = [e for e in own if e[0] == "+"]
+    for e in own_pluses:
+        lineno = e[1]
+        nearest = min(
+            range(len(post_units)),
+            key=lambda i: (min(abs(post_units[i][1] - lineno),
+                               abs(post_units[i][2] - lineno)), i))
+        by_post.setdefault(nearest, []).append(e)
+        own.remove(e)
+    if not by_post and not own:
+        return None
+    subs = []
+    for i in sorted(by_post):
+        group = by_post[i]
+        # glue this unit's flanking context onto its sub-cluster window
+        _n, s, en = post_units[i]
+        lo = min((e[1] for e in group), default=s)
+        hi = max((e[1] for e in group), default=en)
+        glue = [c for c in context if s - 4 <= c[1] <= en + 4
+                and not (lo < c[1] < hi)]
+        subs.append(_subcluster(parent, sorted(group + glue,
+                                               key=_entry_sort_key),
+                                change_type=change_type,
+                                hunk_start=parent["hunk_start"]))
+    # unmatched pre-image symbols: own sub-clusters cut on PRE-image
+    # boundaries, anchored via e[4], parent change_type kept (r6-M2)
+    if own:
+        own.sort(key=_entry_sort_key)
+        if pre_units:
+            bounds: dict[int, list] = {i: [] for i in range(len(pre_units))}
+            loose = []
+            for e in own:
+                pre_i = next((i for i, (_n, s, en) in enumerate(pre_units)
+                              if s <= e[1] <= en), None)
+                if pre_i is None:
+                    loose.append(e)
+                else:
+                    bounds[pre_i].append(e)
+            for pre_i in sorted(k for k in bounds if bounds[k]):
+                _n, s, en = pre_units[pre_i]
+                grp = bounds[pre_i]
+                anchor_fb = next((e[4] for e in grp
+                                  if len(e) > 4 and e[4] is not None),
+                                 grp[0][1])
+                # cut on PRE-image boundaries; span/anchor via e[4]
+                subs.append(_subcluster(
+                    parent, grp, change_type=change_type,
+                    hunk_start=parent["hunk_start"]))
+                subs[-1]["line"] = anchor_fb
+            own = loose
+        for e in own:  # no pre-image: one sub-cluster per run of '-' lines
+            subs.append(_subcluster(parent, [e], change_type=change_type,
+                                    hunk_start=parent["hunk_start"]))
+            fb = e[4] if len(e) > 4 and e[4] is not None else e[1]
+            subs[-1]["line"] = fb
+    if not subs:
+        return None
+    return subs
+
+
+# ---------- tree-sitter units + line-window fallback (plan Task 3) ----------
+
+TS_LANGUAGE_BY_EXT = {"ts": "typescript", "tsx": "tsx", "js": "javascript",
+                      "jsx": "javascript", "mjs": "javascript",
+                      "cjs": "javascript"}
+
+
+def ts_units(path, before_text, after_text, entries,
+             change_type="code-change", parent_cluster=None, loader=None):
+    """Same contract as ast_units for TS/JS via tree-sitter. The import is
+    LAZY through the injectable `loader` seam (r1-m5/m6): NO static
+    `import tree_sitter` anywhere and NO `# type: ignore` — CI has no
+    tree-sitter, and a missing module returns None (fallback), never
+    raises."""
+    if change_type == "whole-file-deleted":
+        return None
+    ext = os.path.splitext(path or "")[1].lower().lstrip(".")
+    lang = TS_LANGUAGE_BY_EXT.get(ext)
+    if lang is None:
+        return None
+    changed = _changed_entries(entries)
+    if not changed:
+        return None
+    try:
+        tree_sitter = (loader or __import__)("tree_sitter")
+        grammar_mod = (loader or __import__)(
+            "tree_sitter_typescript" if lang in ("typescript", "tsx")
+            else "tree_sitter_javascript")
+    except Exception:
+        return None  # missing/failed import -> deterministic fallback
+    try:
+        get_lang = (grammar_mod.language_typescript if lang == "typescript"
+                    else grammar_mod.language_tsx if lang == "tsx"
+                    else getattr(grammar_mod, "language", None))
+        if get_lang is None:
+            return None
+        parser = tree_sitter.Parser(tree_sitter.Language(get_lang()))
+        tree = parser.parse(after_text.encode("utf-8", "replace"))
+        root = tree.root_node
+        units = []
+        for node in root.children:
+            name_node = (node.child_by_field_name("name")
+                         if hasattr(node, "child_by_field_name") else None)
+            if name_node is None:
+                continue
+            units.append((name_node.text.decode("utf-8", "replace"),
+                          node.start_point[0] + 1, node.end_point[0] + 1))
+    except Exception:
+        return None
+    if not units:
+        return None
+    parent = parent_cluster if parent_cluster is not None else {
+        "file": path, "hunk_start": next(
+            (e[3] for e in changed if len(e) > 3), 1),
+        "change_type": change_type}
+    by_post: dict[int, list] = {}
+    rest: list = []
+    for e in entries:
+        if e[0] == " ":
+            rest.append(e)
+            continue
+        unit = next((i for i, (_n, s, en) in enumerate(units)
+                     if s <= e[1] <= en), None)
+        if unit is not None:
+            by_post.setdefault(unit, []).append(e)
+        else:
+            rest.append(e)
+    if not by_post:
+        return None
+    subs = []
+    for i in sorted(by_post):
+        subs.append(_subcluster(parent, sorted(by_post[i],
+                                               key=_entry_sort_key),
+                                change_type=change_type,
+                                hunk_start=parent["hunk_start"]))
+    if len(subs) == 1:
+        return None  # no boundary gain -> let the caller fall through
+    if rest:
+        subs.append(_subcluster(parent, sorted(rest, key=_entry_sort_key),
+                                change_type=change_type,
+                                hunk_start=parent["hunk_start"]))
+    return subs
+
+
+def line_window_subclusters(path, entries, change_type="code-change",
+                            parent_cluster=None,
+                            window_lines=FALLBACK_WINDOW_LINES):
+    """The always-works fallback (plan Task 3): cut the oversize cluster's
+    entries into windows of at most `window_lines` lines each, at blank
+    lines where possible, never mid-line. `window_lines` sizes the
+    windows only — it is NEVER an engagement or skip test (r1-M4:
+    engagement is token-based; the caller only invokes this for oversize
+    clusters). Union == original, no overlap, deterministic."""
+    changed = _changed_entries(entries)
+    if not changed:
+        return None
+    parent = parent_cluster if parent_cluster is not None else {
+        "file": path, "hunk_start": next(
+            (e[3] for e in changed if len(e) > 3), 1),
+        "change_type": change_type}
+    ordered = sorted(entries, key=_entry_sort_key)
+    groups: list = []
+    run: list = []
+    run_start = None
+    for e in ordered:
+        line = e[4] if e[0] == "-" else e[1]
+        if run_start is None:
+            run_start = line
+        if run and line - run_start + 1 > window_lines:
+            # window would overflow: cut the PREVIOUS run at its last
+            # blank line when one exists (blank-line preference), else
+            # hard-cut at the overflow point; never mid-line.
+            cut = len(run)
+            for k in range(len(run) - 1, 0, -1):
+                rk = run[k][4] if run[k][0] == "-" else run[k][1]
+                if rk - run_start + 1 > window_lines:
+                    break
+                if not str(run[k][2]).strip():
+                    cut = k + 1
+                    break
+            else:
+                for k in range(len(run) - 1, 0, -1):
+                    rk = run[k][4] if run[k][0] == "-" else run[k][1]
+                    if rk - run_start + 1 <= window_lines:
+                        cut = k + 1
+                        break
+            groups.append(run[:cut])
+            run = run[cut:]
+            run_start = (run[0][4] if run[0][0] == "-" else run[0][1])
+        run.append(e)
+    if run:
+        groups.append(run)
+    if len(groups) <= 1:
+        return None  # a single window is no split at all
+    subs = []
+    for g in groups:
+        if g:
+            subs.append(_subcluster(parent, g, change_type=change_type,
+                                    hunk_start=parent["hunk_start"]))
+    return subs or None
+
+
+# ---------- per-mode file images (plan Task 4 helpers; not wired yet) ----------
+
+def git_show_or_none(repo, rev, path):
+    """`git show <rev>:<path>` that DEGRADES instead of dying (r1-M2): a
+    missing image (added file, rename, binary, gitlink) is a normal case,
+    so this returns None — never the sys.exit run_git would raise at
+    :346. `rev == "worktree"` reads the working tree (the --uncommitted
+    post-image, D4's documented diff-only exception)."""
+    if rev == "worktree":
+        full = os.path.join(repo, path)
+        try:
+            with open(full, "rb") as f:
+                data = f.read()
+        except OSError:
+            return None
+    else:
+        try:
+            if rev == ":":
+                # staged-image rev (mode_file_images): ':<path>'
+                argv = ["git", "-C", repo, "show", f":{path}"]
+            else:
+                argv = ["git", "-C", repo, "show", f"{rev}:{path}"]
+            r = subprocess.run(
+                argv,
+                capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if r.returncode != 0:
+            return None
+        data = r.stdout
+    if b"\x00" in data[:8192]:
+        return None  # binary / gitlink — no text image to parse
+    return data.decode("utf-8", "replace")
+
+
+_IMAGE_CACHE: dict = {}
+
+
+def mode_file_images(repo, mode, head, path, old_file=None,
+                     fetch=None, merge_base=None):
+    """Fetch (pre_image, post_image) for a cluster's path under the run's
+    mode (r2-M2/r2-m6). Modes:
+      range:<spec> / pr:<n>  post = git show <head>:<path>
+                             pre  = git show <merge_base>:<path>
+                             (--pr base = origin/main; --range base =
+                             the LEFT side of the triple-dot spec)
+      staged                 post = git show :<path>
+                             pre  = git show HEAD:<path>
+      uncommitted            post = worktree read
+                             pre  = git show :<path>
+    `old_file` (package_hunks' rename-from field) is used for the
+    pre-image when the path itself has none (renames). Missing images are
+    None — the caller degrades, never dies. Cache key is the MODE-AWARE
+    (mode, rev, path) triple (r2-m2): an --uncommitted post-image can
+    never serve a --staged request in one process."""
+    def _fetch(repo_, rev, path_):
+        if fetch is not None:
+            return fetch(repo_, rev, path_)
+        return git_show_or_none(repo_, rev, path_)
+
+    def _merge_base(repo_, base_ref, head_):
+        if merge_base is not None:
+            return merge_base(repo_, base_ref, head_)
+        try:
+            r = subprocess.run(
+                ["git", "-C", repo_, "merge-base", base_ref, head_],
+                capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        out = r.stdout.strip()
+        return out.splitlines()[0] if out else None  # FIRST result (r2-m6)
+
+    def cached(rev):
+        key = (mode, rev, path)
+        if key not in _IMAGE_CACHE:
+            _IMAGE_CACHE[key] = _fetch(repo, rev, path)
+        return _IMAGE_CACHE[key]
+
+    if mode.startswith("range:"):
+        spec = mode[len("range:"):]
+        if "..." in spec:
+            left = spec.split("...", 1)[0] or "HEAD"
+        elif ".." in spec:
+            left = spec.split("..", 1)[0] or "HEAD"
+        else:
+            left = spec or "HEAD"
+        base = _merge_base(repo, left, head)
+        post = cached(head)
+        pre = cached(base) if base else None
+        if pre is None and old_file and base:
+            pre = _fetch(repo, base, old_file)
+        return pre, post
+    if mode.startswith("pr:"):
+        base = _merge_base(repo, "origin/main", head)
+        post = cached(head)
+        pre = cached(base) if base else None
+        if pre is None and old_file and base:
+            pre = _fetch(repo, base, old_file)
+        return pre, post
+    if mode == "staged":
+        post = cached(":")
+        pre = cached("HEAD")
+        if pre is None and old_file:
+            key = (mode, "HEAD", old_file)
+            if key not in _IMAGE_CACHE:
+                _IMAGE_CACHE[key] = _fetch(repo, "HEAD", old_file)
+            pre = _IMAGE_CACHE[key]
+        return pre, post
+    if mode == "uncommitted":
+        post = cached("worktree")
+        pre = cached(":")
+        if pre is None and old_file:
+            pre = _fetch(repo, ":", old_file)
+        return pre, post
+    return None, None
 
 
 def _span(h):
