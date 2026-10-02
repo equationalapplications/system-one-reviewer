@@ -87,6 +87,66 @@ def test_gate_rejects_missing_judged(sw):
         sw.gate_run(rec, EXPECTED)
 
 
+# ---------- Step 0′ structured gate (hunk-size investigation) ----------
+
+def _run0(label, fixture, judged, n_dropped=0, n_unjudged=0,
+          n_size_skipped_code=0, base_verdict="Approved", **kw):
+    r = _run(label, fixture, judged, **kw)
+    r.update({"base_verdict": base_verdict, "n_dropped": n_dropped,
+              "n_unjudged": n_unjudged,
+              "n_size_skipped_code": n_size_skipped_code})
+    return r
+
+
+def test_gate_admits_size_skipped_only_run(sw):
+    """The core Step 0′ behavior: a size-skip alone must NOT disqualify."""
+    sw.gate_run(_run0("x", "positive", [_judged(10, 0.9)],
+                      n_size_skipped_code=8), EXPECTED["positive"])
+
+
+def test_gate_rejects_dropped_with_base_verdict(sw):
+    with pytest.raises(SystemExit, match="incomplete review"):
+        sw.gate_run(_run0("x", "positive", [], n_dropped=2), EXPECTED)
+
+
+def test_gate_rejects_unjudged_with_base_verdict(sw):
+    with pytest.raises(SystemExit, match="incomplete review"):
+        sw.gate_run(_run0("x", "positive", [], n_unjudged=1), EXPECTED)
+
+
+def test_gate_rejects_malformed_base_verdict_record(sw):
+    """base_verdict with missing counts must die, never default to 0."""
+    rec = _run("x", "positive", [])
+    rec["base_verdict"] = "Approved"  # counts absent
+    with pytest.raises(SystemExit, match="malformed"):
+        sw.gate_run(rec, EXPECTED)
+
+
+@pytest.mark.parametrize("bad_key", ["n_dropped", "n_unjudged", "n_size_skipped_code"])
+@pytest.mark.parametrize("bad_value", [None, "0", -1, 1.5, True])
+def test_gate_rejects_non_negative_int_counts(sw, bad_key, bad_value):
+    """CodeRabbit r3: presence isn't enough — JSON decodes null to None, so
+    `rec["n_dropped"] > 0` TypeErrors and bubbles past select_runs's
+    SystemExit guard. Require non-negative ints so a malformed record is
+    rejected through die() like every other gate failure."""
+    rec = _run0("x", "positive", [], **{bad_key: bad_value})
+    with pytest.raises(SystemExit, match="malformed"):
+        sw.gate_run(rec, EXPECTED["positive"])
+
+
+def test_gate_legacy_suffix_fallback_still_rejects(sw):
+    rec = _run("x", "positive", [])
+    rec["verdict"] = "Approved (incomplete review — 3 of 5 clusters judged)"
+    with pytest.raises(SystemExit, match="incomplete review"):
+        sw.gate_run(rec, EXPECTED)
+
+
+def test_gate_legacy_clean_run_still_admitted(sw):
+    rec = _run("x", "positive", [])
+    rec["verdict"] = "Approved"
+    sw.gate_run(rec, EXPECTED["positive"])
+
+
 def test_select_runs_requires_three_per_fixture(sw, tmp_path):
     recs = _pos_runs([_judged(10, 0.9)], n=2) + _neg_runs([])
     with pytest.raises(SystemExit, match="3 runs per fixture"):

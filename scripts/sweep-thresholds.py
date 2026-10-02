@@ -75,6 +75,15 @@ def gate_run(rec, expected, packaging_version="v03b"):
     r12 MINOR 2: the verdict is checked too — `n_analyzed` counts
     post-truncation clusters, so a `--max-hunks`-truncated run passed the
     judged==n_analyzed check while its verdict said "(incomplete review)".
+
+    Step 0′ (hunk-size investigation, 2026-10-01): records carrying
+    `base_verdict` are gated on STRUCTURED counts, not the suffixed
+    string — `n_dropped > 0` or `n_unjudged > 0` still rejects, while
+    `n_size_skipped_code` alone is ADMITTED (a size-skipped run is a
+    candidate for the windowing fix, not a broken run). A ledger with
+    `base_verdict` but missing any count is malformed → die (never
+    default a missing count to 0 — that would re-open the r12 hole).
+    Legacy ledgers (no `base_verdict`) fall back to the suffix check.
     """
     if not isinstance(rec.get("judged"), list):
         die(f"run {rec.get('label')!r}: no judged array (pre-v0.1 record — "
@@ -91,13 +100,39 @@ def gate_run(rec, expected, packaging_version="v03b"):
             f"{len(rec['judged'])} entries but n_analyzed={n_analyzed} "
             "(clusters dropped: parse errors or transient judge failures) "
             "— re-run")
-    # r12 MINOR 2: n_analyzed counts post-truncation clusters, so a
-    # --max-hunks-truncated run passes the check above. The verdict is the
-    # authority on completeness.
-    verdict = rec.get("verdict") or ""
-    if "(incomplete" in verdict:
-        die(f"run {rec.get('label')!r}: incomplete review ({verdict!r}) "
-            "— re-run without truncation")
+    if "base_verdict" in rec:
+        # Step 0′ structured gate: counts are the authority.
+        missing = [k for k in ("n_dropped", "n_unjudged",
+                               "n_size_skipped_code") if k not in rec]
+        if missing:
+            die(f"run {rec.get('label')!r}: malformed — has base_verdict "
+                f"but missing counts {missing} (re-run with the current "
+                "tool)")
+        # r3 (CodeRabbit): presence is not enough — JSON decodes null to
+        # None, so `rec["n_dropped"] > 0` would TypeError and bubble past
+        # `select_runs`'s SystemExit guard. Require non-negative ints so
+        # a malformed record is rejected through die() and the sweep can
+        # skip it like every other gate failure.
+        bad = [k for k, v in (("n_dropped", rec["n_dropped"]),
+                              ("n_unjudged", rec["n_unjudged"]),
+                              ("n_size_skipped_code",
+                               rec["n_size_skipped_code"]))
+               if not isinstance(v, int) or isinstance(v, bool) or v < 0]
+        if bad:
+            die(f"run {rec.get('label')!r}: malformed — counts {bad} must "
+                "be non-negative integers (re-run with the current tool)")
+        if rec["n_dropped"] > 0 or rec["n_unjudged"] > 0:
+            die(f"run {rec.get('label')!r}: incomplete review "
+                f"(n_dropped={rec['n_dropped']}, "
+                f"n_unjudged={rec['n_unjudged']}) — re-run without "
+                "truncation")
+        # n_size_skipped_code alone: ADMITTED (Step 0′ semantics).
+    else:
+        # Legacy fallback: the suffixed string is the only signal.
+        verdict = rec.get("verdict") or ""
+        if "(incomplete" in verdict:
+            die(f"run {rec.get('label')!r}: incomplete review ({verdict!r}) "
+                "— re-run without truncation")
     if rec.get("packaging_version") != packaging_version:
         die(f"run {rec.get('label')!r}: packaging_version "
             f"{rec.get('packaging_version')!r} != {packaging_version!r} "

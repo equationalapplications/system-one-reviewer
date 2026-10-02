@@ -704,7 +704,13 @@ def _span(h):
 
 
 def triage(hunks):
-    """Deterministic skip: lockfiles, generated dirs, docs-only runs."""
+    """Deterministic skip: lockfiles, generated dirs, docs-only runs.
+
+    Step 0′ (hunk-size investigation, 2026-10-01): size-skipped records
+    carry `change_type` so the verdict downgrade in main() can treat
+    CODE-change size-skips as unjudged coverage while deletion/whole-file
+    size-skips stay deliberate triage (Kurt-decision 3).
+    """
     kept, skipped = [], []
     for h in hunks:
         f = h["file"] or ""
@@ -715,6 +721,7 @@ def triage(hunks):
             skipped.append({"file": f, "reason": "data/snapshot", **_span(h)})
         elif h["too_large"]:
             skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines",
+                            "change_type": h.get("change_type", "code-change"),
                             **_span(h)})
         else:
             kept.append(h)
@@ -1029,19 +1036,30 @@ def judge(hunks, ask, errors=None):
     return findings, latencies
 
 
-def judge_pr_level(findings, ask):
-    """One extra round-trip: PR-level risk from the per-hunk digest."""
+def judge_pr_level(findings, ask, size_skipped_code=None):
+    """One extra round-trip: PR-level risk from the per-hunk digest.
+
+    Step 0′ (hunk-size investigation, 2026-10-01): size-skipped
+    CODE-change clusters appear as explicit unjudged lines, so the
+    risk model learns the core files were never judged. (compose()
+    never reads pr_level, so this is report-only — the digest change
+    is what justifies eventual version-bump handling, per the doc.)
+    """
     prov_name = _PROVIDER_NAME  # r9 m1: the wired provider, not the env
     # m2 (r10): failed calls must not look like clean hunks — label them
     # "unjudged" so the PR-level model can't read them as severity=none.
-    digest = "\n".join(
+    lines = [
         (f"- {f['hunk']['file']}:{f['hunk']['line']} unjudged "
          f"(provider call failed)"
          if f.get("parse_error") else
          f"- {f['hunk']['file']}:{f['hunk']['line']} "
          f"severity={SEV_NAME[sev_level(f.get('severity'))]} "
          f"category={f.get('category')}")
-        for f in findings) or "no per-hunk findings"
+        for f in findings]
+    for s in size_skipped_code or []:
+        lines.append(f"- {s['file']}:{s.get('line_start', '?')} unjudged "
+                     f"(skipped: {s.get('reason')})")
+    digest = "\n".join(lines) or "no per-hunk findings"
     try:
         payload, ms = ask(
             "Change set under review, per-hunk automated digest:\n" + digest,
@@ -1204,6 +1222,17 @@ def eval_against_golden(reported, golden_path):
 
 # ---------- report ----------
 
+def size_skipped_code(skipped):
+    """Size-skipped CODE-change clusters (Step 0′): unjudged coverage, not
+    deliberate triage. Deletion/whole-file size-skips stay triage. Single
+    source for both the PR-level digest and the incomplete-review counters,
+    which must agree."""
+    return [s for s in skipped
+            if str(s.get("reason", "")).startswith("hunk>")
+            and s.get("change_type", "code-change")
+            not in ("deletion-only", "whole-file-deleted")]
+
+
 def render(reported, skipped, verdict, pr_level, jitter, meta):
     prov = meta.get("provider", "jev")
     model = meta.get("model")
@@ -1318,7 +1347,9 @@ def main():
     if fail_open:
         findings = []
     elif hunks:  # empty diff: nothing for the PR-level call to judge
-        pr_level = judge_pr_level(findings, ask)
+        pr_level = judge_pr_level(
+            findings, ask,
+            size_skipped_code=size_skipped_code(skipped))
     # M1 (r9): a fail-open run must never carry a clean "Approved" — the
     # verdict is forced to "Unavailable" and flows into JSON/metrics/last
     # line, so nothing downstream reads it as a pass.
@@ -1328,11 +1359,24 @@ def main():
     reported, jitter, verdict = compose(findings, skipped,
                                         pr_level if not fail_open else None)
     n_unjudged = sum(1 for f in findings if f.get("parse_error"))
+    # Step 0′ (hunk-size investigation, 2026-10-01): a size-skipped
+    # CODE-change cluster is unjudged coverage, not deliberate triage —
+    # it joins the downgrade trigger and the denominator, never the
+    # numerator. Deletion/whole-file size-skips stay deliberate triage
+    # (Kurt-decision 3: ≤1/52 observed clusters, holds zero goldens).
+    n_size_skipped_code = len(size_skipped_code(skipped))
     if fail_open:
         verdict = "Unavailable — provider failed (fail-open)"
-    elif n_unjudged or n_dropped:
-        verdict += (f" (incomplete review — {len(kept) - n_unjudged} of "
-                    f"{len(hunks) - n_triaged} clusters judged)")
+    elif n_unjudged or n_dropped or n_size_skipped_code:
+        verdict += (f" (incomplete review — "
+                    f"{len(kept) - n_unjudged} of "
+                    f"{len(hunks) - n_triaged + n_size_skipped_code} "
+                    f"clusters judged)")
+    # Step 0′: the raw compose() verdict, before any suffix. Downstream
+    # structured consumers (sweep gate_run, shadow tally) read THIS, not
+    # the suffixed string — the suffix retires as an API.
+    base_verdict = verdict.split(" (incomplete review")[0] \
+        if not fail_open else verdict
 
     total = sum(latencies)
     judged = [
@@ -1362,7 +1406,12 @@ def main():
                    "severity": f.get("severity"), "is_real": f.get("is_real"),
                    "category": f.get("category"), "header": f["hunk"]["header"]}
                   for f in reported],
-              "skipped": skipped, "jitter": jitter, "verdict": verdict}
+              "skipped": skipped, "jitter": jitter, "verdict": verdict,
+              # Step 0′: structured verdict for downstream consumers —
+              # gate_run keys on this + explicit counts, never the string.
+              "base_verdict": base_verdict,
+              "n_dropped": n_dropped, "n_unjudged": n_unjudged,
+              "n_size_skipped_code": n_size_skipped_code}
 
     golden_eval = None
     if args.golden:
@@ -1382,6 +1431,13 @@ def main():
     log_run({"label": args.label or f"auto:{mode}", "repo": meta["repo"], "mode": mode,
              "head": head[:10], "n_hunks": meta["n_hunks"],
              "n_analyzed": meta["n_analyzed"], "verdict": verdict,
+             # Step 0′: structured completeness — gate_run reads these
+             # (never defaulting a missing count to 0 when base_verdict
+             # exists), so truncation stays rejected and size-skips don't
+             # disqualify.
+             "base_verdict": base_verdict,
+             "n_dropped": n_dropped, "n_unjudged": n_unjudged,
+             "n_size_skipped_code": n_size_skipped_code,
              "fail_open": fail_open, "fail_reason": fail_reason,
              "total_latency_ms": round(total, 1),
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,

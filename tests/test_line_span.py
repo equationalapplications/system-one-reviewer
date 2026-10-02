@@ -43,7 +43,7 @@ def test_judged_and_findings_carry_span(jr, tmp_path, monkeypatch):
         return [{"hunk": h, "severity": 2.6, "is_real": 0.9, "category": "bug-risk",
                  "confidence": 0.8, "rubric": "code-change"} for h in kept], [10.0]
     monkeypatch.setattr(jr, "judge", fake_judge)
-    monkeypatch.setattr(jr, "judge_pr_level", lambda f, a: None)
+    monkeypatch.setattr(jr, "judge_pr_level", lambda f, a, size_skipped_code=None: None)
     out = tmp_path / "out.json"
     monkeypatch.setattr("sys.argv", ["sor", "--repo", str(tmp_path), "--range", "A..B",
                                      "--json", "--out", str(out)])

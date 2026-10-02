@@ -289,9 +289,11 @@ def cmd_fetch(args):
             prev = cl.read_meta(cached) if os.path.exists(cached) else {}
             cands, totals = mine_repo(repo, args.limit)
             n_err = sum(1 for c in cands if c.get("error"))
-            # The counter advances only on re-mines made to retry errors; a
-            # scope/--force re-mine starts the new cache's budget fresh.
-            attempts = (prev.get("error_attempts", 0) + 1) if error_retry else 0
+            # The counter advances only on re-mines made to retry errors that
+            # still leave errors; a clean retry or a scope/--force re-mine
+            # starts the new cache's budget fresh.
+            attempts = (prev.get("error_attempts", 0) + 1) \
+                if error_retry and n_err else 0
             cl.write_jsonl(cached, cands,
                            meta={"limit": args.limit, "error_attempts": attempts})
             print(f"mine: {repo}: {len(cands)} candidates from {totals}")
@@ -617,9 +619,12 @@ def build_rows(candidates, adjudicated, overrides, notes, agreed, promotions, ve
 
         for row_t in sorted(verified_rows, key=_rank):
             c, a, label = row_t
-            # Key on (file, line) WITHOUT label: the loader rejects any
-            # duplicate anchor across issues+dismissed, so the builder must
-            # too — one anchor, one verdict, human's label wins.
+            # Key on (file, line) WITHOUT label: the loader rejects a
+            # duplicate (sample_id, file, line) across issues+dismissed, and
+            # sample_id is constant within this per-PR loop, so (file, line)
+            # is that same key here. Cross-PR repeats of a (file, line) are
+            # distinct anchors to both builder and loader. One anchor, one
+            # verdict, human's label wins.
             key = (a["file"], int(a["line"]))
             if key in seen_anchor:
                 warnings.append(f"{c['id']}: duplicate anchor "
