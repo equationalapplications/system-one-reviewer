@@ -1,6 +1,9 @@
 # Architecture brief: from naive 120-line windows to AST-aware batching
 
-**Status:** step-zero architecture question, **rev 6** (2026-10-02).
+**Status:** step-zero architecture question, **rev 7** (2026-10-02,
+post-merge). **ALL DECISIONS RULED — Kurt approved D1–D8 as
+recommended (2026-10-02). Investigation COMPLETE; implementation
+planning cleared.**
 Supersedes — or rather, re-scopes — the Approach A windowing plan (rev 8,
 PR #9) per Kurt's ruling of 2026-10-01: "The question you are asking is
 premature… the correct approach is to find better architecture, not
@@ -496,3 +499,16 @@ The 32k budget (state + single longest question) is the binding limit:
   m9-laya: D6 unchanged. Round budget (4) reached with the verdict at
   REQUEST CHANGES on remaining refinement-class items; the doc carries
   all of them and the Kurt-decision list.
+- **rev 7 (2026-10-02, post-merge): PR #9 merged by Kurt (33d0950,
+  v0.7.0). ALL DECISIONS RULED — Kurt approved D1–D8 as recommended
+  (2026-10-02):** D1 lazy tree-sitter opportunistic import approved;
+  D2 per-cluster+enrichment fallback accepted if G-B fails; D3 Arch 3
+  enrichment on the default path (deferred only pending G-B settling);
+  D4 `--uncommitted` working-tree read approved as documented
+  exception; **D5 per-file judgment batching only behind a passing
+  G-B, never default**; D6 laya stays per-cluster until measured;
+  D7 ledger transport/wire_format/enrichment/record-version contract
+  approved as a plan requirement; D8 single question-set shape
+  (`u<N>_*` triples for every unit). **Investigation COMPLETE —
+  implementation planning cleared.** Plan prerequisite from req 8
+  carries: build the defect-positive fixture before G-B runs.
