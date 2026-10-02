@@ -271,6 +271,15 @@ The 32k budget (state + single longest question) is the binding limit:
   alongside the token caps: a file with more units ships in multiple
   calls (cluster order preserved). "One call per file" means "one BATCH
   per file" — never line-window the SMALLER pieces back into worse cuts.
+- **`--max-hunks` semantics under the new transport (r4-MAJOR-1):** the
+  AST path replaces size-based triage, so `--max-hunks` is REDEFINED as
+  a max-UNITS-per-run guard (default 40 units, same CLI flag) applied
+  AFTER unit expansion: the cap distributes first-come across files
+  instead of dropping whole files. The old file-level drop behavior is
+  RETIRED — G-A exists precisely because it silently undid the
+  redesign's coverage gain. The plan adds a corpus sweep to re-check
+  whether 40 is still the right run-level ceiling when the unit is a
+  cluster.
 - **Hard rule: never SEND an estimated-over-cap call** — split first.
 - **Runtime over-budget:** typed `_OverBudget` exception, raised ONLY
   when status is 400 AND the body contains
@@ -355,9 +364,16 @@ The 32k budget (state + single longest question) is the binding limit:
   replay; `write.rs`-class files (114k chars serialized larger) produce
   AST-split batches that all pass the send-gate. Census recomputed on
   SERIALIZED state (req above) before fixtures are built.
-- **G-B — per-file batching A/B (the adoption gate; r3-M2).**
+- **G-B — per-file batching A/B (the adoption gate; r3-M2, reshaped by
+  r4-MAJOR-2 and S1′).** Given S1′ measured a systematic per-file shift
+  (−0.55 mean signed Δsev), the gate's question is no longer "is there
+  a shift?" (there is) but "is the shift small enough to accept?"
   Fixture: 20–40 clusters including multi-cluster files AND split
-  clusters, two arms — per-file-batched vs per-cluster.
+  clusters, three arms — per-cluster baseline, per-cluster WITH AST
+  enrichment (isolation arm), per-file-batched WITH the same enrichment
+  (treatment arm). The enrichment arm exists so quality deltas
+  attributable to batching are not confounded with deltas attributable
+  to enrichment (r4-MAJOR-2).
   **Calibration first:** run per-cluster vs per-cluster on the same
   fixture to measure the fixture's OWN noise (mean |Δ|, flip rate,
   sign distribution) — gates are expressed relative to that run, not a
@@ -367,9 +383,16 @@ The 32k budget (state + single longest question) is the binding limit:
   **Pass criteria, all of them:**
   - gate-flip rate ≤ 5% of clusters AND not above the calibration run's
     own flip rate by a meaningful margin;
-  - **signed-bias test:** |mean signed Δsev| ≤ 0.05 AND a sign test on
-    per-cluster Δsev with p > 0.05 — a uniform shift in EITHER
-    direction fails even if mean |Δ| is small;
+  - **verdict-level flip rate (r4-m5):** `compose()` run on each arm's
+    findings; the batched arm's verdict must match the per-cluster
+    arm's verdict on every fixture PR — correlated within-call errors
+    feeding the same-file corroboration gate are the #45 failure shape
+    and show up HERE even when per-cluster metrics look clean;
+  - **signed-bias test (S1′-informed):** measured shift must beat the
+    S1′ prior (−0.55 mean signed Δsev) by a pre-registered margin —
+    i.e., |mean signed Δsev| ≤ 0.05 AND a sign test on per-cluster
+    Δsev with p > 0.05 — a uniform shift in EITHER direction fails even
+    if mean |Δ| is small;
   - same signed treatment for Δis_real near EACH rubric's threshold
     (0.50 / 0.70);
   - defect-positive recall equal or better (see above).
@@ -410,6 +433,19 @@ The 32k budget (state + single longest question) is the binding limit:
    (recommended: behind G-B).
 6. **D6 (r3-m9):** confirm laya stays per-cluster (no batching) until
    its context limit is measured (req 5).
+7. **D7 (r4-MAJOR-3):** approve the ledger/version contract as a plan
+   requirement: every run record stamps `transport` (`per-cluster` /
+   `per-file-batched` / `per-pr`), `wire_format` (`hunk_state-v1` /
+   `ast-units-v1`), `enrichment` (none/AST), and a
+   `PACKAGING_VERSION`-class record-version bump on any model-visible
+   input change, so replay baselines are only ever compared
+   like-for-like. (r4-MAJOR-3 observed that today's ledgers can't
+   distinguish transports — old ledgers vs new-transport runs are
+   silently compared as if equivalent.)
+8. **D8 (r4-m2):** the wire format ships ONE question-set shape —
+   per-unit `u<N>_*` triples for every unit, no `u0_*` file-level
+   variant. (The rev-5 draft carried both; the reviewer flagged the
+   ambiguity.)
 
 ## Revision history
 
@@ -445,3 +481,16 @@ The 32k budget (state + single longest question) is the binding limit:
   measured (D6). RESEARCH answered: object-root paths documented,
   array-root undocumented (avoided by design); over-budget shape
   community-only → lenient match + guaranteed termination.
+- **rev 6 (2026-10-02, 928b87e + this commit):** Opus r4 (0 BLOCKER,
+  4 MAJORS, 6 minors) verified and folded; **S1′ probe run live**
+  (r4-MAJOR-4's addressing-artifact hypothesis EXCLUDED: per-PR −0.63 /
+  per-file −0.55 mean signed Δsev on the adopted object+path wire
+  format) → per-file batching downgraded to G-B-gated, per-cluster +
+  enrichment is the working default, Arch 3 moves onto the default
+  path. MAJOR-1: `--max-hunks` redefined as units-per-run (no
+  file-level drops). MAJOR-2: G-B gains the enrichment isolation arm.
+  MAJOR-3: transport/wire-format/record-version ledger contract (D7).
+  m2: single question-set shape (D8); m5: verdict-level flip criterion;
+  m9-laya: D6 unchanged. Round budget (4) reached with the verdict at
+  REQUEST CHANGES on remaining refinement-class items; the doc carries
+  all of them and the Kurt-decision list.
