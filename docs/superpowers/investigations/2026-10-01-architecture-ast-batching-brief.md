@@ -1,6 +1,6 @@
 # Architecture brief: from naive 120-line windows to AST-aware batching
 
-**Status:** step-zero architecture question, **rev 5** (2026-10-02).
+**Status:** step-zero architecture question, **rev 6** (2026-10-02).
 Supersedes — or rather, re-scopes — the Approach A windowing plan (rev 8,
 PR #9) per Kurt's ruling of 2026-10-01: "The question you are asking is
 premature… the correct approach is to find better architecture, not
@@ -153,10 +153,31 @@ defect-free head, ground truth 0 findings):
 - The n=2 S0 probe moved OPPOSITE directions (+0.25/−0.37) and its
   cluster a is a defect-FREE fix (`a - b` → `a + b`) — S0 is a
   contamination existence proof, not evidence of direction.
-- **Ruling: per-PR mega-batching is DEAD as a judgment path.** S1 was
-  per-PR (one call, 5 files, 90 questions): it says nothing directly
-  about per-FILE batching, which bounds contamination to one file's own
-  clusters. Per-file A/B is gate G-B.
+- **S1′ (r4-MAJOR-4, 2026-10-02): the shift is NOT an addressing
+  artifact.** The r4 reviewer's hypothesis — S1's questions named
+  clusters in prose while state items carried no resolvable id, so the
+  model may have been scoring "the whole PR" 30 times — is now
+  excluded: S1′ re-ran the same 30 clusters through the ADOPTED wire
+  format (object state, `units[i]` items, documented backticked-path
+  instructions). The shift PERSISTS: per-PR mean signed Δsev **−0.63**
+  (26/30 lower, 13/30 gate flips), per-file **−0.55** (23/30 lower,
+  14/30 gate flips) — same direction, same magnitude as S1's −0.71.
+  Data: `/tmp/s1prime_report.json`; probe:
+  `~/.hermes/cache/scratch/s1prime_probe.py`.
+- **Ruling (updated by S1′): per-PR mega-batching is DEAD as a judgment
+  path — with addressing ruled out, the contamination explanation
+  stands.** And the S1′ per-file arm means per-FILE judgment batching
+  now shows the SAME systematic bias at file scale; the earlier "per-
+  file is still open / contamination bounded" framing is retired. The
+  working default becomes **per-cluster transport + AST context
+  enrichment**, with per-file batching allowed back ONLY if gate G-B —
+  run on the adopted wire format, judged on the S1′-informed signed
+  criteria below — shows the shift small enough to accept on the
+  defect-positive criterion. Judgment-batching Kurt's directive 1
+  survives in the digest call, the AST-unit fan-out (more units judged
+  per call WITHOUT shared mega-state is the honest reading of "more
+  than one judgement per batched query" if G-B fails), and staged
+  triage (Arch 4) as an escape hatch.
 
 **S4 — state-size degradation is CONTENT-dependent, not size-dependent.**
 Neutral-text filler: 1/4 specifics found at 20k AND 80k chars (confident
@@ -194,15 +215,21 @@ must recompute the census on the actual SERIALIZED per-file state**
 (r3-M6: per-cluster before+after duplication and JSON encoding inflate
 it, enclosing context dedup shrinks it).
 
-## Architecture answer (rev 5, pending Opus + Kurt)
+**Architecture answer (rev 6, pending Kurt):**
 
-**Adopt: Arch 1 restricted to per-file batching + Arch 2 with the
-cluster as the unit of judgment (stdlib `ast` first, tree-sitter as a
-lazy opportunistic import with line-window fallback). Do NOT batch
-judgment questions across files. Keep Step 0′ + honest-verdict +
-Gate-3 framework; cancel the window-cutting core of Approach A rev 8.
-Arch 3 deferred pending evidence; Arch 4 documented escape hatch only,
-never default.**
+**Adopt: Arch 2 with the cluster as the unit of judgment (stdlib `ast`
+first, tree-sitter as a lazy opportunistic import with line-window
+fallback), shipped on PER-CLUSTER transport + AST context enrichment.
+Per-FILE judgment batching is DOWNGRADED to G-B-gated: S1′ measured the
+same systematic downward shift at file scale (−0.55 mean signed Δsev,
+23/30 lower, 14/30 gate flips) as per-PR (−0.63), on the adopted wire
+format with documented path addressing — the "contamination is bounded
+per file" assumption is empirically false at PR-#43 scale. Per-PR
+mega-batching stays DEAD. Keep Step 0′ + honest-verdict + Gate-3
+framework; cancel the window-cutting core of Approach A rev 8.
+Arch 3 (enrichment) is now ON the default path (it no longer rides on a
+batching decision); Arch 4 documented escape hatch only, never
+default.**
 
 ### The wire format (r3-m1)
 
@@ -373,9 +400,14 @@ The 32k budget (state + single longest question) is the binding limit:
 4. **D4:** `--uncommitted` mode: the required working-tree read is a
    documented exception to diff-only (index is the pre-image). Object
    if Kurt prefers disabling AST units in that mode instead.
-5. **D5:** confirm per-PR mega-batching is retired as a judgment path
-   (evidence: S1 — 28/30 scores shifted down, stable across 3 repeated
-   batched runs, 1 surviving FP major on a 0-finding head).
+5. **D5 (updated by S1′):** per-PR mega-batching stays retired as a
+   judgment path — evidence is now addressing-proof (S1′ per-PR arm:
+   mean signed Δsev −0.63, 26/30 lower, 13/30 gate flips, on the
+   adopted object+path wire format; original S1: 28/30 down, 1 FP major
+   on a 0-finding head). NEW sub-decision from the r4 round: whether
+   per-FILE judgment batching ships by default anyway (accepting the
+   −0.55 shift for the transport win) or only behind a passing G-B
+   (recommended: behind G-B).
 6. **D6 (r3-m9):** confirm laya stays per-cluster (no batching) until
    its context limit is measured (req 5).
 
