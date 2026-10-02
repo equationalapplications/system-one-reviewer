@@ -48,6 +48,16 @@ METRICS_PATH = os.environ.get(
                  "jev-review", "metrics.jsonl"))
 
 MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
+# Token-based call budgets (AST-units plan Task 1; brief rev 6 :263):
+# the 32k budget covers `state` plus the single LONGEST question — that
+# is the quantity estimate_call_size measures, not the all-questions
+# wire total (r2-M5). CHARS_PER_TOKEN=3.0 is the brief's code-dense-JSON
+# prior; dividing question chars by 3.0 too is a deliberate CONSERVATIVE
+# deviation from the brief's exact-question-sum (it over-estimates,
+# never under). MAX_HUNK_LINES itself is retired in Task 4.
+SOFT_CAP_TOKENS = 28_000      # over this: split before judging (Task 5)
+HARD_CAP_TOKENS = 56_000      # over this: never send (Task 5 send-gate)
+CHARS_PER_TOKEN = 3.0
 CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 # Rubric thresholds (v0.3b, Kurt review): the 0.50 plateau was calibrated
 # on code-change answers. The deletion rubric asks a different question, so
@@ -191,6 +201,23 @@ def jev_ask(state, questions, api_key):
             if attempt == 2:
                 raise
     return payload, (time.perf_counter() - t0) * 1000.0
+
+
+def estimate_call_size(state, questions):
+    """Estimated TOKENS for one model call (AST-units plan Task 1).
+
+    Measures the 32k-rule quantity: the serialized `state` plus the
+    serialized LONGEST question — not the all-questions total (r2-M5;
+    the full payload is lower-bounded by this and capped by the Task 5
+    HARD_CAP send-gate). Deviation note (r7-nit): the brief sums the
+    question map exactly and estimates only the state; this estimator
+    divides the longest question's chars by CHARS_PER_TOKEN too — a
+    deliberate conservative deviation (over-estimates, never under).
+    Pure and deterministic; no caching (YAGNI).
+    """
+    state_json = json.dumps(state)
+    longest_q = max(len(json.dumps(q)) for q in questions.values())
+    return (len(state_json) + longest_q) / CHARS_PER_TOKEN
 
 
 # ---------- provider facade (E8) ----------
