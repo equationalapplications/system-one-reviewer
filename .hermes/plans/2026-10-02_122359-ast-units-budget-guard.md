@@ -26,10 +26,75 @@
 > `FALLBACK_WINDOW_LINES`, Step 0′ machinery disposition stated (kept
 > as ledger back-compat), CI interpreter (3.10/3.12/3.14) replaces the
 > 3.14-only pin, fixture-stability criterion tied to G-D repeats.
+>
+> **Rev 3** — revised per Opus doc-review round 1 (REQUEST CHANGES:
+> 1 BLOCKER / 5 MAJOR / 8 MINOR / 2 nits; every finding verified against
+> the code before folding): **B1** unit expansion breaks the run counters —
+> `n_dropped = len(hunks) - n_triaged - len(kept)` counts PARENT clusters on
+> one side and UNITS on the other, so one oversize cluster splitting into N
+> sub-clusters drives `n_dropped` negative; `gate_run` (sweep :116–124)
+> requires non-negative ints, so every v08 ledger with a split would die as
+> malformed and no v08 run could enter a sweep. Task 4 now RECOMPUTES the
+> counters in units after expansion (`n_units_total`; `n_dropped =
+> n_units_total - len(kept)`; the Incomplete verdict denominator becomes
+> `n_units_total`), with tests: clean split ⇒ `n_dropped == 0` and no
+> "(incomplete" verdict suffix; `n_dropped >= 0` always; `gate_run` accepts
+> a v08 ledger that contains splits; **M1** Task 6's on-by-default
+> enrichment contradicted the "byte-identical ordinary clusters" risk claim
+> and would have invalidated G-D's replay set (replay assumes unchanged
+> input shape; enriched states are a new shape, and the 0.50/0.70
+> thresholds were calibrated on unenriched v03b states) — Risks corrected
+> (anchors unchanged, STATES are not), `enrichment` recorded PER-UNIT in
+> `judged` (run-level D7 stamp stays), G-D's replay set defined as
+> UNENRICHED clusters only, and Task 8 adds a v08 threshold re-sweep before
+> landing; **M2** missing `git show` images (added file: no merge-base
+> pre-image; rename: cluster carries the new path; binary/gitlink) hit
+> `run_git`'s `sys.exit` (:346) and killed the whole run — new non-exiting
+> `git_show_or_none` helper, rename-from path used for the pre-image,
+> per-mode tests for added/rename/binary, and the pre-image's PURPOSE now
+> stated (mapping `-` lines to their old-file enclosing symbols for
+> enrichment); **M3** sub-cluster anchors were wrong for deletion-only runs
+> cut from a code-change parent (no `+` entry ⇒ anchor undefined) and
+> deletion lines must map by the tracked HEAD line `e[4]`, not `e[1]` —
+> Task 2 factors `package_hunks`' full anchor chain (`+` → `e[4]` of `-` →
+> context → `hunk_start`, :633–647) into a shared helper and adds a
+> deletion-only sub-cluster test; **M4** "oversize" is now DEFINED once:
+> engagement criterion = `estimate_call_size(cluster state) >
+> SOFT_CAP_TOKENS` (token-based, the brief's units; `FALLBACK_WINDOW_LINES`
+> is a window SIZE, not the gate); **M5** Task 1b could not run where
+> placed (its "units per call" census needs Tasks 2/3) and Task 0 preceded
+> it despite the "before fixtures" claim — the census now measures
+> per-cluster serialized `hunk_state` (the SHIPPED transport) using only
+> the Task 1 estimator, with the units-level split counts recomputed
+> post-implementation in Task 8; minors: **m1** only `v03b` was ever
+> stamped (`v06-postmerge` is a corpus run LABEL, not a packaging version)
+> — Task 7 tests v03b + v08-ast only; **m2** `HARD_CAP_TOKENS` is now
+> enforced by a send-gate test (state + ALL questions ≤ HARD_CAP_TOKENS);
+> **m3** `CHARS_PER_TOKEN = 3.0` (the brief's code-dense-JSON prior; 3.24
+> was measured on raw TS source at request level — JSON escaping lowers
+> chars/token, and the smaller divisor errs conservative), recalibrated
+> from logged `avg_input_tokens`; **m4** `_OverBudget` is raised INSIDE
+> `jev_ask` (where the 400 body is inspected; re-raised untouched like
+> `_NoRetry`, never given the 5xx retry; wrapping `ask()` is wrong — it
+> serves both providers, so a wrapper there is not JEV-only per D6); the
+> split loop lives in `judge()`; laya never sees `_OverBudget`; **m5**
+> tree-sitter lazy import goes through an injectable loader (`__import__`,
+> the `get_laya_router` pattern) — no static `import tree_sitter` (no
+> stubs ⇒ CI mypy fails) and no `# type: ignore` (`warn_unused_ignores`
+> ⇒ local mypy fails when tree-sitter IS installed); ruff + mypy added to
+> the green-suite gates; **m6** a fake-loader test exercises the TS
+> boundary logic offline (CI never installs tree-sitter, and the corpus's
+> worst offenders are .ts); **m7** G-B harness wording fixed (it DOES
+> import working-tree functions, read-only; what it never does is ship or
+> land); **m8** run-ceiling truncation order specified: first-come-
+> across-files (brief :282), not size sort — tested; nits: Task 0 step 4
+> names the real `--golden <tsv>` CLI path, and the
+> `tests/test_score_corpus.py:97` fossil string is noted as intentional
+> old-ledger fixture data.
 
 **Goal:** Replace the 120-line skip with AST-aware review units, a 32k payload budget guard, and AST context enrichment — closing the hunk>120 coverage hole per the approved architecture brief (rev 7, D1–D8 ruled).
 
-**Architecture:** Clusters stay the unit of judgment and per-cluster calls stay the transport (D5). What changes: (1) oversize change regions are cut on AST boundaries first (stdlib `ast` for Python, lazy tree-sitter import for TS/JS/etc., line-window fallback), producing AST sub-clusters that inherit the parent cluster's identity; (2) every outgoing call is budget-checked against Jev's real 32k state+longest-question limit, with a guaranteed-terminating split on `_OverBudget`; (3) each unit's state gains read-only AST context (enclosing symbol, file symbol table) — enrichment, not merged units; (4) the ledger stamps transport/wire_format/enrichment/record-version (D7). Honesty machinery (Step 0′, `base_verdict`, gate_run, Incomplete) is untouched.
+**Architecture:** Clusters stay the unit of judgment and per-cluster calls stay the transport (D5). What changes: (1) oversize change regions are cut on AST boundaries first (stdlib `ast` for Python, lazy tree-sitter import for TS/JS/etc., line-window fallback), producing AST sub-clusters that inherit the parent cluster's identity; (2) every outgoing call is budget-checked against Jev's real 32k state+longest-question limit, with a guaranteed-terminating split on `_OverBudget`; (3) each unit's state gains read-only AST context (enclosing symbol, file symbol table) — enrichment, not merged units; (4) the ledger stamps transport/wire_format/enrichment/record-version (D7). Honesty machinery (Step 0′, `base_verdict`, gate_run, Incomplete) is untouched EXCEPT the counter recomputation B1 requires (Task 4) — the Incomplete denominator moves from parent-cluster counts to unit counts.
 
 **Spec:** `docs/superpowers/investigations/2026-10-01-architecture-ast-batching-brief.md` (rev 7) on this branch — authoritative for every number and rule cited below. D1–D8 all ruled as recommended (2026-10-02).
 
@@ -39,15 +104,17 @@
 
 **Hard constraints from the brief (do not deviate):**
 - Cluster = unit of judgment; NO merged-unit judging. Every cluster/sub-cluster keeps its own anchor + full question triple (u triples, D8). Sub-clusters inherit parent `change_type`.
-- The 32k budget = state + longest question, in **TOKENS** (the brief's units), estimated SERIALIZatION→tokens via the calibrated chars-per-token factor (3.24 chars/token measured prior; recalibrated from logged `usage.input_tokens`), computed on every call; constants `SOFT_CAP_TOKENS = 28_000`, `HARD_CAP_TOKENS = 56_000` (32k request / 64k total doc budgets); never send an estimated-over-soft-cap call. Soft cap (split proactively), hard behavior on runtime 400+`max_tokens_exceeded`: typed `_OverBudget`, split in half (AST sub-clusters first, then ±1-line windows at the leaf), bounded termination (depth-capped recursion, at ONE unit mark that cluster unjudged — feeds Incomplete — and stop), over-budget chain = ONE attempt for the consecutive-failure counter; any other 4xx = existing `_NoRetry`.
-- `MAX_HUNK_LINES` RETIRED as a skip mechanism (no more `hunk>120 lines` skips); `--max-hunks` redefined as units-per-run (run-level ceiling 40, no file-level drops).
-- Per-mode file sources for AST parsing: `--range/--pr` = `git show <head>:<path>` post + `git show <merge_base>:<path>` pre (plan computes merge base — `resolve_diff` doesn't return it); `--staged` = `git show :<path>` post vs `git show HEAD:<path>` pre; `--uncommitted` = worktree post vs `git show :<path>` pre (documented diff-only exception, D4). Deletion-only/whole-file-deleted clusters stay cluster-based (no post-image; no AST parsing).
+- The 32k budget = state + longest question, in **TOKENS** (the brief's units), estimated SERIALIZATION→tokens via the chars-per-token factor (**3.0** initial prior — the brief's code-dense-JSON factor; 3.24 was measured on raw TS source at request level and JSON escaping lowers chars/token, so 3.0 errs conservative), recalibrated from logged `usage.input_tokens`, computed on every call; constants `SOFT_CAP_TOKENS = 28_000`, `HARD_CAP_TOKENS = 56_000` (32k request / 64k total doc budgets); never send an estimated-over-soft-cap call. Soft cap (split proactively), hard behavior on runtime 400+`max_tokens_exceeded`: typed `_OverBudget` raised INSIDE `jev_ask` (the site that inspects the 400 body; re-raised untouched by the handler exactly like `_NoRetry`, and never given the 5xx retry — `ask()` serves both providers, so a wrapper around `ask()` would leak JEV machinery into laya's path, violating D6), split in half (AST sub-clusters first, then ±1-line windows at the leaf) with the split loop living in `judge()`; laya never sees `_OverBudget`; bounded termination (depth-capped recursion, at ONE unit mark that cluster unjudged — feeds Incomplete — and stop), over-budget chain = ONE attempt for the consecutive-failure counter; any other 4xx = existing `_NoRetry`.
+- **"Oversize" is defined exactly once (r1-M4):** a cluster is oversize iff `estimate_call_size(hunk_state(cluster)) > SOFT_CAP_TOKENS`. This token criterion REPLACES the retired line-count gate everywhere (triage routing in Task 4, AST engagement in Task 2). `FALLBACK_WINDOW_LINES` sizes fallback windows only — it is never an engagement or skip test.
+- `MAX_HUNK_LINES` RETIRED as a skip mechanism (no more `hunk>120 lines` skips); `--max-hunks` redefined as units-per-run (run-level ceiling 40, no file-level drops). When the ceiling truncates, units are kept in FIRST-COME-ACROSS-FILES order (brief :282 — file order, then cluster order within the file; NOT size-sorted, r1-m8), and dropped units get explicit unjudged records.
+- Per-mode file sources for AST parsing: `--range/--pr` = `git show <head>:<path>` post + `git show <merge_base>:<path>` pre (plan computes merge base — `resolve_diff` doesn't return it); `--staged` = `git show :<path>` post vs `git show HEAD:<path>` pre; `--uncommitted` = worktree post vs `git show :<path>` pre (documented diff-only exception, D4). The PRE-image exists for one reason (r1-M2): mapping `-` (deleted) lines to their OLD-file enclosing symbols so enrichment for deletion runs inside code-change clusters is symbol-accurate. Image fetches NEVER go through bare `run_git` for these paths — a missing image is a normal case (added file ⇒ no merge-base pre-image; rename ⇒ pre-image lives under the old path; binary/gitlink ⇒ no text image), so a dedicated non-exiting `git_show_or_none` helper returns None and the caller degrades (no pre-image ⇒ `-` lines get symbol-free enrichment; no post-image ⇒ cluster stays whole, r1-M2).
+- Deletion-only/whole-file-deleted clusters stay cluster-based (no post-image; no AST parsing).
 - Failure semantics: per-unit KEY misses mark only that cluster `parse_error` (never touch `failures`/`parse_failures`); only CALL-level shape failures (`answers` missing/not-dict, zero parseable units) count toward consecutive limits; nothing-judged → fail-open unchanged.
-- Thresholds stay per-rubric (code 0.50, deletion 0.70) — untouched.
-- Laya: per-cluster transport unchanged; batching/AST path is JEV-only (D6). Old shape-only laya contract stays.
-- Ledger contract (D7): every run stamps `transport` (`per-cluster`), `wire_format` (`hunk_state-v1` / `ast-units-v1`), `enrichment` (`none`/`ast`), and `PACKAGING_VERSION` bumps (new value `v08-ast`) so replays compare like-for-like.
-- Tree-sitter = lazy opportunistic import; ImportError → stdlib/fallback silently (D1). README documents it.
-- Retired Step 0′ size-skip machinery (`size_skipped_code()` :1225–1233, `n_size_skipped_code`, skip-record `change_type`, sweep's size-skip-admitting branch :79–127) stays in place as LEDGER BACK-COMPAT for old v03b–v07 records; new runs simply never produce `hunk>` records. A comment at each site says "retired by v08-ast, kept for old-ledger gating."
+- Thresholds stay per-rubric (code 0.50, deletion 0.70) — untouched as VALUES; Task 8 re-sweeps them on v08 fixtures before landing because enrichment changes the state distribution they were calibrated on (r1-M1).
+- Laya: per-cluster transport unchanged; batching/AST path is JEV-only (D6). Old shape-only laya contract stays. `_OverBudget` is jev_ask-internal; laya never observes it.
+- Ledger contract (D7): every run stamps `transport` (`per-cluster`), `wire_format` (`hunk_state-v1` / `ast-units-v1`), `enrichment` (`none`/`ast`), AND each `judged` entry carries its own `enrichment` value (r1-M1 — enrichment availability is per-language/per-machine, so a run-level flag alone cannot tell a replay which states changed shape); `PACKAGING_VERSION` bumps (new value `v08-ast`) so replays compare like-for-like.
+- Tree-sitter = lazy opportunistic import via an INJECTABLE LOADER (`(loader or __import__)("tree_sitter")` — the `get_laya_router` pattern, :270–296); never a module-level or function-body static `import tree_sitter` (mypy has no stubs for it and CI runs mypy with `warn_unused_ignores`, so both a bare import and a `# type: ignore` fail one side each — r1-m5). ImportError → stdlib/fallback silently (D1). README documents it.
+- Retired Step 0′ size-skip machinery (`size_skipped_code()` :1225–1233, `n_size_skipped_code`, skip-record `change_type`, sweep's size-skip-admitting branch :79–127) stays in place as LEDGER BACK-COMPAT for old v03b-era records; new runs simply never produce `hunk>` records. A comment at each site says "retired by v08-ast, kept for old-ledger gating." (`tests/test_score_corpus.py:97` hardcodes `"hunk>120 lines"` as OLD-LEDGER FIXTURE DATA — intentional, do not update, r1-nit.)
 - `usage.input_tokens` is logged per call (transport → judge → ledger `avg_input_tokens`) — recalibration data for the chars-per-token factor (M4).
 
 ---
@@ -64,7 +131,7 @@
 1. In a scratch clone of curated-journal, locate the pre-fix commits (before 99711a4): the importDump abort-race and 3-arg signature eras. Record candidate SHAs.
 2. Run current sor per-cluster (`--range <base>...<prefix_sha>`, JEV provider, live) on each candidate; identify the commit where the 3 majors are present as real defects.
 3. Record anchors (file + line at that SHA) for: abort-race #1 (stopped-flag), abort-race #2 (cancel handshake), signature contract (importDump arity). Format matches `eval_against_golden` expectations (mirror `examples/cj-field-goldens.tsv` header comments style).
-4. Verify: run `scripts/` golden eval path against the fixture; all 3 anchors hit, ≤1 FP beyond them.
+4. Verify: run the CLI golden eval (`--golden examples/cj43-prefix-goldens.tsv`, :1417–1419) against the fixture; all 3 anchors hit, ≤1 FP beyond them.
 5. Commit: `test(fixture): defect-positive CJ#43 pre-fix goldens (3 anchors, verified)`.
 
 **Verification:** eval doc states SHAs, anchors, live-run result; fixture committed.
@@ -73,61 +140,63 @@
 
 ## Task 1: Serialized-size estimator (TOKENS) + Task 1b: serialized census recompute
 
-**Objective:** The shared measurement everything else uses: `estimate_call_size(state, questions)` → estimated TOKENS (state + longest question — the 32k-rule quantity), via `chars / CHARS_PER_TOKEN` (3.24 measured prior, module constant) on serialized JSON. Cheap and deterministic.
+**Objective:** The shared measurement everything else uses: `estimate_call_size(state, questions)` → estimated TOKENS (state + longest question — the 32k-rule quantity), via `chars / CHARS_PER_TOKEN` (**3.0** — the brief's code-dense-JSON prior; conservative direction, r1-m3) on serialized JSON. Cheap and deterministic.
 
 **Files:**
-- Modify: `system_one_reviewer.py` (new function near `jev_ask` ~:157; constants `SOFT_CAP_TOKENS = 28_000`, `HARD_CAP_TOKENS = 56_000`, `CHARS_PER_TOKEN = 3.24` near `MAX_HUNK_LINES` :50 — MAX_HUNK_LINES itself is RETIRED in Task 4)
+- Modify: `system_one_reviewer.py` (new function near `jev_ask` ~:157; constants `SOFT_CAP_TOKENS = 28_000`, `HARD_CAP_TOKENS = 56_000`, `CHARS_PER_TOKEN = 3.0` near `MAX_HUNK_LINES` :50 — MAX_HUNK_LINES itself is RETIRED in Task 4)
 
 **Steps:**
 1. Failing test (`tests/test_budget.py`, new):
    - `test_estimate_matches_32k_quantity`: build a state + the real 3-question triple; `estimate_call_size` == (len(state_json) + max(len(q_json))) / CHARS_PER_TOKEN (± rounding). The 32k quantity is state+longest-question, NOT the all-questions total (r2-M5).
-   - `test_estimate_lower_bounds_full_payload`: estimate(state + longest q) ≤ full payload tokens (state + ALL questions) — the 56k total-rule check is a lower bound only (r2-M5).
+   - `test_estimate_lower_bounds_full_payload`: estimate(state + longest q) ≤ full payload tokens (state + ALL questions) — documents that the per-call estimate is a lower bound of the wire total (r2-M5); the wire total itself is capped by the HARD_CAP send-gate test in Task 5 (r1-m2).
    - `test_estimate_monotonic`: doubling a state's text roughly doubles the estimate.
-   - `test_soft_cap_units`: a state of 100k chars estimates to ~30.9k tokens > SOFT_CAP_TOKENS (proves the unit is tokens, not chars — the r2-M1 regression guard).
+   - `test_soft_cap_units`: a state of 100k chars estimates to ~33.3k tokens at CHARS_PER_TOKEN=3.0 > SOFT_CAP_TOKENS (proves the unit is tokens, not chars — the r2-M1 regression guard).
 2. Run: `.venv/bin/python -m pytest tests/test_budget.py -q` → FAIL.
 3. Implement: serialize state once with `json.dumps`; questions likewise; return (len(state_json) + max(len(q_json) for q in questions.values())) / CHARS_PER_TOKEN. No caching games (YAGNI).
-4. Tests → PASS; full suite green.
+4. Tests → PASS; full suite green (pytest + ruff + mypy — the standard gate from Task 3 onward, r1-m5).
 5. Commit: `feat(budget): token-based call-size estimator + 28k/56k token constants`.
 
-### Task 1b: Serialized census recompute (brief ordering: BEFORE fixtures/implementation)
+### Task 1b: Serialized census recompute (per-cluster wire format — runs where it is placed)
 
-**Objective:** The brief requires the census on ACTUAL SERIALIZED per-file state before fixtures are built (r2-M6). Needs only Task 1's estimator.
+**Objective:** The brief requires a census on ACTUAL SERIALIZED state before implementation. This census measures the SHIPPED per-cluster transport: each oversize file's per-cluster serialized `hunk_state` (`hunk_state-v1` wire format), split-projected with the Task 1 estimator alone (r1-M5 — the units-level census needs Tasks 2/3 and is recomputed for real in Task 8's corpus step).
 
 **Files:**
 - Create: `docs/evals/2026-10-02-serialized-census.md`
 
 **Steps:**
-1. Read-only script (in /tmp): for every corpus oversize file (incl. `write.rs` 114k chars, `wisdom.ts`), serialize its per-file state per the wire format and report: estimated tokens, number of soft-cap splits the guard would do, units per call.
-2. Record in the eval doc; fixture design (Task 0 follow-ups) and Task 8's final G-A evidence reference these numbers.
-3. Commit: `docs(eval): serialized-state census — split counts per oversize file (pre-implementation)`.
+1. Read-only script (in /tmp): for every corpus oversize file (incl. `write.rs` 114k chars, `wisdom.ts`), serialize its per-cluster state per `hunk_state-v1` and report: estimated tokens, and the PROJECTED number of soft-cap splits / units per call if the token guard split it (pure arithmetic from the estimator — no product code).
+2. Record in the eval doc, labeled `hunk_state-v1 (pre-implementation)`; Task 8 recomputes the same table on the real `ast-units-v1` transport and the two tables are compared.
+3. Commit: `docs(eval): serialized-state census — per-cluster split projections (pre-implementation)`.
 
 ---
 
 ## Task 2: AST unit extraction — Python (stdlib)
 
-**Objective:** `ast_units(path, before_text, after_text, entries)` → for an oversize code-change cluster, return sub-clusters whose boundaries land on top-level def/class ends in the post-image; fallback `None` when AST can't help (parse error, non-Python, units don't cover the span).
+**Objective:** `ast_units(path, before_text, after_text, entries)` → for an oversize code-change cluster (r1-M4 criterion: `estimate_call_size > SOFT_CAP_TOKENS`), return sub-clusters whose boundaries land on top-level def/class ends in the post-image; fallback `None` when AST can't help (parse error, non-Python, units don't cover the span).
 
 **Files:**
-- Modify: `system_one_reviewer.py` (new function after `package_hunks` ~:697)
+- Modify: `system_one_reviewer.py` (new function after `package_hunks` ~:697; ALSO factor the anchor chain :633–647 into a shared helper `_cluster_anchor(entries, seg_start, seg_end, hunk_start)` used by BOTH `package_hunks` and sub-cluster assembly — r1-M3)
 - Test: `tests/test_ast_units.py` (new)
 
 **Steps:**
 1. Failing tests:
    - `test_oversize_python_splits_on_defs`: synthetic .py post-image with 3 top-level functions (total 200 changed lines) → 3 sub-clusters, each boundary = a function's end line, none mid-function; union of changed lines == original; no line in two sub-clusters.
-   - `test_subcluster_inherits_identity`: every sub-cluster carries parent's `file`, `change_type`, and a `parent_cluster` reference; own anchor = first `+` entry's tracked line; own `line_start/line_end`.
+   - `test_subcluster_inherits_identity`: every sub-cluster carries parent's `file`, `change_type`, and a `parent_cluster` reference; own anchor via the SHARED anchor chain helper (first `+` entry's tracked line → first `-` entry's `e[4]` → context → `hunk_start`); own `line_start/line_end`.
+   - `test_deletion_only_subcluster_from_code_change_parent` (r1-M3): a sub-cluster cut from a code-change parent that contains ONLY `-` entries (a removed block between two edited functions) still gets a defined anchor (from `e[4]`, the tracked HEAD line — never `e[1]`, the old-file line) and a correct span; changed-line→symbol mapping for `-` entries uses `e[4]` in POST-image coordinates.
    - `test_parse_error_returns_none`: post-image that doesn't parse → `None` (caller falls back to line windows).
    - `test_deletion_cluster_skipped`: `change_type` deletion-only → `None` immediately (no post-image; brief req: deletion clusters stay cluster-based).
+   - `test_oversize_engagement_is_token_based` (r1-M4): a cluster under `SOFT_CAP_TOKENS` → `None`; a cluster over it → units. (`FALLBACK_WINDOW_LINES` never appears in the engagement decision.)
    - `test_small_cluster_skipped`: cluster under the size threshold → `None` (AST path only engages for oversize regions).
    - `test_determinism`: same input twice → identical output.
-2. Run → FAIL; implement with stdlib `ast.parse` on the post-image; walk top-level nodes with `end_lineno` (3.8+); map changed lines to enclosing top-level symbol; group.
-3. Tests → PASS; full suite green.
+2. Run → FAIL; implement with stdlib `ast.parse` on the post-image; walk top-level nodes with `end_lineno` (3.8+); map changed lines to enclosing top-level symbol (`+` entries by `e[1]`, `-` entries by `e[4]` — r1-M3); group.
+3. Tests → PASS; full suite green (pytest + ruff + mypy).
 4. Commit: `feat(ast): stdlib ast unit extraction for oversize Python clusters`.
 
 ---
 
 ## Task 3: Tree-sitter lazy import + TS/JS units + line-window fallback
 
-**Objective:** Same contract for TS/JS (the corpus's biggest offenders are .ts) via tree-sitter with a lazy import; and `line_window_subclusters()` — the always-works fallback cutting at blank lines nearest the target, never mid-line.
+**Objective:** Same contract for TS/JS (the corpus's biggest offenders are .ts) via tree-sitter with a lazy INJECTABLE-LOADER import; and `line_window_subclusters()` — the always-works fallback cutting at blank lines nearest the target, never mid-line.
 
 **Files:**
 - Modify: `system_one_reviewer.py` (tree-sitter helper near Task 2's function)
@@ -136,77 +205,84 @@
 **Steps:**
 1. Failing tests:
    - `test_treesitter_lazy_import_missing`: monkeypatch `sys.modules` to hide tree_sitter → TS file returns `None` (fallback), no exception, no hard dependency at import time of the module itself.
-   - `test_treesitter_units_when_present`: with tree_sitter installed (skipif), a 200-line .ts with 3 top-level functions → 3 boundary-true sub-clusters.
+   - `test_treesitter_units_fake_loader` (r1-m6): inject a FAKE loader (the `loader` parameter — same injectable seam `get_laya_router` uses) returning a stub tree-sitter object with canned trees → the TS boundary logic (unit cutting, span mapping, fallback-on-uncovered-span) runs FULLY OFFLINE. CI never installs tree-sitter, so this test — not the skipif one — is what keeps the TS path honest in CI.
+   - `test_treesitter_units_when_present`: with tree_sitter installed (skipif-marked — local-only confidence), a 200-line .ts with 3 top-level functions → 3 boundary-true sub-clusters.
    - `test_line_window_fallback`: 200 changed lines, no AST at all → sub-clusters ≤ `FALLBACK_WINDOW_LINES` (new constant, default 120 — same number as the retired limit but a NEW name with its own rationale: it is a window SIZE choice, not a skip gate; rationale comment cites that the arbitrary-ness concern was about skipping, not windowing) each, cuts at blank lines where possible, union == original, no overlap, deterministic.
-2. Run → FAIL; implement: `try: import tree_sitter…` inside the function (laya pattern); grammar loading also lazy per language; fallback cutter shares Task 2's sub-cluster assembly.
-3. Tests → PASS (tree-sitter tests skipif-marked); full suite green.
+2. Run → FAIL; implement: `tree_sitter = (loader or __import__)("tree_sitter")` inside the function via the injectable loader — NO static `import tree_sitter` anywhere and NO `# type: ignore` (mypy runs in CI on 3.10 with `warn_unused_ignores=true`; a bare import fails CI for missing stubs while a `# type: ignore` fails locally when tree-sitter is installed — r1-m5); grammar loading also lazy per language; fallback cutter shares Task 2's sub-cluster assembly.
+3. Tests → PASS (fake-loader tests run in CI; tree-sitter tests skipif); full suite green = pytest + ruff + mypy (r1-m5).
 4. Commit: `feat(ast): lazy tree-sitter units (D1) + deterministic line-window fallback`.
 
 ---
 
 ## Task 4: Triage rewiring — MAX_HUNK_LINES retired, oversize → AST sub-clusters
 
-**Objective:** `package_hunks` stops marking `too_large` for skipping; `main()` routes oversize code-change clusters through the Task 2/3 extractor and judges sub-clusters as first-class units. `--max-hunks` becomes units-per-run (ceiling 40, run-level).
+**Objective:** `package_hunks` stops marking `too_large` for skipping; `main()` routes oversize code-change clusters through the Task 2/3 extractor and judges sub-clusters as first-class units. `--max-hunks` becomes units-per-run (ceiling 40, run-level). **Run counters are recomputed in UNITS after expansion (r1-B1)** — the honesty machinery keeps working.
 
 **Files:**
-- Modify: `system_one_reviewer.py` (`MAX_HUNK_LINES` :50 comment→retired note; triage :722–724 no longer appends `hunk>` skip; oversize routing in `main()` — post-triage pre-judge, `kept.sort`/`kept[: args.max_hunks]` at :1338–1339 replaced; argparse `--max-hunks` help text)
-- Test: `tests/test_triage_and_failreason.py` (extend), `tests/test_package.py` (extend)
+- Modify: `system_one_reviewer.py` (`MAX_HUNK_LINES` :50 comment→retired note; triage :722–724 no longer appends `hunk>` skip; oversize routing in `main()` — post-triage pre-judge; `kept.sort`/`kept[: args.max_hunks]` at :1338–1339 replaced; counter block :1337–1340 and Incomplete-verdict block :1370–1374 recomputed in units; new `git_show_or_none` helper next to `run_git` :333; argparse `--max-hunks` help text)
+- Test: `tests/test_triage_and_failreason.py` (extend), `tests/test_package.py` (extend), `tests/test_sweep.py` (extend)
 
 **Steps:**
 1. Failing tests:
    - `test_no_hunk_skip_reason_ever`: any cluster, any size → no skip record with reason starting `hunk>`.
    - `test_oversize_python_becomes_subclusters`: 273-line .ts-equivalent (Python for stdlib path) → N judged units, each with own anchor/triple, `parent_cluster` set.
    - `test_oversize_fallback_judged_as_windows`: unparseable oversize → line-window sub-clusters, all judged.
-   - `test_max_hunks_is_run_level`: 3 oversize files × windows with `--max-hunks 40` → nothing dropped file-wise; dropping happens only at the run ceiling and produces explicit unjudged records (feeding Incomplete), never a silent file skip.
+   - **`test_unit_counters_stay_consistent` (r1-B1 — the BLOCKER regression guard):** 5 clusters, one splitting into 4 units ⇒ `n_dropped == 0`, `n_unjudged == 0`, verdict carries NO "(incomplete" suffix, and the denominator in the verdict/ledger equals the UNIT count (8 of 8), not the parent count. Plus a property assertion: `n_dropped >= 0` for every fixture combination (split, truncate, skip).
+   - **`test_gate_run_accepts_v08_split_ledger` (r1-B1):** a v08-ast ledger whose run contains splits passes `gate_run` (non-negative counters, completeness check passes) — the sweep must never again reject a legal split run as malformed.
+   - `test_max_hunks_is_run_level`: 3 oversize files × windows with `--max-hunks 40` → nothing dropped file-wise; dropping happens only at the run ceiling, in FIRST-COME-ACROSS-FILES order (r1-m8: file order, then cluster order — NOT `sort(key=-size)`, which can drop arbitrary sub-clusters of one parent), and dropped units produce explicit unjudged records (feeding Incomplete), never a silent file skip. Test asserts the KEPT set equals the first-40 in traversal order.
    - `test_deletion_wholefile_stay_cluster_based`: whole-file deletion + deletion-only oversize → judged as single clusters (no AST), question set = deletion rubric.
-   - **Per-mode file sources (r2-M2 — req 1 is binding):** `test_mode_sources_range`: `--range`/`--pr` reads post from `git show <head>:<path>` and PRE from `git show <merge_base>:<path>` — merge base computed here (`merge-base` call; `resolve_diff` doesn't return it). `test_mode_sources_staged`: post = `git show :<path>`, pre = `git show HEAD:<path>`. `test_mode_sources_uncommitted`: post = worktree read, pre = `git show :<path>`. Each asserts the correct refs are fetched (monkeypatch `run_git` capture).
+   - **Per-mode file sources (r2-M2 — req 1 is binding):** `test_mode_sources_range`: `--range`/`--pr` reads post from `git show <head>:<path>` and PRE from `git show <merge_base>:<path>` — merge base computed here (`merge-base` call; `resolve_diff` doesn't return it). `test_mode_sources_staged`: post = `git show :<path>`, pre = `git show HEAD:<path>`. `test_mode_sources_uncommitted`: post = worktree read, pre = `git show :<path>`. Each asserts the correct refs are fetched (monkeypatch capture).
+   - **`test_missing_images_degrade_not_die` (r1-M2):** for EACH mode: an ADDED file (no pre-image exists), a RENAMED file (pre-image exists only under the old path — fetched via the rename-from data the diff already carries, :494–498), and a BINARY file (no text image) all complete the run — `git_show_or_none` returns None, no `sys.exit`, `-` lines get symbol-free enrichment, and a missing POST-image leaves the cluster whole. (Regression guard for `run_git`'s `sys.exit` at :346.)
    - **Mode-aware content cache (r2-m4):** cache key = `(mode, rev, path)` where rev is the resolved SHA, `:path`-stage, or the worktree sentinel — never bare `(sha, path)`; test that an `--uncommitted` post-image never serves a `--staged` request in one process.
    - Existing tests updated BY DESIGN: `test_triage_size_skip_carries_change_type` (or successors) now assert sub-cluster routing instead of a skip record.
-2. Run → FAIL; implement. Per-mode file sources: BOTH images fetched per mode (hard constraint list above); merge base = `git merge-base <base> <head>` for range/pr modes. Cache per `(mode, rev, path)` — shared `contexts` table per brief.
-3. Tests → PASS; full suite green.
-4. Commit: `feat(units): oversize clusters → AST sub-clusters; MAX_HUNK_LINES retired; --max-hunks = units-per-run`.
+2. Run → FAIL; implement. Per-mode file sources: BOTH images fetched per mode via `git_show_or_none` (hard constraint list above; missing image = degrade, never exit); merge base = `git merge-base <base> <head>` for range/pr modes. Cache per `(mode, rev, path)` — shared `contexts` table per brief. Counter recomputation: after routing/expansion, `n_units_total` = number of judgeable units (parents that stayed whole + all sub-clusters); `n_dropped = n_units_total - len(kept_after_ceiling)`; Incomplete verdict + ledger denominator use `n_units_total`.
+3. Tests → PASS; full suite green (pytest + ruff + mypy).
+4. Commit: `feat(units): oversize clusters → AST sub-clusters; MAX_HUNK_LINES retired; unit-consistent counters (r1-B1); --max-hunks = units-per-run`.
 
 ---
 
 ## Task 5: Budget guard — proactive split + _OverBudget runtime handling
 
-**Objective:** Every outgoing call passes `estimate_call_size ≤ SOFT_CAP` (proactive split of the unit's payload: trim context first, then split sub-clusters); runtime 400+`max_tokens_exceeded` → typed `_OverBudget`, halve-and-retry, depth-capped 6, one-attempt accounting, unjudged at the leaf.
+**Objective:** Every outgoing call passes `estimate_call_size ≤ SOFT_CAP` (proactive split of the unit's payload: trim context first, then split sub-clusters); runtime 400+`max_tokens_exceeded` → typed `_OverBudget` raised INSIDE `jev_ask`, halve-and-retry driven by `judge()`, depth-capped 6, one-attempt accounting, unjudged at the leaf.
 
 **Files:**
-- Modify: `system_one_reviewer.py` (`ask()` wrapper + `judge()` ask loop :950–965 — `payload, ms = ask(...)` at :951; `_NoRetry` neighborhood :148 for `_OverBudget`)
+- Modify: `system_one_reviewer.py` (`jev_ask` :157–190 — `_OverBudget` raised at the `resp.status >= 400` branch next to `_NoRetry` :179–183; `judge()` ask loop :950–965 — `payload, ms = ask(...)` at :951, split loop lives here; `_NoRetry` neighborhood :148 for the `_OverBudget` class)
 - Test: `tests/test_budget.py` (extend)
 
 **Steps:**
 1. Failing tests:
    - `test_over_softcap_splits_proactively`: unit whose estimated size > SOFT_CAP_TOKENS → call(s) sent all ≤ SOFT_CAP_TOKENS; union of answers maps back to the unit; context lines trimmed first (assert context shrunk before any changed-line split).
    - `test_runtime_400_max_tokens_splits`: stub transport returns 400 `max_tokens_exceeded` once, then 200 → retry happens with halved payload; attempt counter sees ONE attempt; `_OverBudget` never escapes.
+   - `test_overbudget_raised_in_jev_ask_not_wrapper` (r1-m4): the 400+`max_tokens_exceeded` body surfaces as `_OverBudget` from `jev_ask` itself (not a wrapper around module-level `ask()` — `ask()` serves both providers, so a wrapper there is not JEV-only per D6); `_OverBudget` is re-raised untouched by `jev_ask`'s handler exactly like `_NoRetry` and is never given the 5xx retry; a laya-path call can never observe `_OverBudget`.
    - `test_budget_termination_bounded`: transport always 400s → the split recursion terminates in bounded attempts (test the recursion helper DIRECTLY on synthetic multi-unit input — r2-m2: the ⌈log2(24)⌉+1 depth bound belongs to multi-unit batched calls, not this plan's 1-unit-per-call transport; the property tested here is "terminates, unit marked unjudged, run continues, no infinite loop, no fail-open").
    - `test_other_400_still_NoRetry`: 401 → `_NoRetry` immediately (existing behavior intact).
+   - `test_send_payload_under_hard_cap` (r1-m2): the SEND gate asserts state + ALL questions ≤ `HARD_CAP_TOKENS` (the wire-total rule the brief :273–274 requires) — a payload over the hard cap is never sent even when its per-call estimate passes the soft cap; over-hard-cap ⇒ split, same machinery as soft cap.
    - `test_consecutive_accounting_single`: a full over-budget chain counts once toward consecutive failures (brief r3-M5).
    - **`test_input_tokens_logged` (r2-M4):** a successful call's `usage.input_tokens` from the payload reaches the ledger (`avg_input_tokens` in log_run); the chars-per-token recalibration story depends on it.
 2. Run → FAIL; implement.
-3. Tests → PASS; full suite green.
-4. Commit: `feat(budget): proactive 28k split + typed _OverBudget with depth-capped termination`.
+3. Tests → PASS; full suite green (pytest + ruff + mypy).
+4. Commit: `feat(budget): proactive 28k split + typed _OverBudget in jev_ask with depth-capped termination`.
 
 ---
 
 ## Task 6: AST context enrichment (Arch 3, default path per D3)
 
-**Objective:** Each unit's `hunk_state()` gains read-only AST context: enclosing symbol chain (e.g. `Class.method`) and the file's top-level symbol table (name → signature line). Enrichment is text-only context — no merged units, no question changes.
+**Objective:** Each unit's `hunk_state()` gains read-only AST context: enclosing symbol chain (e.g. `Class.method`) and the file's top-level symbol table (name → signature line). Enrichment is text-only context — no merged units, no question changes. **Per-unit `enrichment` recorded in `judged` (r1-M1):** enrichment availability varies by language and machine, so each judged entry carries its own enrichment value; the run-level D7 stamp stays.
 
 **Files:**
-- Modify: `system_one_reviewer.py` (`hunk_state` :884 — new `ast_context` key when enrichment available)
+- Modify: `system_one_reviewer.py` (`hunk_state` :884 — new `ast_context` key when enrichment available; judged-entry builder — per-entry `enrichment` field)
 - Test: `tests/test_enrichment.py` (new)
 
 **Steps:**
 1. Failing tests:
    - `test_enrichment_present_for_python`: unit inside a class method → `ast_context` contains enclosing chain + symbol table; keys absent (not None-valued) when unavailable.
-   - `test_enrichment_absent_for_deletion`: deletion-only cluster → no `ast_context` (no post-image).
+   - `test_enrichment_absent_for_deletion`: deletion-only cluster → no `ast_context` (no post-image; `-` lines from code-change parents use the PRE-image symbol map — the r1-M2 pre-image purpose).
+   - `test_judged_entry_carries_enrichment_flag` (r1-M1): a run mixing enriched (Python) and unenriched (e.g. binary) units produces judged entries whose per-entry `enrichment` values differ correctly; the run-level ledger stamp is `ast` when ANY unit enriched.
    - `test_enrichment_size_bounded`: symbol table truncated deterministically at 40 symbols / unit context ≤ 20 lines (keeps budget headroom).
    - `test_budget_interaction`: enrichment counts in `estimate_call_size` (a state with huge enrichment trips the soft cap → splits).
-2. Run → FAIL; implement (stdlib ast for Python; tree-sitter when present; omit otherwise).
-3. Tests → PASS; full suite green.
-4. Commit: `feat(enrichment): AST enclosing-symbol + file symbol table on unit states (D3)`.
+2. Run → FAIL; implement (stdlib ast for Python; tree-sitter when present via the injectable loader; omit otherwise).
+3. Tests → PASS; full suite green (pytest + ruff + mypy).
+4. Commit: `feat(enrichment): AST enclosing-symbol + file symbol table on unit states (D3, per-unit ledger flag)`.
 
 ---
 
@@ -219,16 +295,16 @@
 - Test: `tests/test_package.py`, `tests/test_sweep.py` (extend)
 
 **Steps:**
-1. Failing tests: version string asserted in ledger from a `main()`-level run; sweep admits `v08-ast`; `select_runs` default updated; old-version ledgers still gate under explicit `--packaging-version v03b`/`v06`/`v07`.
+1. Failing tests: version string asserted in ledger from a `main()`-level run; sweep admits `v08-ast`; `select_runs` default updated; old-version ledgers still gate under explicit `--packaging-version v03b` (the ONLY previously stamped value — `v06-postmerge` is a corpus run LABEL in the brief, not a packaging version; there are no v06/v07 records to test against, r1-m1).
 2. Implement.
-3. Full suite green.
+3. Full suite green (pytest + ruff + mypy).
 4. Commit: `feat(ledger): D7 contract stamps + v08-ast packaging version`.
 
 ---
 
-## Task 8: Fixture stability + corpus replay gates (G-A, G-D)
+## Task 8: Fixture stability + corpus replay gates (G-A, G-D) + threshold re-sweep
 
-**Objective:** Prove coverage and stability: (G-A) zero `hunk>` skips on the corpus; `write.rs`-class files split and send within budget; (G-C, r2-M3) the 5 defect-free merged CJ heads stay at ≤1 reported FP major each — the over-report gate G-B's defect-positive arm does NOT cover; (G-D) new-transport vs old-transport agreement ≥ the old runs' own repeat-agreement baseline (noise-aware, replay RECORDED answers where input shape is unchanged). **G-D baseline source (r2-m3): the v06-postmerge corpus runs already carry 3 repeats per sample (36 samples × 3 = 108 ledgers) — compute the verdict-agreement and findings-Jaccard baseline from THOSE.**
+**Objective:** Prove coverage and stability: (G-A) zero `hunk>` skips on the corpus; `write.rs`-class files split and send within budget; (G-C, r2-M3) the 5 defect-free merged CJ heads stay at ≤1 reported FP major each — the over-report gate G-B's defect-positive arm does NOT cover; (G-D) new-transport vs old-transport agreement ≥ the old runs' own repeat-agreement baseline (noise-aware, replay RECORDED answers where input shape is unchanged — **replay set = UNENRICHED clusters only, r1-M1**: enriched states are a new input shape the recorded answers never saw; where practical also run an enrichment-off arm for the enriched set). Plus the **v08 threshold re-sweep (r1-M1)**: the 0.50/0.70 values were calibrated on unenriched v03b states; re-run the sweep on v08 fixtures before landing and record whether the calibrated values still hold. **G-D baseline source (r2-m3): the v06-postmerge corpus runs already carry 3 repeats per sample (36 samples × 3 = 108 ledgers) — compute the verdict-agreement and findings-Jaccard baseline from THOSE.** The units-level split census (r1-M5) is recomputed here on the real `ast-units-v1` transport and compared against Task 1b's pre-implementation projections.
 
 **Files:**
 - Modify: fixture/golden TSVs only if anchors shift (they shouldn't — cluster anchors unchanged for ordinary clusters)
@@ -236,11 +312,12 @@
 
 **Steps:**
 1. Fixture run (v08): all fixtures judged, no `too_large` skips, verdicts byte-comparable modulo documented differences; TP/FP stability tied to G-D's repeat protocol — the fixture set is run 3× (same repeats mechanism) and counts as stable if 2 of 3 repeats agree exactly (r2-n2).
-2. Corpus replay: `run_corpus` on the v08 build; census recompute — 0 size-skips; write.rs/wisdom.ts-class files produce send-legal batches (numbers cross-checked against Task 1b's pre-implementation census).
+2. Corpus replay: `run_corpus` on the v08 build; census recompute — 0 size-skips; write.rs/wisdom.ts-class files produce send-legal batches (units-level numbers cross-checked against Task 1b's projections).
 3. **G-C:** run the 5 CJ heads (`examples/cj-field-goldens.tsv`) on the v08 transport — each stays ≤1 reported FP major (the AST-split machinery turns previously-skipped files into findings on CLEAN heads; this is where that would bite).
-4. G-D: replay recorded answers deterministically for unchanged-shape clusters; agreement ≥ the v06-postmerge 3-repeat baseline; skipped-case improvements exempt.
-5. Any gate failure → stop, diagnose, fix, re-run. No partial claims.
-6. Commit: `docs(eval): G-A coverage + G-C FP regression + G-D replay results (v08-ast)`.
+4. G-D: replay recorded answers deterministically for UNENRICHED, unchanged-shape clusters (per-entry `enrichment` flag from Task 7 identifies them); agreement ≥ the v06-postmerge 3-repeat baseline; skipped-case improvements exempt.
+5. **Threshold re-sweep (r1-M1):** sweep on v08 fixtures; if the 0.50/0.70 values no longer hold, STOP and take the new numbers to Kurt before landing (threshold change = ruling-class decision).
+6. Any gate failure → stop, diagnose, fix, re-run. No partial claims.
+7. Commit: `docs(eval): G-A coverage + G-C FP regression + G-D replay + v08 re-sweep results (v08-ast)`.
 
 ---
 
@@ -250,7 +327,7 @@
 
 **Files:**
 - Create: `docs/evals/2026-10-02-gb-batching-gate.md`
-- **Out-of-tree harness (r2-B1): `/tmp/gb_harness.py`** — experiment scaffolding in the S1′-probe style (that is exactly how S1′ ran the per-file arm). NEVER ships, never imports the repo, never lands in the PR. It builds the per-file wire format from the brief (`{"file", "units", "contexts"}` object state + `u<N>_*` triples per D8, 24-unit batch cap) by importing `hunk_state`/`ast_units` from the working tree and calling `jev_ask` directly. Scaffolding is required because the gate needs the batched arm's numbers BEFORE any batching transport can be justified for the product.
+- **Out-of-tree harness (r2-B1): `/tmp/gb_harness.py`** — experiment scaffolding in the S1′-probe style (that is exactly how S1′ ran the per-file arm). NEVER ships and never lands in the PR. It DOES import the working tree's own functions — `hunk_state`/`ast_units` — read-only (r1-m7: it modifies nothing and commits nothing; "out-of-tree" refers to where it LIVES and whether it SHIPS, not to zero imports), and calls `jev_ask` directly. It builds the per-file wire format from the brief (`{"file", "units", "contexts"}` object state + `u<N>_*` triples per D8, 24-unit batch cap). Scaffolding is required because the gate needs the batched arm's numbers BEFORE any batching transport can be justified for the product.
 - Create (only if G-B PASSES): batching transport code in a follow-up plan
 
 **Steps:**
@@ -283,14 +360,15 @@
 | G-A | Zero hunk>120 skips; write.rs-class sends legal | Task 1b (pre-census) + Task 8 (final) |
 | G-B | Per-file batching adoption (expected: stays retired) | Task 9 (out-of-tree harness) |
 | G-C | 5 clean CJ heads ≤1 FP major each | Task 8 |
-| G-D | Noise-aware replay equivalence (baseline: v06-postmerge 3-repeat runs) | Task 8 |
+| G-D | Noise-aware replay equivalence (baseline: v06-postmerge 3-repeat runs; replay set: unenriched clusters) | Task 8 |
+| Re-sweep | 0.50/0.70 thresholds hold on v08 state distribution | Task 8 |
 | Fixture | Defect-positive 3-anchor golden | Task 0 |
 
 ## Risks / notes
 
-- **Anchor drift:** ordinary (non-oversize) clusters keep byte-identical packaging — their anchors, spans, and states are untouched; only oversize regions change. Golden comparability for ordinary clusters is therefore structural, not hoped-for. Asserted in Task 4 tests.
+- **Anchor drift:** ordinary (non-oversize) clusters keep their ANCHORS, spans, and cluster identity byte-identical — asserted in Task 4 tests. Their STATES are NOT untouched: Task 6 adds `ast_context` to ordinary clusters too (D3 default path), so golden comparability for ordinary clusters is structural for anchors only; state-level comparison is G-D's job, restricted to the unenriched replay set (r1-M1).
 - **Split inflation:** more units = more calls on oversize files. Accepted: time policy is none (Kurt ruling); cost logged via input_tokens.
 - **write.rs (114k chars)**: exercises the depth cap for real. Task 8 includes it explicitly.
-- **Laya regression risk:** zero — laya path untouched (D6); Task 5's guard wraps the ask transport only for jev.
-- **Tree-sitter wheel choice** (tree-sitter-languages vs per-language): verify maintained wheel at implementation time (brief req 6); either way the import stays lazy and optional.
-- **Fossil-string test (r2-n3):** `test_render_collapses_duplicate_skips` (tests/test_triage_and_failreason.py :222–229) hardcodes `"hunk>120 lines"` as fixture data — update in Task 4's commit so no test carries the retired string as live expectation.
+- **Laya regression risk:** zero — laya path untouched (D6); Task 5's guard raises `_OverBudget` inside `jev_ask` only, and the split loop runs in `judge()`, which laya's transport never enters.
+- **Tree-sitter wheel choice** (tree-sitter-languages vs per-language): verify maintained wheel at implementation time (brief req 6); either way the import stays lazy, loader-injected, and optional.
+- **Fossil-string tests (r2-n3 + r1-nit):** `test_render_collapses_duplicate_skips` (tests/test_triage_and_failreason.py :222–229) hardcodes `"hunk>120 lines"` as fixture data — update in Task 4's commit so no test carries the retired string as live expectation. `tests/test_score_corpus.py:97` also contains the string but as OLD-LEDGER fixture data exercising the back-compat path — intentional, leave as-is with a comment.
