@@ -269,6 +269,71 @@ def test_small_cluster_skipped(jr):
     assert _split(jr, src) is None
 
 
+# ---------- Option 2 (Kurt ruling, 2026-10-02): band engagement ----------
+
+def _unit(jr, src, path="m.py"):
+    """A whole-file-add package_hunks unit for `src`."""
+    diff = _whole_file_add_diff(path, src)
+    return jr.package_hunks(diff)[0]
+
+
+def test_band_unit_engages_line_windows(jr):
+    """Option 2 (r8-M2 escalation, Kurt APPROVED 2026-10-02): a unit whose
+    serialized estimate is UNDER the token cap but whose span exceeds
+    BAND_ENGAGE_LINES (>120 changed lines) is split — the 121-line…84k
+    band is judged in windows, never as one whole-call anchor. This is
+    the exact importMachine.ts geometry (209-line new file, ~2.6k est
+    tokens, judged whole on v08 and reported 2-of-6)."""
+    src = "x = 1\n" * 200  # 200 lines, ~400 est tokens — far under cap
+    unit = _unit(jr, src)
+    assert not jr._unit_oversize(unit)
+    assert jr._unit_band(unit)
+    subs = jr.line_window_subclusters("m.py", unit["entries"])
+    assert subs is not None and len(subs) >= 2
+
+
+def test_band_engagement_in_expand(jr):
+    """expand_oversize_units splits band units via the same cutter order;
+    the split sub-units partition the parent's changed entries."""
+    src = "x = 1\n" * 200
+    unit = _unit(jr, src)
+    images = lambda p, u: ("", src)  # noqa: E731
+    out, leaves = jr.expand_oversize_units([unit], images)
+    assert leaves == []
+    assert len(out) >= 2
+    changed = sorted(e[1] for e in unit["entries"])
+    got = sorted(e[1] for u in out for e in u["entries"])
+    assert got == changed
+
+
+def test_band_threshold_exact(jr):
+    """BAND_ENGAGE_LINES is >: 120 lines does NOT engage, 121 does."""
+    at = "x = 1\n" * 120
+    over = "x = 1\n" * 121
+    assert not jr._unit_band(_unit(jr, at))
+    assert jr._unit_band(_unit(jr, over))
+
+
+def test_oversize_unit_is_never_band_only(jr):
+    """An oversize unit is over-cap first (band is the SECOND test, never
+    a replacement — r1-M4's token gate stays the primary engagement)."""
+    unit = _unit(jr, _oversize_py_src())
+    assert jr._unit_oversize(unit)
+
+
+def test_band_single_changed_line_stays_whole(jr):
+    """A band unit that cannot split (single changed line + >120 context
+    lines) is judged WHOLE — band units never become unsplittable>cap
+    leaves (unlike oversize units, under-cap content is legal to send)."""
+    entries = [(" ", 1, "ctx", 1)] * 150 + [("+", 151, "x = 1", 1)]
+    unit = {"file": "m.py", "line": 151, "hunk_start": 1,
+            "entries": entries, "change_type": "code-change"}
+    images = lambda p, u: (None, None)  # noqa: E731
+    out, leaves = jr.expand_oversize_units([unit], images)
+    assert leaves == []
+    assert len(out) == 1 and out[0] is unit
+
+
 def test_determinism(jr):
     src = _oversize_py_src()
     a = _split(jr, src)

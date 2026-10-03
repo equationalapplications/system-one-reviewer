@@ -49,6 +49,15 @@ METRICS_PATH = os.environ.get(
                  "jev-review", "metrics.jsonl"))
 
 MAX_HUNK_LINES = 120          # hunks larger than this are noted, not judged
+# Option 2 (r8-M2 escalation, Kurt APPROVED 2026-10-02): the ~120-line AST
+# engagement threshold for the 121-line…84k-char band. A unit whose span
+# exceeds BAND_ENGAGE_LINES engages the Task 2/3 cutter even when its
+# serialized estimate is under the token gate, so band clusters are judged
+# in windows with per-window anchors instead of as ONE whole-call anchor
+# (the importMachine.ts failure the G-D band check measured: judged whole,
+# reported 2-of-6, band goldens missed). The token gate (r1-M4) stays the
+# PRIMARY engagement — oversize is tested first; band is additive.
+BAND_ENGAGE_LINES = 120
 # Token-based call budgets (AST-units plan Task 1; brief rev 6 :263):
 # the 32k budget covers `state` plus the single LONGEST question — that
 # is the quantity estimate_call_size measures, not the all-questions
@@ -1324,6 +1333,22 @@ def _unit_oversize(unit):
         > SOFT_CAP_TOKENS
 
 
+def _unit_band(unit):
+    """The BAND engagement test (option 2, Kurt ruling 2026-10-02): the
+    unit's span exceeds BAND_ENGAGE_LINES while its estimate stays under
+    the token cap. Band units route through the SAME cutter order as
+    oversize ones (top-level AST -> tree-sitter -> line windows ->
+    halving) but can never become unsplittable>cap leaves — under-cap
+    content is legal to send, so an un-splittable band unit is judged
+    WHOLE (the caller's band path never leaf-marks). Span is the
+    unit's own line_start/line_end when present, else anchor-only."""
+    if _unit_oversize(unit):
+        return False  # oversize test is primary; band is additive
+    lo = unit.get("line_start", unit.get("line", 1))
+    hi = unit.get("line_end", lo)
+    return hi - lo + 1 > BAND_ENGAGE_LINES
+
+
 def stamp_wire_format(units):
     """D7 (plan Task 7): the run's wire_format stamp — `ast-units-v1` when
     ANY judgeable unit CAME FROM AST (carries its parent cluster; the key
@@ -1427,15 +1452,25 @@ def expand_oversize_units(units, images, depth=0):
             # split here.
             unit = {k: v for k, v in unit.items()
                     if k != "ast_context"}
-        if not _unit_oversize(unit):
+        if not _unit_oversize(unit) and not _unit_band(unit):
             out.append(unit)
             continue
+        band = not _unit_oversize(unit)
         if depth >= MAX_EXPANSION_DEPTH:
+            if band:
+                out.append(unit)  # band units are never over-cap leaves
+                continue
             leaves.append({"hunk": unit, "parse_error": True, "raw": None,
                            "reason": "unsplittable>cap"})
             continue
         subs, leaf = _split_once(unit, images)
         if leaf is not None:
+            if band:
+                # option 2: a band unit the cutters cannot split is under
+                # cap and stays judgeable — judged WHOLE, never a leaf
+                # (unlike an oversize unit, whose content is over cap).
+                out.append(unit)
+                continue
             leaves.append({"hunk": leaf, "parse_error": True, "raw": None,
                            "reason": "unsplittable>cap"})
             continue
