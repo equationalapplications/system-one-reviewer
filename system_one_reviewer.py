@@ -814,6 +814,163 @@ def _qualified_matches(pre_units, post_units):
             if name in post_by_name}
 
 
+# ---------- AST context enrichment (plan Task 6, Arch 2) ----------
+#
+# Read-only enclosing-symbol context attached to unit states AFTER the
+# pre-judge expansion (jev only). Text-only: no merged units, no question
+# changes, no call graph (Arch 3 is UNPROVEN AND DEFERRED, r2-m5).
+# Size is bounded at ATTACHMENT (r2-m3) so enrichment keeps budget
+# headroom; a unit whose context still trips the soft cap has the
+# context DROPPED at re-expansion step 0 (r12-M1) — never split.
+
+ENRICHMENT_MAX_SYMBOLS = 40        # file top-level symbol table cap
+ENRICHMENT_MAX_CONTEXT_LINES = 20  # enclosing-symbol context-window cap
+
+
+def _signature_line(node, src_lines):
+    """The source line that defines `node` (the `def`/`class` header)."""
+    n = node.lineno
+    if 1 <= n <= len(src_lines):
+        return src_lines[n - 1].rstrip()
+    return ""
+
+
+def _file_symbol_table(src):
+    """Ordered {name: signature line} for a module's top-level def/class
+    symbols — the ENRICHMENT_MAX_SYMBOLS head in source order, or None
+    when the file has no parseable top-level symbols (non-Python text,
+    syntax errors, no symbols). Deterministic."""
+    units = _top_level_units(src)
+    if not units:
+        return None
+    src_lines = src.splitlines()
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return None
+    table: dict[str, str] = {}
+    for name, s, _en in units[:ENRICHMENT_MAX_SYMBOLS]:
+        node = next((cand for cand in tree.body
+                     if getattr(cand, "name", None) == name
+                     and getattr(cand, "lineno", None) == s), None)
+        table[name] = (_signature_line(node, src_lines) if node is not None
+                       else (src_lines[s - 1].rstrip()
+                             if 1 <= s <= len(src_lines) else ""))
+    return table or None
+
+
+def _walk_with_parents(tree):
+    """Yield (node, parent_chain) where parent_chain is the list of
+    enclosing def/class names (outermost first). ast.walk loses parents,
+    so this keeps an explicit chain."""
+    stack: list[tuple[ast.AST, list[str]]] = [(tree, [])]
+    while stack:
+        node, chain = stack.pop()
+        name = getattr(node, "name", None)
+        here = chain + [name] if isinstance(name, str) else chain
+        yield node, here
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, here))
+
+
+def _enclosing_chain(src, lineno):
+    """The enclosing symbol chain at `lineno` — 'Class.method' style,
+    outermost first, dotted. Deletion-only units map by OLD-file line
+    into the PRE image (r2-m4). None when no def/class encloses the
+    line (module-level change)."""
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return None
+    best: list[str] = []
+    for node, chain in _walk_with_parents(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+            continue
+        end = getattr(node, "end_lineno", None)
+        if end is None or not (node.lineno <= lineno <= end):
+            continue
+        if len(chain) > len(best):
+            best = chain
+    return ".".join(best) or None
+
+
+def _symbol_context_window(src, lineno):
+    """Up to ENRICHMENT_MAX_CONTEXT_LINES of the innermost enclosing
+    symbol's own source (header .. end, deterministic head-first clamp)
+    — the part of the file that gives the changed lines their
+    enclosing-symbol shape."""
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return []
+    src_lines = src.splitlines()
+    best = None
+    for node, _chain in _walk_with_parents(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+            continue
+        end = getattr(node, "end_lineno", None)
+        if end is None or not (node.lineno <= lineno <= end):
+            continue
+        if best is None or (node.lineno, end) <= best:
+            best = (node.lineno, end)
+    if best is None:
+        return []
+    s, en = best
+    lo = max(1, min(s, len(src_lines)))
+    hi = min(len(src_lines), en)
+    return [src_lines[i - 1].rstrip() for i in range(lo, hi + 1)] \
+        [:ENRICHMENT_MAX_CONTEXT_LINES]
+
+
+def build_ast_context(path, pre, post, unit):
+    """The ast_context value for ONE unit, or None when the unit has no
+    usable symbol context (non-Python text, no parseable images, no
+    enclosing symbols). `pre` is preferred for deletion-only units
+    (r2-m4: the removed code lives only in the old file); everything
+    else maps by POST-image lines. WHOLE-FILE-DELETED units always get
+    None (no post-image at all — the cluster is judged as-is)."""
+    if unit.get("change_type") == "whole-file-deleted":
+        return None
+    if unit.get("change_type") == "deletion-only" and pre:
+        src = pre
+        first = next((e for e in unit.get("entries", []) if e[0] == "-"),
+                     None)
+        lineno = first[1] if first is not None else unit["line"]
+    else:
+        src = post
+        lineno = unit["line"]
+    if not src:
+        return None
+    symbols = _file_symbol_table(src)
+    enclosing = _enclosing_chain(src, lineno)
+    if symbols is None and enclosing is None:
+        return None
+    return {"symbols": symbols or {},
+            "enclosing": enclosing,
+            "context": _symbol_context_window(src, lineno)}
+
+
+def attach_ast_context(units, images):
+    """Bounded (r2-m3) attachment of `ast_context` to each unit — called
+    by main() for jev only, after the pre-judge expansion and only when
+    --no-enrichment is absent (r5-m3: the mechanism lives here, so
+    `hunk_state` stays provider-agnostic and a laya state NEVER carries
+    the key). `images(path, unit)` mirrors the cutter's injection
+    contract (mode_file_images). Units without a usable symbol context
+    (non-Python text, missing images, whole-file-deleted) simply do not
+    get the key — it is ABSENT, never None-valued."""
+    out: list = []
+    for unit in units:
+        pre, post = images(unit.get("file") or "", unit)
+        ctx = build_ast_context(unit.get("file") or "", pre, post, unit)
+        if ctx is not None:
+            unit = dict(unit, ast_context=ctx)
+        out.append(unit)
+    return out
+
+
 def _subcluster(parent, entries, change_type=None, hunk_start=None):
     """Assemble one sub-cluster record from `entries`, sharing the parent's
     identity (D8) and anchoring via the SHARED anchor chain."""
@@ -1218,13 +1375,25 @@ def _split_once(unit, images):
 def expand_oversize_units(units, images, depth=0):
     """Recursively expand oversize units until every unit fits (r7-M2).
 
-    Fixed order per unit: top-level AST -> nested AST -> line windows ->
+    Fixed order per unit: STEP 0 (POST-ENRICHMENT re-expansion only,
+    r12-n1/r13-n1 — the initial Task 4 pass holds no `ast_context`) —
+    a unit over cap whose state carries `ast_context` is over cap
+    BECAUSE of its context (every unit leaving step (1) is <=cap
+    unenriched and attachment clamps the context at 40/20), so the
+    context is DROPPED ENTIRELY and the unit returns to its <=cap
+    unenriched state (r12-M1): NO split is attempted, the images (and
+    thus any splitter) are never consulted, and enrichment can never
+    cause a split on the jev path. NO PARTIAL TRIM is built (a partial
+    trim that permits splitting while keeping some context would be a
+    NEW design decision requiring Kurt's ruling). Then, for a unit
+    still over cap: top-level AST -> nested AST -> line windows ->
     halving. A single changed line whose own estimate still exceeds
-    SOFT_CAP_TOKENS is NEVER sent and never silently dropped: it is set
-    aside as a leaf record {"hunk": unit, "parse_error": True, "raw":
-    None, "reason": "unsplittable>cap"} (r11-m1) that main() appends to
-    findings only AFTER judge() returns non-None. Depth-capped (bounded
-    termination); at the cap a still-oversize unit becomes a leaf too.
+    SOFT_CAP_TOKENS is NEVER sent and never silently dropped: it is
+    set aside as a leaf record {"hunk": unit, "parse_error": True,
+    "raw": None, "reason": "unsplittable>cap"} (r11-m1) that main()
+    appends to findings only AFTER judge() returns non-None.
+    Depth-capped (bounded termination); at the cap a still-oversize
+    unit becomes a leaf too.
 
     Returns (units, leaves) — `units` are judgeable, `leaves` unjudged.
     `depth` is internal; the initial (pre-enrichment) expansion has no
@@ -1234,6 +1403,13 @@ def expand_oversize_units(units, images, depth=0):
     out: list = []
     leaves: list = []
     for unit in units:
+        if _unit_oversize(unit) and "ast_context" in unit:
+            # step 0 (r12-M1): the context IS the over-cap cause —
+            # drop it entirely; the result is the <=cap step-(1)
+            # state by construction, so never re-test and never
+            # split here.
+            unit = {k: v for k, v in unit.items()
+                    if k != "ast_context"}
         if not _unit_oversize(unit):
             out.append(unit)
             continue
@@ -1251,6 +1427,22 @@ def expand_oversize_units(units, images, depth=0):
         out.extend(sub_units)
         leaves.extend(sub_leaves)
     return out, leaves
+
+
+def reexpand_after_enrichment(units, images):
+    """Task 6 step (3) (r11-M1/r12-M1): the POST-ENRICHMENT re-estimate
+    + re-expansion pass. Runs the SAME machinery as the Task 4 pass,
+    whose per-unit order terminates at step 0: DROP `ast_context` — an
+    over-cap unit's context is the over-cap cause, so the context is
+    dropped and NO split is ever attempted because of enrichment. The
+    context-drop path DE-AliasS the unit (a fresh dict without the
+    key), so the pass-1 leaf contract is preserved by construction:
+    a unit that was a leaf at pass 1 never reaches this pass enriched
+    (leaves are set aside in step (4) BEFORE attachment and are not in
+    `units`), and a unit dropped here re-enters the normal oversize
+    test with its step-(1) state, so the leaf/split outcomes for it are
+    exactly the unenriched run's."""
+    return expand_oversize_units(units, images)
 
 
 def _runtime_split_unit_factory(repo, mode, head):
@@ -1627,6 +1819,13 @@ def hunk_state(h):
         # compose() requires before a lone deletion finding flips the
         # verdict; False ⇒ nothing in view references the removal.
         state["references_remaining"] = references_remaining(h, after)
+    # Task 6 (r5-m3): the ast_context key is ATTACHED by main() on the
+    # jev path only (attach_ast_context); hunk_state is provider-
+    # agnostic and reads the key WHEN PRESENT. A laya state (or any
+    # unit whose enrichment was dropped at re-expansion step 0,
+    # r12-M1) simply never carries it.
+    if "ast_context" in h:
+        state["ast_context"] = h["ast_context"]
     return state
 
 
@@ -1990,7 +2189,18 @@ def judge_pr_level(findings, ask, size_skipped_code=None):
     # "unjudged" so the PR-level model can't read them as severity=none.
     # r11-m1: parse_error records carrying a reason marker (unsplittable
     # leaves) label as "skipped: <reason>", not "provider call failed".
-    lines = [_digest_label(f) for f in findings]
+    # Task 6 (r2-M2): a parse_error record whose hunk carries ast_context
+    # is a leaf from the RE-expansion pass (post-enrichment, depth-capped
+    # at the initial pass already — the context can only be present when
+    # this leaf came from Task 6's step-3 recursion); r12-M1 makes that
+    # path unreachable in practice, but the label must still be right if
+    # a future depth-cap change ever produces one.
+    lines = []
+    for f in findings:
+        line = _digest_label(f)
+        if f.get("parse_error") and "ast_context" in f.get("hunk", {}):
+            line += " (from enriched re-expansion)"
+        lines.append(line)
     for s in size_skipped_code or []:
         lines.append(f"- {s['file']}:{s.get('line_start', '?')} unjudged "
                      f"(skipped: {s.get('reason')})")
@@ -2287,6 +2497,13 @@ def main():
                     help="model/checkpoint for the laya provider "
                          f"(default {LAYA_DEFAULT_MODEL})")
     ap.add_argument("--json", action="store_true", help="JSON-only stdout")
+    # Task 6 (r5-m2): a MEASUREMENT knob for Task 8's mandatory
+    # enrichment-off arm, not a user feature — it skips the
+    # ast_context attachment entirely.
+    ap.add_argument("--no-enrichment", dest="no_enrichment",
+                    action="store_true",
+                    help="disable AST enclosing-symbol enrichment "
+                         "(measurement arm; states stay v03b-shaped)")
     args = ap.parse_args()
 
     provider, model = provider_from(args.provider, args.model)
@@ -2306,15 +2523,34 @@ def main():
 
     # AST-units plan Task 4 — BINDING pre-judge pipeline (r11-M1/r12/r13):
     #   (1) route + expand (token-gated, recursive r7-M2)
+    #   (2) attach ast_context (jev only, unless --no-enrichment; Task 6)
+    #   (3) re-estimate + RE-expand (step 0: DROP ast_context, r12-M1)
     #   (4) set leaves aside — EXEMPT from --max-hunks, BEFORE truncation
     #   (5) truncate to the ceiling in FIRST-COME-ACROSS-FILES order
+    #   (6) freeze n_units_pre / n_dropped
     if provider == "jev" and kept:
         # r2-M2: per-mode pre/post file images for the cutter; a missing
         # image degrades (mode_file_images returns None) — never exits.
-        kept, leaves = expand_oversize_units(
-            kept, lambda path, unit: mode_file_images(
-                args.repo, mode, head, path,
-                old_file=unit.get("old_file")))
+        images = lambda path, unit: mode_file_images(  # noqa: E731
+            args.repo, mode, head, path,
+            old_file=unit.get("old_file"))
+        kept, leaves = expand_oversize_units(kept, images)
+        # Task 6 step (2) (r5-m3): attach ast_context AFTER the
+        # pre-judge expansion, jev only and never under
+        # --no-enrichment; hunk_state reads the key WHEN PRESENT, so
+        # the attachment point is the whole mechanism and a laya state
+        # can never carry it.
+        if not args.no_enrichment:
+            kept = attach_ast_context(kept, images)
+            # Task 6 step (3) (r2-M2/r12-M1): re-estimate and RE-expand
+            # BEFORE the counters freeze — an over-cap unit is over
+            # BECAUSE of its context, so the re-expansion order
+            # TERMINATES AT STEP 0 (context dropped, no split); the
+            # leaves-aside → truncate → freeze ordering below stands as
+            # a guard. The pass-1 `leaves` stay the run's leaf set:
+            # attachment only touches `kept`, so a pass-1 leaf can
+            # neither gain nor lose its record here.
+            kept, _reexp_leaves = reexpand_after_enrichment(kept, images)
         n_leaf_unjudged = len(leaves)
     else:
         leaves = []
@@ -2423,12 +2659,23 @@ def main():
          "rubric": f.get("rubric", "code-change"),
          "references_remaining": f.get("references_remaining"),
          "change_type": f["hunk"].get("change_type", "code-change"),
+         # Task 6 (r1-M1): per-unit enrichment presence in the JUDGED
+         # state (r12-M1: a dropped unit logs "none" — the flag records
+         # presence in the judged state, never the attempt).
+         "enrichment": ("ast" if "ast_context" in f["hunk"] else "none"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
     meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
             "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks),
+            # Task 6: the run-level enrichment stamp (r1-M1: the D7
+            # run-level stamp stays; judged entries also carry their own
+            # per-unit value). "ast" iff ANY unit state carries
+            # ast_context; "none" under --no-enrichment / laya / when no
+            # unit's file yielded a symbol table.
+            "enrichment": ("ast" if any("ast_context" in u
+                                        for u in kept) else "none"),
             # r10-m2/r9-M1: the POST-judge formula — never bare len(kept),
             # or a runtime-split run logs n_analyzed short by added_units
             # and sweep :98 rejects a legal run. added_units=0 in Task 4
