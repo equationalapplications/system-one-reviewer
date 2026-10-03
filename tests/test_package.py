@@ -338,7 +338,7 @@ def test_shape_errors_reach_fail_open(jr):
         calls.append(1)
         return {"answers": {}}, 1.0  # transport OK, answers shape wrong
 
-    findings, _lat = jr.judge(hunks, bad_ask)
+    findings, _lat, _meta = jr.judge(hunks, bad_ask)
     assert findings is None, "consecutive shape errors must trigger fail-open"
     assert len(calls) == jr.CALL_FAIL_LIMIT
 

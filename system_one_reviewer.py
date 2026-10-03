@@ -171,6 +171,43 @@ class _NoRetry(Exception):
     """
 
 
+class _OverBudget(_NoRetry):
+    """Plan Task 5 (r8-m1): the provider rejected a call with HTTP 400
+    `max_tokens_exceeded` — the payload did not fit the model's budget.
+
+    A SUBCLASS of _NoRetry so the handler's re-raise-untouched semantics
+    apply mechanically: an over-budget 400 is never given the 5xx retry
+    (a wasted over-budget resend). jev_ask-internal — laya never
+    observes it (D6: its transport never calls jev_ask). judge() catches
+    this BEFORE its generic `except Exception` and drives the halve-
+    and-retry split.
+    """
+
+
+def _is_max_tokens_body(raw):
+    """True when an HTTP-error body marks the failure as a token-budget
+    rejection (the `max_tokens_exceeded` marker in Jev's error JSON).
+    Tolerant: any nesting, case-insensitive marker match."""
+    try:
+        text = raw.decode("utf-8", "replace").lower()
+    except Exception:
+        return False
+    return "max_tokens_exceeded" in text or "max_tokens" in text \
+        and "exceed" in text
+
+
+def payload_over_hard_cap(state, questions):
+    """The SEND gate (plan Task 5, r1-m2): the serialized wire total —
+    `state` plus ALL questions, exactly what one HTTP call carries —
+    must stay <= HARD_CAP_TOKENS. Defense-in-depth behind the pre-judge
+    soft-cap pass (Task 4): the estimator's per-call quantity is state +
+    longest question, so this gate is what guarantees nothing over the
+    hard cap is ever SENT."""
+    total_chars = len(json.dumps(state)) + sum(
+        len(json.dumps(q)) for q in questions.values())
+    return total_chars / CHARS_PER_TOKEN > HARD_CAP_TOKENS
+
+
 def jev_ask(state, questions, api_key):
     """One batched Jev round-trip. Returns (payload, latency_ms)."""
     body = json.dumps({"state": state, "model": "jev-latest",
@@ -195,7 +232,14 @@ def jev_ask(state, questions, api_key):
                 # (transient server errors), then re-raises on attempt 2.
                 # Cost of a retry is one wasted request + latency, nothing
                 # more: jev_ask raises once per call either way.
+                # Task 5 (r8-m1): the max_tokens_exceeded body check runs
+                # BEFORE the _NoRetry raise (raw is inspected on this >=400
+                # path) — _OverBudget is a _NoRetry subclass, so it too is
+                # re-raised untouched and never given the 5xx retry.
                 if resp.status < 500:
+                    if _is_max_tokens_body(raw):
+                        raise _OverBudget(
+                            f"HTTP {resp.status}: {raw[:200]!r}")
                     raise _NoRetry(f"HTTP {resp.status}: {raw[:200]!r}")
                 raise RuntimeError(f"HTTP {resp.status}: {raw[:200]!r}")
             payload = json.loads(raw)
@@ -1144,18 +1188,24 @@ def _split_once(unit, images):
                                    parent_cluster=parent)
     if subs:
         return subs, None
-    # 4. halving — cut the changed entries into two halves by position
+    subs = None
+    # 4. halving — cut the CHANGED entries into two halves by position.
+    # Context (' ') entries ride with their run (union == original): a
+    # 2-entry unit like [context, changed] must still halve (a runtime
+    # 400 retry has no other cutter left). Halving requires >= 2 entries
+    # total, not >= 2 changed entries — a single changed line with its
+    # context CAN split at runtime (the plan's ±1-line leaf windows).
+    # mid_line = the FIRST changed line: entries before it (context or
+    # earlier changes) go left, the rest right.
     changed = _changed_entries(entries)
-    if len(changed) > 1:
-        mid = len(changed) // 2
-        mid_line = changed[mid][4] if changed[mid][0] == "-" \
-            else changed[mid][1]
+    if len(entries) > 1 and changed:
+        mid_line = (changed[0][4] if changed[0][0] == "-"
+                    else changed[0][1])
         left = [e for e in entries
                 if (e[4] if e[0] == "-" else e[1]) < mid_line]
         right = [e for e in entries
                  if (e[4] if e[0] == "-" else e[1]) >= mid_line]
-        if left and right and (len(left) < len(entries)
-                               or len(right) < len(entries)):
+        if left and right:
             return ([_subcluster(parent, left, change_type=change_type,
                                  hunk_start=parent["hunk_start"]),
                      _subcluster(parent, right, change_type=change_type,
@@ -1201,6 +1251,21 @@ def expand_oversize_units(units, images, depth=0):
         out.extend(sub_units)
         leaves.extend(sub_leaves)
     return out, leaves
+
+
+def _runtime_split_unit_factory(repo, mode, head):
+    """Task 5 (r6-m3): build the splitter judge() calls back into when a
+    unit comes back 400 max_tokens_exceeded at runtime. main() owns the
+    per-mode file images (mode_file_images) and the Task 2/3 extractors;
+    judge() has none — hence injection. ONE _split_once attempt per
+    call; deeper recursion happens through judge()'s own loop with its
+    MAX_EXPANSION_DEPTH cap."""
+    def split_unit(unit):
+        subs, _leaf = _split_once(unit, lambda path, img_unit: (
+            mode_file_images(repo, mode, head, path,
+                             old_file=img_unit.get("old_file"))))
+        return subs
+    return split_unit
 
 
 # ---------- per-mode file images (plan Task 4 helpers; not wired yet) ----------
@@ -1565,7 +1630,104 @@ def hunk_state(h):
     return state
 
 
-def judge(hunks, ask, errors=None):
+def _judge_unit(h, ask, split_unit, depth):
+    """Judge ONE unit with the Task 5 runtime-split loop (r6-m3).
+
+    Returns a flat 7-tuple:
+        (records, added_units, latencies, tokens_sum, tokens_n,
+         transport_fail, shape_fail)
+
+    `records` are the unit's finding records (judged or explicit
+    unjudged budget leaves); `added_units` is the NET unit growth from
+    runtime splits (leaves - 1 per split parent, r7-m1 — the parent is
+    REPLACED, not kept); `latencies`/`tokens_sum`/`tokens_n` aggregate
+    successful call latency and usage.input_tokens; `transport_fail` is
+    the repr of an ordinary transport error (None when none — an
+    _OverBudget NEVER reaches here, it is converted to an explicit
+    unjudged leaf); `shape_fail` is the bad-response-shape error repr
+    (None when the answers parsed).
+
+    Flow: the SEND gate first (defense-in-depth, r1-m2 — an over-
+    HARD-cap payload is never sent); then the ask; an _OverBudget
+    raised by jev_ask (the provider's 400 max_tokens_exceeded) drives
+    a halve-and-retry through the INJECTED `split_unit` callable (the
+    images + extractors live in main(), not here). split_unit None or
+    returning None/[] => the unit is marked unjudged via the SAME leaf
+    shape Task 4 established (parse_error True, reason
+    'unsplittable>cap') — never a crash, never fail-open on one unit.
+    Depth-capped (bounded termination, r2-m2): a still-splitting unit
+    at MAX_EXPANSION_DEPTH becomes a leaf too.
+    """
+    state = hunk_state(h)
+    # v0.3b: whole-file deletions are still deletions for question
+    # routing; only code-change clusters get the generic set.
+    questions = (DELETION_QUESTIONS
+                 if state["change_type"] in ("deletion-only",
+                                             "whole-file-deleted")
+                 else HUNK_QUESTIONS)
+    zero = (0.0, 0)
+    leaf = _budget_leaf(h, "unsplittable>cap")
+    # SEND gate (r1-m2): state + ALL questions <= HARD_CAP_TOKENS or the
+    # payload is never sent. Defense-in-depth behind the pre-judge
+    # soft-cap pass; the unit becomes an explicit unjudged leaf (NO
+    # consecutive-failure count: the provider was never contacted).
+    if payload_over_hard_cap(state, questions):
+        return ([leaf], 0, [], *zero, None, None)
+    try:
+        payload, ms = ask(state, questions)
+    except _OverBudget:
+        # runtime over-budget (r6-m3): halve-and-retry via the injected
+        # splitter. No splitter (or an unsplittable unit) => unjudged.
+        # The outcome NEVER counts toward the consecutive-failure
+        # counter (r3-M5 "one attempt"): the explicit leaf feeds the
+        # incomplete-review downgrade instead — a budget chain is not a
+        # dead provider, so consecutive over-budget units must not
+        # fail the run open (test_consecutive_accounting_single).
+        if split_unit is None or depth >= MAX_EXPANSION_DEPTH:
+            # depth 0: the unit IS the leaf (count unchanged). depth > 0:
+            # the leaf replaces a split-allocated sub-unit (+1).
+            return ([leaf], 1 if depth > 0 else 0, [], *zero, None, None)
+        subs = split_unit(h)
+        if not subs:
+            return ([leaf], 1 if depth > 0 else 0, [], *zero, None, None)
+        records: list = []   # carriers + leaf records, in unit order
+        # the parent is REPLACED by len(subs) units (r7-m1): base NET is
+        # len(subs) - 1; recursion adds each sub's own nested delta.
+        added = len(subs) - 1
+        lat: list = []
+        tok_sum = 0.0
+        tok_n = 0
+        for sub in subs:
+            (sub_records, sub_added, sub_lat, sub_tok, sub_n,
+             sub_fail, sub_shape) = _judge_unit(sub, ask, split_unit,
+                                                depth + 1)
+            if sub_fail is not None:
+                # an ordinary transport error below the split bubbles up
+                # as this chain's failure (judge() counts it once).
+                return ([leaf], 0, [], *zero, sub_fail, None)
+            if sub_shape is not None:
+                # a shape error below the split bubbles up the same way.
+                return ([leaf], 0, [], *zero, None, sub_shape)
+            records.extend(sub_records)
+            added += sub_added
+            lat.extend(sub_lat)
+            tok_sum += sub_tok
+            tok_n += sub_n
+        return (records, added, lat, tok_sum, tok_n, None, None)
+    except Exception as exc:
+        return ([], 0, [], *zero, repr(exc)[:300], None)
+    # sentinel dict: distinguishes "transport success" from leaf records
+    return ([{"_payload": payload, "_ms": ms, "_state": state}], 0, [ms],
+            *zero, None, None)
+
+
+def _budget_leaf(h, reason):
+    """The Task-4 leaf-record shape, reused at runtime (plan Task 5)."""
+    return {"hunk": h, "parse_error": True, "raw": None,
+            "reason": reason, "latency_ms": 0.0}
+
+
+def judge(hunks, ask, errors=None, *, split_unit=None):
     """ask is the wired provider's ask(state, questions) (E8 contract).
 
     errors, if given, collects a short repr of every failed call (transport
@@ -1576,34 +1738,91 @@ def judge(hunks, ask, errors=None):
     DELETION_QUESTIONS — removal-risk scoring instead of code-bug scoring;
     all other clusters get HUNK_QUESTIONS. The response contract and
     compose() gating are identical for both sets.
+
+    Plan Task 5: split_unit is INJECTED by main() (keyword-only, r7-m2 —
+    main() owns the file images + Tasks 2/3 extractors; judge() has
+    none). When the provider answers 400 max_tokens_exceeded, judge()
+    halves-and-retries through it; split_unit=None marks the unit
+    unjudged instead (never a crash). Returns (findings, latencies,
+    meta) where meta = {"added_units": net runtime-split growth,
+    "avg_input_tokens": float|None from payload usage.input_tokens}
+    (r5-m6) — EVERY return path, fail-open included, carries the 3rd
+    element.
     """
     findings, latencies, failures = [], [], 0
     parse_failures = 0  # M1 (r8): consecutive shape errors, separate counter
     kept_hunks = len(hunks)
+    added_units = 0
+    tokens_sum = 0.0
+    tokens_n = 0
     for h in hunks:
-        state = hunk_state(h)
-        # v0.3b: whole-file deletions are still deletions for question
-        # routing; only code-change clusters get the generic set.
-        questions = (DELETION_QUESTIONS
-                     if state["change_type"] in ("deletion-only",
-                                                 "whole-file-deleted")
-                     else HUNK_QUESTIONS)
-        try:
-            payload, ms = ask(state, questions)
-            latencies.append(ms)
-            failures = 0
-        except Exception as exc:
+        (records, added, lat, tok, n_tok,
+         transport_fail, shape_fail) = _judge_unit(h, ask, split_unit, 0)
+        added_units += added
+        latencies.extend(lat)
+        tokens_sum += tok
+        tokens_n += n_tok
+        if transport_fail is not None:
+            # ordinary transport failure — counts toward the consecutive
+            # limit exactly as before. An _OverBudget arrives here with
+            # its explicit unjudged leaf in `records` and counts ONCE
+            # toward the counter for the WHOLE chain (r3-M5).
+            findings.extend(records)
             if errors is not None:
-                errors.append(repr(exc)[:300])
+                errors.append(transport_fail)
             failures += 1
             if failures >= CALL_FAIL_LIMIT:
-                return None, latencies  # fail-open signal
+                meta = {"added_units": added_units,
+                        "avg_input_tokens": None}
+                return None, latencies, meta  # fail-open signal
             # M2 (r9): record the failed call so the incomplete-review
             # downgrade can see it (a 1-cluster diff can never reach the
-            # consecutive limit, but its failure must not vanish).
+            # consecutive limit, but its failure must not vanish) —
+            # unless the unit already carries its own explicit leaf.
+            if not records:
+                findings.append({"hunk": h, "parse_error": True,
+                                 "raw": None, "latency_ms": 0.0})
+            continue
+        # transport success resets the shared counter BEFORE parsing
+        # starts (m3 (r11) semantics preserved)
+        failures = 0
+        if shape_fail is not None:
+            if errors is not None:
+                errors.append(shape_fail)
+            parse_failures += 1
+            failures += 1
+            if parse_failures >= CALL_FAIL_LIMIT or failures >= CALL_FAIL_LIMIT:
+                meta = {"added_units": added_units,
+                        "avg_input_tokens": None}
+                return None, latencies, meta  # fail-open signal
             findings.append({"hunk": h, "parse_error": True,
                              "raw": None, "latency_ms": 0.0})
             continue
+        if not (records and "_payload" in records[0]):
+            # a non-failure unit that produced no ask (the SEND gate
+            # leaf, or an over-budget chain resolved to leaves) — its
+            # explicit leaf records carry the coverage; nothing to parse.
+            findings.extend(records)
+            continue
+        # mixed records (split carriers + leaves): keep the leaves, parse
+        # EVERY carrier (a split parent yields 2+ judged sub-records).
+        leaf_part = [r for r in records if "_payload" not in r]
+        findings.extend(leaf_part)
+        carriers = [r for r in records if "_payload" in r]
+        carrier = carriers[0]
+        pending_carriers = carriers[1:]
+        payload, ms, state = carrier["_payload"], carrier["_ms"], \
+            carrier["_state"]
+        parse_failures = 0
+        # Task 5 (r2-M4): the call's usage.input_tokens reaches the
+        # ledger via meta.avg_input_tokens (jev payloads carry `usage`;
+        # laya's do not — None, never fabricated).
+        usage = payload.get("usage") if isinstance(payload, dict) else None
+        if isinstance(usage, dict):
+            it = usage.get("input_tokens")
+            if isinstance(it, (int, float)) and math.isfinite(float(it)):
+                tokens_sum += float(it)
+                tokens_n += 1
         try:
             ans = payload["answers"]
             sev = ans["severity"]
@@ -1663,18 +1882,83 @@ def judge(hunks, ask, errors=None):
             # same-cause shape errors in every ordering.
             failures += 1
             if parse_failures >= CALL_FAIL_LIMIT or failures >= CALL_FAIL_LIMIT:
-                return None, latencies  # fail-open signal
+                meta = {"added_units": added_units,
+                        "avg_input_tokens": None}
+                return None, latencies, meta  # fail-open signal
             findings.append({"hunk": h, "parse_error": True,
                              "raw": payload, "latency_ms": round(ms, 1)})
+        # remaining carriers from this unit's runtime split parse with
+        # the same shape contract (usage extraction + answers parsing).
+        for carrier in pending_carriers:
+            payload = carrier["_payload"]
+            ms = carrier["_ms"]
+            state = carrier["_state"]
+            usage = payload.get("usage") if isinstance(payload, dict) \
+                else None
+            if isinstance(usage, dict):
+                it = usage.get("input_tokens")
+                if isinstance(it, (int, float)) and \
+                        math.isfinite(float(it)):
+                    tokens_sum += float(it)
+                    tokens_n += 1
+            try:
+                ans = payload["answers"]
+                sev = ans["severity"]
+                real = ans["is_real_issue"]
+                cat = ans["category"]
+                score = float(sev.get("score", 0))
+                noul = real.get("noul")
+                if not math.isfinite(score):
+                    raise ValueError(f"non-finite severity score: {score!r}")
+                if not isinstance(noul, (int, float, bool)) or \
+                        not math.isfinite(float(noul)):
+                    raise ValueError(f"non-numeric noul: {noul!r}")
+                findings.append({
+                    "hunk": h, "severity": score,
+                    "sev_dist": sev.get("probabilities"),
+                    "confidence": sev.get("confidence"),
+                    "is_real": noul,
+                    "category": cat.get("choice"),
+                    "cat_dist": cat.get("probabilities"),
+                    "rubric": ("deletion"
+                               if state["change_type"] in
+                               ("deletion-only", "whole-file-deleted")
+                               else "code-change"),
+                    "references_remaining":
+                        state.get("references_remaining"),
+                    "change_type": state["change_type"],
+                    "latency_ms": round(ms, 1),
+                })
+                parse_failures = 0
+            except (KeyError, TypeError, AttributeError, ValueError) as exc:
+                if errors is not None:
+                    errors.append(f"bad response shape: {exc!r}"[:300])
+                parse_failures += 1
+                failures += 1
+                if parse_failures >= CALL_FAIL_LIMIT or \
+                        failures >= CALL_FAIL_LIMIT:
+                    meta = {"added_units": added_units,
+                            "avg_input_tokens": None}
+                    return None, latencies, meta  # fail-open signal
+                findings.append({"hunk": h, "parse_error": True,
+                                 "raw": payload,
+                                 "latency_ms": round(ms, 1)})
     # M2 (r9), the reviewer's stronger option: if EVERY call failed
     # (nothing was ever judged), that is a dead provider — full fail-open
     # regardless of the consecutive-counter arithmetic. m1 (r11): a
     # 200-with-garbage provider never appends a latency either, so
     # "nothing judged" means no successful parse, not just no transport
-    # success.
-    if kept_hunks and not any(not f.get("parse_error") for f in findings):
-        return None, latencies
-    return findings, latencies
+    # success. Task 5: a reason-marked budget leaf is an EXPLICIT unjudged
+    # skip (the provider answered 400s / the gate refused), not a dead
+    # provider — an all-leaf run stays non-fail-open and feeds the
+    # incomplete-review downgrade instead.
+    if kept_hunks and not any(not f.get("parse_error") for f in findings) \
+            and not any(f.get("reason") for f in findings):
+        meta = {"added_units": added_units, "avg_input_tokens": None}
+        return None, latencies, meta
+    meta = {"added_units": added_units,
+            "avg_input_tokens": (tokens_sum / tokens_n) if tokens_n else None}
+    return findings, latencies, meta
 
 
 def _digest_label(f):
@@ -2059,7 +2343,14 @@ def main():
         n_dropped = len(hunks) - n_triaged - len(kept)
 
     call_errors: list[str] = []
-    findings, latencies = judge(kept, ask, errors=call_errors)
+    # Task 5 (r6-m3): main() owns the file images + Tasks 2/3 extractors,
+    # so it INJECTS the runtime splitter as a keyword-only argument.
+    # judge() catches _OverBudget (jev's 400 max_tokens_exceeded) and
+    # halves-and-retries through this closure; laya never sees either.
+    jev_splitter = (_runtime_split_unit_factory(args.repo, mode, head)
+                    if provider == "jev" else None)
+    findings, latencies, judge_meta = judge(kept, ask, errors=call_errors,
+                                            split_unit=jev_splitter)
     fail_open = findings is None
     pr_level = None  # set below unless the run failed open or the diff is empty
     fail_reason = call_errors[-1] if fail_open and call_errors else None
@@ -2095,13 +2386,16 @@ def main():
     # numerator. Deletion/whole-file size-skips stay deliberate triage
     # (Kurt-decision 3: ≤1/52 observed clusters, holds zero goldens).
     n_size_skipped_code = len(size_skipped_code(skipped))
-    # r9-M1 two-phase counters (Task 5 wires added_units; with 0 the
-    # numbers equal today's behavior on non-oversize runs):
+    # r9-M1 two-phase counters (Task 5 WIRED via judge_meta — r5-m6):
     #   n_units_total = n_units_pre + added_units (post-judge total)
     #   n_analyzed    = len(kept) + added_units + n_leaf_unjudged
     #   numerator     = n_analyzed − n_unjudged (leaf records feed it)
     #   denominator   = n_units_total + n_size_skipped_code
-    added_units = 0  # Task 5 seam: runtime-split additions inject here
+    # added_units is the NET runtime-split growth (leaves − 1 per split
+    # parent, r7-m1: the over-budget parent is REPLACED, not kept).
+    # A fail-open run discards runtime-split bookkeeping with everything
+    # else (findings == [] above) — meta stays unread.
+    added_units = judge_meta["added_units"] if judge_meta else 0
     n_units_total = n_units_pre + added_units
     n_analyzed = len(kept) + added_units + n_leaf_unjudged
     if fail_open:
@@ -2187,6 +2481,11 @@ def main():
              "fail_open": fail_open, "fail_reason": fail_reason,
              "total_latency_ms": round(total, 1),
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
+             # Task 5 (r2-M4): mean usage.input_tokens across jev calls
+             # (judge()'s meta) — recalibration data for CHARS_PER_TOKEN;
+             # None for laya (whose payloads carry no `usage`).
+             "avg_input_tokens": judge_meta["avg_input_tokens"]
+             if judge_meta else None,
              "judged": judged,
              "packaging_version": PACKAGING_VERSION,
              "tool_version": __version__,

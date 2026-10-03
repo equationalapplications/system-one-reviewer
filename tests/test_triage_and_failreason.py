@@ -115,9 +115,9 @@ def test_laya_legacy_suffix_byte_identical(jr, monkeypatch, tmp_path):
         return {"overall_risk": 1.0, "needs_human_review": 0.5,
                 "latency_ms": 1.0}
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         assert kept == [], "laya's oversize-only diff judges nothing"
-        return [], []
+        return [], [], {"added_units": 0, "avg_input_tokens": None}
 
     monkeypatch.setattr(jr, "judge_pr_level", fake_pr_level)
     monkeypatch.setattr(jr, "judge", fake_judge)
@@ -160,12 +160,13 @@ def test_oversize_python_becomes_subclusters_via_main(jr, monkeypatch,
     diff = _whole_file_add_diff("big.py", src)
     judged_units = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         judged_units.extend(kept)
         return ([{"hunk": h, "severity": 1.2, "is_real": 0.2,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     def fake_pr_level(findings, ask, size_skipped_code=None):
         return {"overall_risk": 1.0, "needs_human_review": 0.5,
@@ -211,12 +212,13 @@ def test_oversize_fallback_judged_as_windows_via_main(jr, monkeypatch,
             "--- /dev/null\n+++ b/big.js\n@@ -0,0 +1,1000 @@\n" + body)
     judged_units = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         judged_units.extend(kept)
         return ([{"hunk": h, "severity": 1.1, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -263,12 +265,13 @@ def test_unit_counters_stay_consistent(jr, monkeypatch, tmp_path, capsys):
                 for i in range(4)))
     seen = {}
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         seen["kept"] = list(kept)
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -313,12 +316,13 @@ def test_n_dropped_non_negative_property(jr, monkeypatch, tmp_path, capsys):
               "+++ b/README.md\n@@ -1,1 +1,2 @@\n # docs\n+more\n")
     judged = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         judged.extend(kept)
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -415,12 +419,13 @@ def test_max_hunks_is_run_level(jr, monkeypatch, tmp_path, capsys):
     diff = _whole_file_add_diff("big.py", src)
     judged = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         judged.extend(kept)
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -465,11 +470,12 @@ def test_laya_never_emits_ceiling_entries(jr, monkeypatch, tmp_path):
     src = _oversize_py_src(n=45, chars=2_000)
     diff = _whole_file_add_diff("big.py", src)
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -514,9 +520,9 @@ def test_deletion_wholefile_stay_cluster_based_and_overcap_pin(jr, monkeypatch,
             + "\n".join("-" + ln for ln in src.splitlines()) + "\n")
     calls = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         calls.extend(kept)
-        return ([], [])
+        return [], [], {"added_units": 0, "avg_input_tokens": None}
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -581,12 +587,13 @@ def test_deletion_run_assigned_by_old_symbol_end_to_end(jr, monkeypatch,
             + "\n".join("+" + ln for ln in post.splitlines()) + "\n")
     judged = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         judged.extend(kept)
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -685,7 +692,7 @@ def test_single_oversize_line_marks_incomplete(jr, monkeypatch, tmp_path,
     diff = _whole_file_add_diff("blob.py", src)
     sent = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         sent.extend(kept)
         for h in kept:
             assert jr.estimate_call_size(jr.hunk_state(h),
@@ -694,7 +701,8 @@ def test_single_oversize_line_marks_incomplete(jr, monkeypatch, tmp_path,
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -739,11 +747,12 @@ def test_ceiling_dropped_units_in_pr_digest(jr, monkeypatch, tmp_path):
     diff = _whole_file_add_diff("big.py", src)
     seen = {}
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     def fake_pr_level(findings, ask, size_skipped_code=None):
         seen["size_skipped"] = list(size_skipped_code or [])
@@ -807,11 +816,12 @@ def test_meta_n_analyzed_uses_post_judge_formula(jr, monkeypatch, tmp_path,
          "@@ -1,1 +1,6 @@"] + [f"+line {i}" for i in range(1, 6)])
     records = []
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
                   "category": "style", "rubric": "code-change",
                   "references_remaining": None, "change_type": "code-change",
-                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept))
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
 
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level",
@@ -859,7 +869,7 @@ def test_judge_records_transport_error_reason(jr):
     def dead(state, questions):
         raise RuntimeError("certificate verify failed")
     errors = []
-    findings, _ = jr.judge([_hunk(1), _hunk(2)], dead, errors=errors)
+    findings, _, _meta = jr.judge([_hunk(1), _hunk(2)], dead, errors=errors)
     assert findings is None
     assert errors and "certificate verify failed" in errors[-1]
     assert "RuntimeError" in errors[-1]
@@ -869,7 +879,7 @@ def test_judge_records_shape_error_reason(jr):
     def garbage(state, questions):
         return {"answers": {}}, 1.0
     errors = []
-    findings, _ = jr.judge([_hunk(1), _hunk(2)], garbage, errors=errors)
+    findings, _, _meta = jr.judge([_hunk(1), _hunk(2)], garbage, errors=errors)
     assert findings is None
     assert errors and "severity" in errors[-1]
 
@@ -877,7 +887,7 @@ def test_judge_records_shape_error_reason(jr):
 def test_judge_errors_param_is_optional(jr):
     def dead(state, questions):
         raise RuntimeError("x")
-    findings, _ = jr.judge([_hunk(1), _hunk(2)], dead)
+    findings, _, _meta = jr.judge([_hunk(1), _hunk(2)], dead)
     assert findings is None
 
 
@@ -1017,9 +1027,9 @@ def test_main_downgrades_on_size_skipped_code(jr, monkeypatch, tmp_path):
         return {"overall_risk": 1.0, "needs_human_review": 0.5,
                 "latency_ms": 1.0}
 
-    def fake_judge(kept, ask, errors=None):
+    def fake_judge(kept, ask, errors=None, split_unit=None):
         assert kept == [], "laya's oversize-only diff judges nothing"
-        return [], []
+        return [], [], {"added_units": 0, "avg_input_tokens": None}
 
     monkeypatch.setattr(jr, "judge_pr_level", fake_pr_level)
     monkeypatch.setattr(jr, "judge", fake_judge)
