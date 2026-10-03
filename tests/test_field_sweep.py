@@ -93,14 +93,18 @@ def test_select_field_runs_maps_by_sha_and_gates(sw):
         _field_run("v03bcj-pr44-x", PR44, []),
         _field_run("v03bcj-pr45-x", PR45, []),
     ]
-    runs = sw.select_field_runs(recs, FIELD_GOLDENS, "v03bcj-")
+    # Task 7: the select default is v08-ast now; these synthetic records
+    # are v03b-tagged, so the version is explicit (r1-m1).
+    runs = sw.select_field_runs(recs, FIELD_GOLDENS, "v03bcj-",
+                                packaging_version="v03b")
     assert set(runs) == {43, 44, 45}
 
 
 def test_select_field_runs_dies_on_unknown_head(sw):
     recs = [_field_run("v03bcj-pr99-x", "f" * 40, [])]
     with pytest.raises(SystemExit, match="matches no"):
-        sw.select_field_runs(recs, FIELD_GOLDENS, "v03bcj-")
+        sw.select_field_runs(recs, FIELD_GOLDENS, "v03bcj-",
+                             packaging_version="v03b")
 
 
 def test_select_field_runs_dies_on_duplicate_run(sw):
@@ -109,7 +113,8 @@ def test_select_field_runs_dies_on_duplicate_run(sw):
             _field_run("v03bcj-pr44-x", PR44, []),
             _field_run("v03bcj-pr45-x", PR45, [])]
     with pytest.raises(SystemExit, match="exactly 1"):
-        sw.select_field_runs(recs, FIELD_GOLDENS, "v03bcj-")
+        sw.select_field_runs(recs, FIELD_GOLDENS, "v03bcj-",
+                             packaging_version="v03b")
 
 
 def test_select_field_runs_still_gates_fail_open(sw):
@@ -203,7 +208,10 @@ def test_field_mode_end_to_end(jr, sw, tmp_path, capsys):
     fg = tmp_path / "fg.tsv"
     fg.write_text("".join(f"{pr}\t{sha}\t0\n" for pr, sha in FIELD_GOLDENS.items()))
     rc = sw.main(["--metrics", str(metrics), "--label", "v03bcj-",
-                  "--field", "--field-goldens", str(fg)])
+                  "--field", "--field-goldens", str(fg),
+                  # Task 7: the CLI default gate is v08-ast; this synthetic
+                  # metrics file is v03b-tagged (r1-m1).
+                  "--packaging-version", "v03b"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "field mode" in out

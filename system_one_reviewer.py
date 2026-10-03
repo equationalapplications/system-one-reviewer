@@ -85,7 +85,13 @@ KNOWN_FIXTURES = {"positive", "negative"}
 # fixture_head predates the deletion cluster in the negative fixture.
 # Per-run build provenance lives in
 # docs/benchmarks/2026-09-28-v03b-branch-benchmark.md.)
-PACKAGING_VERSION = "v03b"
+# v08-ast (AST-units plan Task 7): model input changed AGAIN — oversize
+# clusters cut into AST sub-clusters (Tasks 2/3), a 32k token budget guard
+# bounds every payload (Task 5), and states carry ast_context enrichment
+# (Task 6). The ledger stamps transport/wire_format/enrichment/record_version
+# (D7) so replay baselines are only ever compared like-for-like. v03b
+# ledgers remain gateable under an explicit --packaging-version v03b.
+PACKAGING_VERSION = "v08-ast"
 # Release version, stamped by scripts/build_release.py during semantic-release
 # (tags vX.Y.Z). Distinct from PACKAGING_VERSION, which versions the scoring
 # rubric the threshold sweep gates on.
@@ -1316,6 +1322,17 @@ def _unit_oversize(unit):
     serialized state estimate exceeds SOFT_CAP_TOKENS."""
     return estimate_call_size(hunk_state(unit), HUNK_QUESTIONS) \
         > SOFT_CAP_TOKENS
+
+
+def stamp_wire_format(units):
+    """D7 (plan Task 7): the run's wire_format stamp — `ast-units-v1` when
+    ANY judgeable unit CAME FROM AST (carries its parent cluster; the key
+    is absent on whole parents and only ever set by the Tasks 2/3
+    cutters), else `hunk_state-v1` (the pre-AST shape). Deterministic on
+    the post-expansion unit list; an empty run stamps the v1 baseline."""
+    if any(u.get("parent_cluster") is not None for u in units):
+        return "ast-units-v1"
+    return "hunk_state-v1"
 
 
 def _split_once(unit, images):
@@ -2676,6 +2693,9 @@ def main():
             # unit's file yielded a symbol table.
             "enrichment": ("ast" if any("ast_context" in u
                                         for u in kept) else "none"),
+            # Task 7 (D7): the record-version rides in meta too, so the
+            # JSON output and the ledger agree on what produced the run.
+            "record_version": PACKAGING_VERSION,
             # r10-m2/r9-M1: the POST-judge formula — never bare len(kept),
             # or a runtime-split run logs n_analyzed short by added_units
             # and sweep :98 rejects a legal run. added_units=0 in Task 4
@@ -2734,6 +2754,19 @@ def main():
              "avg_input_tokens": judge_meta["avg_input_tokens"]
              if judge_meta else None,
              "judged": judged,
+             # Task 7 (D7): the ledger contract stamps — transport (D5:
+             # per-cluster calls unchanged), wire_format (ast-units-v1 iff
+             # any unit came from the Tasks 2/3 cutters), the run-level
+             # enrichment stamp (above; judged entries carry per-unit
+             # values), and the record-version (the gate_run key — also
+             # stamped as record_version so old ledgers read distinctly
+             # from the packaging_version field's sweep-gate role).
+             "transport": "per-cluster",
+             "wire_format": stamp_wire_format(kept),
+             # D7 run-level enrichment stamp (same value as meta's; judged
+             # entries carry their own per-unit values).
+             "enrichment": meta["enrichment"],
+             "record_version": PACKAGING_VERSION,
              "packaging_version": PACKAGING_VERSION,
              "tool_version": __version__,
              "provider": provider, "model": model,

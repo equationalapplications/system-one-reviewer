@@ -210,7 +210,10 @@ def test_sweep_rejects_mixed_providers_end_to_end(jr, tmp_path, capsys):
     r = subprocess.run([sys.executable, sw_path, "--metrics", str(metrics),
                         "--label", "v03b-mix-", "--golden", str(golden),
                         "--negative-golden", str(golden),
-                        "--shas", str(shas)],
+                        "--shas", str(shas),
+                        # Task 7: the CLI default gate is v08-ast; these
+                        # synthetic records are v03b-tagged (r1-m1).
+                        "--packaging-version", "v03b"],
                        capture_output=True, text=True)
     assert r.returncode != 0
     assert "provider" in (r.stderr + r.stdout).lower()

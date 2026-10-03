@@ -304,7 +304,8 @@ def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
     assert rec["label"] == "auto:range:main...feature"
     assert rec["repo"] == tmp_path.name
-    assert rec["packaging_version"] == "v03b"
+    # Task 7: PACKAGING_VERSION is v08-ast since the AST-units cutover.
+    assert rec["packaging_version"] == "v08-ast"
 
 
 def test_infile_deletion_with_context_is_deletion_only(jr):
