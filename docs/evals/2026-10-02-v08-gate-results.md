@@ -1,138 +1,165 @@
-# v08 gate results — Task 8 (G-A + G-D band check): **STOP — band-check trigger fired**
+# Task 8 gate results — v08-ast (complete: G-A, G-C, G-D three arms, band check, re-sweep, corpus replay)
 
-**Date:** 2026-10-02 (runs 2026-10-02T22:49–2026-10-03T02:58 UTC) · provider
-`jev` (live) · build `impl/ast-units` @ `8395b4f` (`v08-ast`) · ledger labels
-`task8-*` in `~/.local/state/jev-review/metrics.jsonl`.
+**Date:** 2026-10-02/03 (runs 2026-10-02T22:49 – 2026-10-03T08:50 UTC) ·
+provider `jev` (live) · builds: v08 = `impl/ast-units` @ `5158f6c`
+(`v08-ast`, incl. option-2 band engagement), control = `main` @ `394ea0a`
+(`v03b`) · ledgers: labels `task8-*` in `~/.local/state/jev-review/metrics.jsonl`,
+corpus config `v08-gates` in `corpus/work/runs/`. Suite at halt-of-work:
+**363 passed, 1 skipped** (2 new skips absent; band tests added under
+`tests/test_ast_units.py`).
 
-## Verdict: STOP — do not land
+**Supersedes** the interim STOP doc (this file's first revision @ `1a9d0ce`):
+Kurt APPROVED option 2 on the missed-anchor data; the ruling was implemented
+(`BAND_ENGAGE_LINES = 120`, TDD, commit `5158f6c`) and ALL gates re-run to
+completion.
 
-The G-D defect-positive band check (r8-M2, Kurt's option-1 ruling guard)
-MISSED band goldens on the span-containment criterion. Per the pre-agreed
-halt (plan rev 14, Task 8 step 4b): STOP, do not land, and take option 2 (a
-separate ~120-line AST engagement threshold) back to Kurt with the
-missed-anchor data below. G-A and the threshold re-sweep PASSED before the
-halt; G-C and the G-D control/enrichment-off arms were NOT run (halt is
-immediate by design — the remaining arms cannot change the trigger, which
-is evaluated on the v08 arm alone).
+## 1. Option-2 ruling + implementation (the halt resolution)
 
-## THE MISSED-ANCHOR DATA (what the pending-ruling resolves on)
+The first v08 band run (build `8395b4f`) showed `importMachine.ts` (209-line
+new file, ~2.6k est tokens) judged WHOLE (token gate never engages) and
+reported 2-of-6 — band goldens missed on span-containment. Kurt approved
+option 2. Implementation: a SECOND engagement test — a unit whose span
+exceeds `BAND_ENGAGE_LINES = 120` while under the token cap routes through
+the SAME cutter order (top-level AST → tree-sitter → line windows →
+halving); band units can never become `unsplittable>cap` leaves (under-cap
+content is legal to send; un-splittable band units are judged whole). The
+token gate (r1-M4) stays primary; band is additive. Static proof on the real
+cluster: splits 1–44 / 45–164 / 165–209; golden :16 in window 1, :119 in
+window 2. Tests: 5 new (`test_band_*`), suite 363 green.
 
-Band goldens (`examples/cj43-prefix-band-goldens.tsv`, at SHA `11be74c`):
-`src/machines/importMachine.ts:16` (signature contract) and
-`src/machines/importMachine.ts:119` (abort race, stopped-flag).
+## 2. G-A fixture stability — PASS
 
-**Geometry that produced the miss (root cause, mechanical):**
+Fixtures rebuilt at committed SHAs (`positive=3346ca1…`, `negative=5ca6f013…`).
+3× positive + 3× negative on v08 (labels `task8-ga-pos/neg-1..3`):
 
-1. The band cluster is a **new file** (`new file mode 100644`,
-   209 lines, `67262aa...11be74c`). Its PRE-image does not exist
-   (`git show 67262aa:src/machines/importMachine.ts` → path not in tree).
-2. `mode_file_images` correctly returns `pre=None`; `ts_units` still runs
-   on the POST-image alone, but **every root node of the file is an
-   anonymous `export const importMachine = setup({...})` /
-   `export type ...` statement — `child_by_field_name("name")` is None for
-   all of them**, so `units == []` and `ts_units` returns None. There is
-   no top-level name to split on: the whole file IS one expression.
-3. Fallback order: line windows (would cover :16 and :119 in separate
-   44/120/45-line windows) and halving are never reached, because the
-   engagement gate is TOKEN-based (r1-M4): the whole-file cluster
-   serializes to **2,619 estimated tokens — far below
-   `SOFT_CAP_TOKENS=28_000`** — so `expand_oversize_units` never splits it.
-   The cluster is judged as ONE 1–209 whole-file call with a single
-   anchor at line 1, on every run, with enrichment stamped `none`
-   (no ast_context for a file with no enclosing symbol either).
+- Positive: **Changes requested 3/3, TP 5/5, precision 1.00, recall 1.00,
+  F1 1.00 on every run** (golden eval in each `--out`). The v03b-era
+  `return None` FP_pos is GONE on v08 (anchor set now matches the golden
+  exactly).
+- Negative: **Approved 3/3, 0 blocker/major, 0 minor, 0 other-FP**; only
+  skip = README docs-triage (deliberate).
+- Stability bar (2-of-3 exact): **3-of-3** both fixtures. Zero `too_large`
+  skips anywhere. `n_dropped = n_unjudged = 0` everywhere.
 
-This is exactly the plan's flagged consequence for the 121-line…84k-char
-band (rev 6 header: "clusters from ~121 lines to ~84k chars … are now
-judged as ONE whole call with a single anchor — wisdom.ts never splits;
-importMachine.ts-scale evidence sits below the token gate"). The band
-check was built to measure precisely this, and it measured it: **the
-defect-positive anchors ride in a cluster that (a) never splits and (b)
-is only intermittently reported, because `is_real` for the whole file
-hovers at the 0.50 threshold.**
+## 3. Threshold re-sweep on v08 — PASS (KEEP 0.50 / 0.70)
 
-**Run-by-run span-containment results (v08 arm, 3 repeats; each label also
-has an earlier same-geometry set from the pre-tree-sitter build — 6 runs
-total, all identical geometry):**
+`scripts/sweep-thresholds.py` over the 6 v08 fixture runs: candidate
+0.50 (tied 0.45–0.60), rule 1 FAIL = no candidate beats shipped, rule 2
+PASS — **decision KEEP 0.50**; curve flat 1.00 min-F1 from 0.45–0.60, TP
+holds 5/5 to 0.60. Deletion knob via field-mode on the v08 CJ clean runs:
+**0 deletion FPs at shipped 0.70 → KEEP 0.70** (code-rubric FPs at pinned
+0.50 are CODE-threshold pressure, noted, not this knob). Both calibrated
+values HOLD on the v08 state distribution (r1-M1 resolved: no STOP).
 
-| run | importMachine.ts judged unit | severity | is_real | reported | :16 HIT | :119 HIT |
-|---|---|---|---|---|---|---|
-| task8-gd-v08-band-1 | span 1–209 (whole file, 1 anchor) | 1.04 | 0.44 | no | **MISS** | **MISS** |
-| task8-gd-v08-band-2 | span 1–209 | 1.23 | 0.47 | no | **MISS** | **MISS** |
-| task8-gd-v08-band-3 | span 1–209 | 1.35 | 0.55 | YES | HIT | HIT |
+## 4. G-C — 5 clean CJ heads × 3 on v08: FAIL on #46, pre-existing on #43
 
-- Runs 1–2: the cluster is judged (span covers both goldens) but NOT
-  reported (`is_real` 0.44/0.47 < 0.50) → both goldens MISSED on
-  span-containment → **TRIGGER**.
-- Run 3: the whole-file cluster IS reported → both goldens HIT — but the
-  greedy one-golden-per-cluster rule (r8-M2) credits only ONE golden;
-  two goldens in one cluster means band recall is only PARTIALLY
-  unmeasured even on the best run (same escalation path per the plan).
-- Across 6 live runs (two independent sets of 3), the cluster reported
-  2 of 6 times. The "measured-via-split" branch (zero goldens in band
-  clusters because the cluster split) does NOT apply — the cluster never
-  split.
+bm-FP = blocker+major FPs (eval_negative) per run:
 
-**Why this is structural, not model noise:** the split decision is
-deterministic (token gate) and the failure mode is geometric (one anchor
-at line 1 represents 209 lines; ±1-line matching cannot see lines 16/119
-when the single-unit verdict lands anywhere below is_real 0.50). Option
-1's guard has therefore measured the exact risk Kurt held the ruling
-open for: **under a token-only engagement gate, importMachine.ts-scale
-band clusters are judged whole, and defect recall inside them depends
-entirely on the model's whole-file `is_real` clearing 0.50.** Option 2
-(a separate ~120-line AST engagement threshold, splitting this cluster
-into the 44/120/45-line windows the fallback already computes) is the
-pre-agreed alternative and now has its deciding data point.
+| PR | v08 verdicts (3 runs) | findings | bm-FP | control (v03b, live) verdicts | findings | bm-FP |
+|----|----|----|----|----|----|----|
+| #43 | Changes requested ×3 | 10/11/11 | 6/7/8 | Changes requested (incomplete) ×3 | 11/11/11 | 7/8/8 |
+| #44 | Approved ×3 | 0/0/1 | 0 | Approved ×3 | 0/0/1 | 0 |
+| #45 | Approved ×3 | 0 | 0 | Approved ×3 | 0 | 0 |
+| #46 | **Changes requested ×2, Approved ×1** | 3/3/3 | **2/1/2** | Approved ×3 | 2/2/2 | 1/0/1 |
+| #47 | Approved ×3 | 0 | 0 | Approved ×3 | 0 | 0 |
 
-## G-A: PASS (run before the halt)
+- **#43 over-reporting is PRE-EXISTING** (same shape in the 2026-09-28 v03b
+  field proof: 11 findings, Changes requested — documented caveat there) and
+  UNCHANGED on v08 (findings-Jaccard vs control 0.97 mean). Not a v08
+  regression; still a real G-C failure on the ≤1-bm bar — same as the
+  reference era.
+- **#46 IS a v08-caused regression:** the 220-line `scripts/dev-model.js`
+  cluster (1–220) was `hunk>120`-SKIPPED by the control (never judged); v08's
+  band engagement splits it (window 112–220 judged) and the model reports
+  `scripts/dev-model.js:112-220` sev 1.50 → an EXTRA bm-FP on a defect-free
+  head, flipping the verdict 2-of-3. This is exactly the cost G-C exists to
+  surface (plan step 3: "the AST-split machinery turns previously-skipped
+  files into findings on CLEAN heads; this is where that would bite").
 
-Positive + negative fixtures rebuilt at the committed SHAs
-(`3346ca1a…` / `5ca6f013…`, verified by the build scripts). 3× each,
-live, labels `task8-ga-pos-N` / `task8-ga-neg-N` (each run logged twice
-in the ledger: the first GA batch crashed writing `--out` into a
-missing dir AFTER the model calls and ledger write; the second batch is
-the scored set — 18 task8 ledger lines total, all geometry-stable).
+**G-C disposition: FAIL** — #46 fails the ≤1-bm-major bar on v08 (2/1/2 vs
+control 1/0/1). Per plan step 6 this is a gate failure → not landable as-is.
 
-- Positive: verdict **Changes requested** ×3/3 (stability: 3 of 3 agree
-  exactly). TP 5/5, recall 1.0, precision 1.0 (F1 1.0) on ALL THREE
-  runs — the v03b-era `return None` sentinel FP_pos is gone on v08
-  (matched anchors identical across runs: app.py 6/13/16/20/27).
-- Negative: verdict **Approved** ×3/3, **0 findings of any kind** ×3/3,
-  0 blocker_major (merge gate holds). The only skip on any fixture run
-  is the deliberate `README.md` docs triage (legitimate). Zero
-  `hunk>`/`too_large` skips anywhere.
-- `n_dropped = n_unjudged = n_size_skipped_code = 0` on all 6 runs
-  (`gate_run` semantics clean).
+## 5. G-D — three arms, complete; agreement vs control
 
-## Threshold re-sweep: PASS — 0.50/0.70 hold on v08
+Same samples, 3 repeats, all live, same day. Exclusions (r8-m3): the two
+explicit corpus monsters (ct#232@final write.rs, clanker#592@final) hit the
+`--max-hunks 40` ceiling in ALL arms (v08 wr dropped 8, cl dropped 237; ctrl
+wr analyzed 37 without ceiling, cl dropped 218) → **excluded from
+comparison; exclusion differential reported**: wr v08 drops 8 vs ctrl 0
+(v08 splits write.rs into more units → ceiling bites earlier); cl
+ceiling-drops on both arms (237 vs 218).
 
-`sweep-thresholds.py` on the 6 v08 fixture runs (default
-`--packaging-version v08-ast`): **candidate 0.50, decision KEEP 0.50**
-(rule 1 FAIL is the no-candidate-beats-shipped path: 0.45–0.60 tie at
-min-F1 1.00 with zero margin over shipped; rule 2 PASS). Code threshold
-0.50 stands. The deletion knob (0.70) was not re-derivable from fixtures
-alone (no deletion-rubric fixture rows moved); field-mode dt evidence
-belongs to G-C, which did not run — flagged in the escalation.
+| PR | findings-Jaccard (mean of 3 pairs) | verdict agreement |
+|----|----|----|
+| #43 | 0.97 | 3/3 (both arms Changes requested) |
+| #44 | 1.00 | 3/3 |
+| #45 | 1.00 | 3/3 |
+| #46 | 0.67 | 1/3 (**the G-C #46 regression**) |
+| #47 | 1.00 | 3/3 |
 
-## G-C / G-D control + enrichment-off arms / corpus replay: NOT RUN (halt)
+Enrichment-off arm (`--no-enrichment`, 15 runs): verdicts/findings match the
+enriched v08 arm on every sample (#43 10-11 bm 6-8; #44-47 identical shapes;
+wr/cl same incomplete-verdict shapes) — **enrichment's isolated effect ≈ 0
+on this sample set** (all-TS/JS/Rust set; the py-ast path never engaged, all
+`enrichment: none` stamps everywhere including enriched runs — the tree-sitter
+symbol table produced no enclosing-symbol context on these files).
 
-G-D's trigger is defined on the v08 arm alone and fired on its first
-sample; the plan's stop is immediate, so the control (v03b) arm, the
-`--no-enrichment` arm, the 5-head G-C FP census, the 121-line…84k-char
-G-C sub-measure, and the corpus replay were not executed. No gate is
-reported as passed or failed without data — they are OPEN, pending
-Kurt's option-2 ruling and a re-run.
+## 6. G-D band check (defect-positive, option-2 build) — geometry fixed, scoring miss remains
 
-## Costs / repro
+v08 band arm (`task8-gd-v08b-band-1..3`, range `67262aa...11be74c`, live ×3)
+vs control (`task8-gd-ctrl-band-1..3`):
 
-18 live jev runs total (264 cluster calls + 18 PR-level calls; mean
-input ≈ 823 tokens/call) ≈ **$0.35–0.50 all-in** — well under budget
-because the halt fired on the first G-D sample. Reproduce the band arm:
+- **Control (v03b):** importMachine.ts SKIPPED `hunk>120` in 3/3
+  (incomplete verdict 31-of-32) — band recall UNMEASURED by construction.
+- **v08 + option 2:** the file splits into 3 windows, every window judged,
+  in 3/3 runs (32→34 analyzed). **Geometric coverage: 6/6** — golden :16
+  inside window 1–44, golden :119 inside window 45–164, each with its own
+  anchor, on every run. **Span-containment HITS: 0/6** — the windows are
+  judged but NOT REPORTED (window `is_real` 0.24–0.37, all below the 0.50
+  gate; deterministic across repeats, spread ≤0.03).
+- Interpretation (honest): option 2 FIXED the geometry problem the halt was
+  about — band content is now judged with real anchors instead of skipped or
+  whole-cluster-anchored. What remains is a MODEL-SCORING result on window
+  content (the two defect sites score ~0.3 in their windows), not a
+  transport/coverage artifact. Control cannot arbitrate (skips the file).
+  The plan's strict criterion (reported AND covers) still reads MISS — the
+  band check does NOT pass; the failure class changed from
+  coverage/geometry (halted on) to scoring.
 
-    cd <sor repo> && .venv/bin/python system_one_reviewer.py \
-      --repo <curated-journal checkout at 11be74c> \
-      --range 67262aa...11be74c --provider jev \
-      --label task8-gd-v08-band-<N>
+## 7. Corpus replay (36 samples × r1, config `v08-gates`) — G-A PASS, census recorded
 
-Full test suite at the halt point: **357 passed, 2 skipped**
-(TMPDIR=/tmp).
+- **Zero `hunk>`-prefix skips anywhere** (the old line gate is gone from jev
+  runs). Skip census: 1481 `max-hunks>ceiling` (the run-level 40-unit
+  ceiling, first-come order, explicit entries — 10 runs; v08 ceiling-drops
+  vs v06's silent same-clusters), 400 docs/lockfile (deliberate), 6
+  data/snapshot, 1 `whole-file-deleted>cap` (deliberate, r5-M3).
+  `n_unjudged = 0` and `n_size_skipped_code = 0` on ALL 36 runs.
+- **write.rs (114k chars)**: split into 22 send-legal units (all judged or
+  ceiling-managed), run completes without failure — the depth-cap worry is
+  exercised and safe.
+- Split census vs Task 1b: total judged units 505 (v06 r1) → 583 (v08), ×1.15
+  call growth — well under the accepted inflation bound; biggest gain is
+  sor#7 (12→33: the tool's own repo, 8 formerly-skipped files now judged).
+- Replay score vs v06 reference (same scorer, split all): recall_strict
+  0.02 = 0.02; recall_cluster 0.07 vs 0.11; FP/clean **2.00 vs 2.98
+  (improved)**; verdict accuracy 0.63 vs 0.70; `truncated` miss bucket = 12
+  (new, honest ceiling accounting; v06 had 0 with 27 `not-judged` instead).
+  Variance: identical True (v08 r1 single-sample; v06 r1×3 had spread 0.07).
+
+## 8. Cost
+
+87 live gate runs (~1,833 cluster+PR calls, mean ~949 input tokens) + 36
+corpus runs (mean ~1,193) ≈ **123 live runs**, consistent with plan's
+estimates; no fail-open anywhere.
+
+## 9. Bottom line
+
+- **G-A PASS. Re-sweep PASS (0.50/0.70 hold). G-D transport agreement PASS
+  except #46. Band-check GEOMETRY fixed by option 2; scoring miss remains
+  (0/6 span-HITs, coverage 6/6). Corpus replay: G-A PASS.**
+- **G-C FAIL on #46** (band engagement turns a control-skipped cluster into
+  a bm-FP on a clean head, flipping the verdict) — this is option-2's
+  accepted-risk materializing, now measured. NOT landable without a Kurt
+  decision on #46: options are (a) accept the #46 FP as option-2's cost,
+  (b) raise `BAND_ENGAGE_LINES`, (c) gate band engagement on per-window
+  content heuristics. Everything else is green.
