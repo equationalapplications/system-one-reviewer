@@ -25,8 +25,10 @@ import run_corpus as rc  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SWEEP_PATH = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
+# r13-m1 (AST-units Task 4): `truncated` covers ceiling-dropped units —
+# a ceiling drop is not triage, so it gets its own bucket.
 MISS_BUCKETS = ("anchor-offset", "judged-below-threshold", "judged-low-severity",
-                "skipped-triage", "not-judged")
+                "skipped-triage", "truncated", "not-judged")
 
 
 def load_sweep():
@@ -68,6 +70,12 @@ def classify_miss(file, line, judged, idx, skipped, t, dt):
         thr = dt if j.get("rubric") == "deletion" else t
         return ("judged-low-severity" if (j.get("is_real") or 0) >= thr
                 else "judged-below-threshold")
+    # r13-m1 (Task 4): ceiling-dropped units are classified BEFORE the
+    # skipped-triage return — a ceiling drop is not triage. Entries carry
+    # **_span(unit), so the coverage check is span-scoped, not file-wide.
+    for s in skipped:
+        if s.get("reason") == "max-hunks>ceiling" and _covers(s, file, line):
+            return "truncated"
     for s in skipped:
         if s.get("file") == file and ("line_start" not in s or _covers(s, file, line)):
             return "skipped-triage"

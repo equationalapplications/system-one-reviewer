@@ -98,10 +98,28 @@ def test_miss_decomposition(tmp_path, jr, sw, split):
                   "line_start": 1, "line_end": 200}])
     _write_run(root, "base", FIN, 1, [])
     agg = sc.score(root, "base", split=split, jr=jr, sw=sw)["aggregate"]
+    # r13-m1 (Task 4): MISS_BUCKETS gains `truncated`; the :97 fossil above
+    # is OLD-LEDGER FIXTURE DATA (intentional, do not update).
     assert agg["misses"] == {"anchor-offset": 1, "judged-below-threshold": 1,
                              "judged-low-severity": 1, "skipped-triage": 1,
-                             "not-judged": 1}
+                             "truncated": 0, "not-judged": 1}
     assert agg["recall_strict"] == 0.0 and agg["recall_cluster"] == 0.2
+
+
+def test_span_covered_truncated_miss_lands_in_truncated_bucket(tmp_path, jr,
+                                                                sw, split):
+    """r13-m1: a ceiling-dropped unit's skipped entry (reason
+    'max-hunks>ceiling', span-covered) classifies as `truncated`, NOT
+    `skipped-triage` — a ceiling drop is not triage."""
+    root = str(tmp_path)
+    _write_corpus(root, [("big.py", 10, "major")])
+    _write_run(root, "base", PRE, 1, [],
+               skipped=[{"file": "big.py", "reason": "max-hunks>ceiling",
+                         "line_start": 1, "line_end": 40}])
+    _write_run(root, "base", FIN, 1, [])
+    agg = sc.score(root, "base", split=split, jr=jr, sw=sw)["aggregate"]
+    assert agg["misses"]["truncated"] == 1
+    assert agg["misses"]["skipped-triage"] == 0
 
 
 def test_variance_and_missing_and_fail_open(tmp_path, jr, sw, split):

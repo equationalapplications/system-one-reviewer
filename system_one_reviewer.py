@@ -1085,7 +1085,13 @@ def line_window_subclusters(path, entries, change_type="code-change",
                         break
             groups.append(run[:cut])
             run = run[cut:]
-            run_start = (run[0][4] if run[0][0] == "-" else run[0][1])
+            if run:
+                # an identical-entry overflow can empty the run (a window
+                # cannot shrink below one line) — reset to the NEXT entry
+                # and let the current `e` seed the new run instead.
+                run_start = (run[0][4] if run[0][0] == "-" else run[0][1])
+            else:
+                run_start = None
         run.append(e)
     if run:
         groups.append(run)
@@ -1097,6 +1103,104 @@ def line_window_subclusters(path, entries, change_type="code-change",
             subs.append(_subcluster(parent, g, change_type=change_type,
                                     hunk_start=parent["hunk_start"]))
     return subs or None
+
+
+# ---------- recursive oversize expansion (plan Task 4, r7-M2) ----------
+
+MAX_EXPANSION_DEPTH = 6  # depth cap: bounded termination (brief hard constraint)
+
+
+def _unit_oversize(unit):
+    """The oversize test, defined EXACTLY once (r1-M4): the unit's own
+    serialized state estimate exceeds SOFT_CAP_TOKENS."""
+    return estimate_call_size(hunk_state(unit), HUNK_QUESTIONS) \
+        > SOFT_CAP_TOKENS
+
+
+def _split_once(unit, images):
+    """ONE expansion attempt on an oversize unit, in the plan's fixed
+    order: top-level AST -> nested AST (deeper lines via line windows of
+    the AST's own boundaries is the same cutter family) -> line windows
+    -> halving. Returns (units, None) or (None, leaf) when the unit is a
+    single changed line that cannot be split further (the leaf case the
+    caller sets aside as unjudged)."""
+    path = unit["file"] or ""
+    entries = unit.get("entries") or []
+    change_type = unit.get("change_type", "code-change")
+    parent = unit.get("parent_cluster") or unit
+    pre, post = images(path, parent)
+    # 1. top-level AST (stdlib) — python files with a parseable post-image
+    subs = ast_units(path, pre, post, entries, change_type=change_type,
+                     parent_cluster=parent)
+    if subs:
+        return subs, None
+    # 2. tree-sitter units (lazy; returns None without the package)
+    subs = ts_units(path, pre, post, entries, change_type=change_type,
+                    parent_cluster=parent)
+    if subs:
+        return subs, None
+    # 3. line windows — the always-works fallback
+    subs = line_window_subclusters(path, entries, change_type=change_type,
+                                   parent_cluster=parent)
+    if subs:
+        return subs, None
+    # 4. halving — cut the changed entries into two halves by position
+    changed = _changed_entries(entries)
+    if len(changed) > 1:
+        mid = len(changed) // 2
+        mid_line = changed[mid][4] if changed[mid][0] == "-" \
+            else changed[mid][1]
+        left = [e for e in entries
+                if (e[4] if e[0] == "-" else e[1]) < mid_line]
+        right = [e for e in entries
+                 if (e[4] if e[0] == "-" else e[1]) >= mid_line]
+        if left and right and (len(left) < len(entries)
+                               or len(right) < len(entries)):
+            return ([_subcluster(parent, left, change_type=change_type,
+                                 hunk_start=parent["hunk_start"]),
+                     _subcluster(parent, right, change_type=change_type,
+                                 hunk_start=parent["hunk_start"])], None)
+    # unsplittable: a single changed line still over cap (or no cutter
+    # helped and halving has nothing to cut) — the leaf case
+    return None, unit
+
+
+def expand_oversize_units(units, images, depth=0):
+    """Recursively expand oversize units until every unit fits (r7-M2).
+
+    Fixed order per unit: top-level AST -> nested AST -> line windows ->
+    halving. A single changed line whose own estimate still exceeds
+    SOFT_CAP_TOKENS is NEVER sent and never silently dropped: it is set
+    aside as a leaf record {"hunk": unit, "parse_error": True, "raw":
+    None, "reason": "unsplittable>cap"} (r11-m1) that main() appends to
+    findings only AFTER judge() returns non-None. Depth-capped (bounded
+    termination); at the cap a still-oversize unit becomes a leaf too.
+
+    Returns (units, leaves) — `units` are judgeable, `leaves` unjudged.
+    `depth` is internal; the initial (pre-enrichment) expansion has no
+    step 0 — ast_context only exists post-enrichment (r12-n1/r13-n1),
+    where Task 6's re-expansion drops it as its defensive clamp.
+    """
+    out: list = []
+    leaves: list = []
+    for unit in units:
+        if not _unit_oversize(unit):
+            out.append(unit)
+            continue
+        if depth >= MAX_EXPANSION_DEPTH:
+            leaves.append({"hunk": unit, "parse_error": True, "raw": None,
+                           "reason": "unsplittable>cap"})
+            continue
+        subs, leaf = _split_once(unit, images)
+        if leaf is not None:
+            leaves.append({"hunk": leaf, "parse_error": True, "raw": None,
+                           "reason": "unsplittable>cap"})
+            continue
+        # every sub-unit inherits the parent's oversize test recursively
+        sub_units, sub_leaves = expand_oversize_units(subs, images, depth + 1)
+        out.extend(sub_units)
+        leaves.extend(sub_leaves)
+    return out, leaves
 
 
 # ---------- per-mode file images (plan Task 4 helpers; not wired yet) ----------
@@ -1222,13 +1326,24 @@ def _span(h):
             "line_end": h.get("line_end", h["line"])}
 
 
-def triage(hunks):
+def triage(hunks, provider="jev"):
     """Deterministic skip: lockfiles, generated dirs, docs-only runs.
 
     Step 0′ (hunk-size investigation, 2026-10-01): size-skipped records
     carry `change_type` so the verdict downgrade in main() can treat
     CODE-change size-skips as unjudged coverage while deletion/whole-file
     size-skips stay deliberate triage (Kurt-decision 3).
+
+    r5-M4 (AST-units plan Task 4): the size gate is MECHANICAL via the
+    `provider` param. Under jev (the default) no cluster is ever
+    size-skipped — oversize clusters stay in `kept` and main() routes
+    them through the Task 2/3 cutter. LAYA KEEPS TODAY'S EXACT BEHAVIOR:
+    the `hunk>` skip append stays live for laya, whose whole-cluster
+    transport has no splitter. `whole-file-deleted>cap` (r5-M3) is the
+    one jev-side size skip: a whole-file deletion has no post-image to
+    parse and no lines to window, so the skip is deliberate triage —
+    and `size_skipped_code()` matches only the `hunk>` prefix, so it
+    never counts toward n_size_skipped_code (r6-m4).
     """
     kept, skipped = [], []
     for h in hunks:
@@ -1238,9 +1353,16 @@ def triage(hunks):
                             **_span(h)})
         elif DATA_EXT.search(f):
             skipped.append({"file": f, "reason": "data/snapshot", **_span(h)})
-        elif h["too_large"]:
+        elif provider == "laya" and h["too_large"]:
             skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines",
                             "change_type": h.get("change_type", "code-change"),
+                            **_span(h)})
+        elif (provider == "jev" and h["too_large"]
+                and h.get("change_type") == "whole-file-deleted"):
+            # r5-M3: over-cap whole-file deletion — deliberate triage,
+            # never a size-skip counter entry (no 'hunk>' prefix).
+            skipped.append({"file": f, "reason": "whole-file-deleted>cap",
+                            "change_type": "whole-file-deleted",
                             **_span(h)})
         else:
             kept.append(h)
@@ -1555,6 +1677,21 @@ def judge(hunks, ask, errors=None):
     return findings, latencies
 
 
+def _digest_label(f):
+    """One PR-level digest line per finding (r11-m1): a parse_error record
+    with a reason marker is an EXPLICIT unjudged skip (an unsplittable
+    leaf), never "provider call failed" — which would be false."""
+    if f.get("parse_error"):
+        if f.get("reason"):
+            return (f"- {f['hunk']['file']}:{f['hunk']['line']} unjudged "
+                    f"(skipped: {f['reason']})")
+        return (f"- {f['hunk']['file']}:{f['hunk']['line']} unjudged "
+                f"(provider call failed)")
+    return (f"- {f['hunk']['file']}:{f['hunk']['line']} "
+            f"severity={SEV_NAME[sev_level(f.get('severity'))]} "
+            f"category={f.get('category')}")
+
+
 def judge_pr_level(findings, ask, size_skipped_code=None):
     """One extra round-trip: PR-level risk from the per-hunk digest.
 
@@ -1567,14 +1704,9 @@ def judge_pr_level(findings, ask, size_skipped_code=None):
     prov_name = _PROVIDER_NAME  # r9 m1: the wired provider, not the env
     # m2 (r10): failed calls must not look like clean hunks — label them
     # "unjudged" so the PR-level model can't read them as severity=none.
-    lines = [
-        (f"- {f['hunk']['file']}:{f['hunk']['line']} unjudged "
-         f"(provider call failed)"
-         if f.get("parse_error") else
-         f"- {f['hunk']['file']}:{f['hunk']['line']} "
-         f"severity={SEV_NAME[sev_level(f.get('severity'))]} "
-         f"category={f.get('category')}")
-        for f in findings]
+    # r11-m1: parse_error records carrying a reason marker (unsplittable
+    # leaves) label as "skipped: <reason>", not "provider call failed".
+    lines = [_digest_label(f) for f in findings]
     for s in size_skipped_code or []:
         lines.append(f"- {s['file']}:{s.get('line_start', '?')} unjudged "
                      f"(skipped: {s.get('reason')})")
@@ -1752,17 +1884,43 @@ def size_skipped_code(skipped):
             not in ("deletion-only", "whole-file-deleted")]
 
 
-def render(reported, skipped, verdict, pr_level, jitter, meta):
+def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
+    """Render the human report.
+
+    n_sent (AST-units Task 4 seam): judged model-call count when it
+    differs from len(meta["latencies"]) — Task 5's split loop judges
+    MORE calls than units. Defaults to meta's call count (today's
+    behavior) so current callers are unchanged.
+    """
     prov = meta.get("provider", "jev")
     model = meta.get("model")
     prov_name = f"{prov}/{model}" if (prov == "laya" and model) else prov
     out = ["SYSTEM-ONE REVIEW (experimental local reviewer — advisory only, "
            f"provider: {prov_name})"]
     out.append(f"repo={meta['repo']} mode={meta['mode']} head={meta['head'][:10]}")
-    out.append(f"analyzed={meta['n_analyzed']} hunks, "
-               f"skipped={len(skipped)}, "
-               f"total_latency={meta['total_latency_ms']:.0f}ms, "
-               f"model_calls={meta['jev_calls']}")
+    # r7-m3/r14-n2 (AST-units Task 4): "analyzed" = accounted UNITS (whole
+    # parents + sub-clusters + leaves), NOT model calls; judged-call count
+    # is separate. Ceiling drops are counted OUTSIDE `skipped` (a ceiling
+    # drop is not triage — r14-n2); laya's legacy single-number label is
+    # byte-identical (no ceiling entries exist there — r5-M4).
+    n_ceiling = sum(1 for s in skipped
+                    if s.get("reason") == "max-hunks>ceiling")
+    triage_skipped = len(skipped) - n_ceiling
+    out.append(f"analyzed={meta['n_analyzed']} units "
+               f"({n_sent if n_sent is not None else meta['jev_calls']} "
+               f"judged calls), "
+               f"skipped={triage_skipped}, "
+               f"total_latency={meta['total_latency_ms']:.0f}ms")
+    if n_ceiling:
+        ceiling_items = [f"{s['file']}" for s in skipped
+                         if s.get("reason") == "max-hunks>ceiling"]
+        counts_c: dict[str, int] = {}
+        for cf in ceiling_items:
+            counts_c[cf] = counts_c.get(cf, 0) + 1
+        parts = [f"{cf}" + (f" x{n}" if n > 1 else "")
+                 for cf, n in counts_c.items()]
+        out.append(f"Not judged (run ceiling): {n_ceiling} "
+                   f"unit(s) over --max-hunks — {', '.join(parts)}")
     if meta.get("fail_open"):
         out.append(f"!! {prov_name} unavailable after repeated failures — "
                    "heuristic-only run, treat as triage not review")
@@ -1790,11 +1948,15 @@ def render(reported, skipped, verdict, pr_level, jitter, meta):
     if pr_level and pr_level.get("overall_risk") is not None:
         out.append(f"PR-level risk: {pr_level['overall_risk']}/3, "
                    f"needs_human_review={pr_level.get('needs_human_review')}")
-    if skipped:
+    # r14-m1: ceiling entries NEVER appear under Skipped-triage — they have
+    # their own "Not judged (run ceiling)" line above (a drop is not triage).
+    triage_skips = [s for s in skipped
+                    if s.get("reason") != "max-hunks>ceiling"]
+    if triage_skips:
         # One entry per (file, reason): an oversized file or a lockfile
         # yields one skip per hunk, which buried the distinct entries.
         counts: dict[tuple[str, str], int] = {}
-        for s in skipped:
+        for s in triage_skips:
             key = (s["file"], s["reason"])
             counts[key] = counts.get(key, 0) + 1
         items = [f"{f} ({r})" + (f" x{n}" if n > 1 else "")
@@ -1852,11 +2014,49 @@ def main():
     ask = make_provider(provider, model, api_key)
     diff, head, mode = resolve_diff(args.repo, args)
     hunks = package_hunks(diff)
-    kept, skipped = triage(hunks)
+    # r5-M4: the size gate is mechanical via the provider param. jev (the
+    # default) never size-skips — oversize clusters route through the
+    # Task 2/3 cutter below; laya keeps today's exact behavior.
+    kept, skipped = triage(hunks, provider=provider)
     n_triaged = len(hunks) - len(kept)  # deliberate skips, NOT drops (r10 M1)
-    kept.sort(key=lambda h: -h["size"])
-    kept = kept[: args.max_hunks]
-    n_dropped = len(hunks) - n_triaged - len(kept)  # --max-hunks truncation only
+
+    # AST-units plan Task 4 — BINDING pre-judge pipeline (r11-M1/r12/r13):
+    #   (1) route + expand (token-gated, recursive r7-M2)
+    #   (4) set leaves aside — EXEMPT from --max-hunks, BEFORE truncation
+    #   (5) truncate to the ceiling in FIRST-COME-ACROSS-FILES order
+    if provider == "jev" and kept:
+        # r2-M2: per-mode pre/post file images for the cutter; a missing
+        # image degrades (mode_file_images returns None) — never exits.
+        kept, leaves = expand_oversize_units(
+            kept, lambda path, unit: mode_file_images(
+                args.repo, mode, head, path,
+                old_file=unit.get("old_file")))
+        n_leaf_unjudged = len(leaves)
+    else:
+        leaves = []
+        n_leaf_unjudged = 0
+    # r9-M1/r13-M1: n_units_pre is recorded BEFORE truncation and INCLUDES
+    # leaves (they were set aside in step 4, so the pre-truncation list
+    # alone would under-count the denominator).
+    n_units_pre = len(kept) + n_leaf_unjudged
+    # r1-m8: units-per-run ceiling in first-come-across-files order — NO
+    # size sort (which could drop arbitrary sub-clusters of one parent).
+    # LAYA KEEPS TODAY'S size sort + truncate (r6-m1); laya never emits
+    # ceiling entries — its truncation stays the legacy counter math.
+    if provider == "jev":
+        n_ceiling_dropped = max(0, len(kept) - args.max_hunks)
+        if n_ceiling_dropped:
+            skipped = skipped + [
+                {"file": u["file"] or "", "reason": "max-hunks>ceiling",
+                 **_span(u)}
+                for u in kept[args.max_hunks:]]
+            kept = kept[:args.max_hunks]
+        n_dropped = n_units_pre - n_leaf_unjudged - len(kept)
+    else:
+        kept.sort(key=lambda h: -h["size"])
+        kept = kept[: args.max_hunks]
+        n_ceiling_dropped = 0
+        n_dropped = len(hunks) - n_triaged - len(kept)
 
     call_errors: list[str] = []
     findings, latencies = judge(kept, ask, errors=call_errors)
@@ -1866,9 +2066,13 @@ def main():
     if fail_open:
         findings = []
     elif hunks:  # empty diff: nothing for the PR-level call to judge
+        # r14-m2: ceiling-dropped units reach the digest explicitly — on
+        # jev no `hunk>` records exist, so today's hunk>-only filter would
+        # hide a ceiling drop from the PR-level model entirely.
         pr_level = judge_pr_level(
             findings, ask,
-            size_skipped_code=size_skipped_code(skipped))
+            size_skipped_code=size_skipped_code(skipped)
+            + [s for s in skipped if s.get("reason") == "max-hunks>ceiling"])
     # M1 (r9): a fail-open run must never carry a clean "Approved" — the
     # verdict is forced to "Unavailable" and flows into JSON/metrics/last
     # line, so nothing downstream reads it as a pass.
@@ -1877,6 +2081,13 @@ def main():
     # never mistaken for complete ones.
     reported, jitter, verdict = compose(findings, skipped,
                                         pr_level if not fail_open else None)
+    # r10-m1 INSERTION WINDOW (plan Task 4): leaf records (unsplittable
+    # units) join findings ONLY here — after judge() returned non-None
+    # (a fail-open run's findings == [] above correctly discards them)
+    # and BEFORE judge_pr_level/compose see the run. judge() never saw
+    # them (they were set aside pre-judge), so they are never SENT.
+    if leaves and findings:
+        findings = findings + leaves
     n_unjudged = sum(1 for f in findings if f.get("parse_error"))
     # Step 0′ (hunk-size investigation, 2026-10-01): a size-skipped
     # CODE-change cluster is unjudged coverage, not deliberate triage —
@@ -1884,12 +2095,21 @@ def main():
     # numerator. Deletion/whole-file size-skips stay deliberate triage
     # (Kurt-decision 3: ≤1/52 observed clusters, holds zero goldens).
     n_size_skipped_code = len(size_skipped_code(skipped))
+    # r9-M1 two-phase counters (Task 5 wires added_units; with 0 the
+    # numbers equal today's behavior on non-oversize runs):
+    #   n_units_total = n_units_pre + added_units (post-judge total)
+    #   n_analyzed    = len(kept) + added_units + n_leaf_unjudged
+    #   numerator     = n_analyzed − n_unjudged (leaf records feed it)
+    #   denominator   = n_units_total + n_size_skipped_code
+    added_units = 0  # Task 5 seam: runtime-split additions inject here
+    n_units_total = n_units_pre + added_units
+    n_analyzed = len(kept) + added_units + n_leaf_unjudged
     if fail_open:
         verdict = "Unavailable — provider failed (fail-open)"
     elif n_unjudged or n_dropped or n_size_skipped_code:
         verdict += (f" (incomplete review — "
-                    f"{len(kept) - n_unjudged} of "
-                    f"{len(hunks) - n_triaged + n_size_skipped_code} "
+                    f"{n_analyzed - n_unjudged} of "
+                    f"{n_units_total + n_size_skipped_code} "
                     f"clusters judged)")
     # Step 0′: the raw compose() verdict, before any suffix. Downstream
     # structured consumers (sweep gate_run, shadow tally) read THIS, not
@@ -1914,7 +2134,12 @@ def main():
     meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
             "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
-            "n_hunks": len(hunks), "n_analyzed": len(kept),
+            "n_hunks": len(hunks),
+            # r10-m2/r9-M1: the POST-judge formula — never bare len(kept),
+            # or a runtime-split run logs n_analyzed short by added_units
+            # and sweep :98 rejects a legal run. added_units=0 in Task 4
+            # (Task 5 injects); n_leaf_unjudged is 0 unless leaves exist.
+            "n_analyzed": n_analyzed,
             "total_latency_ms": total, "jev_calls": len(latencies),
             "fail_open": fail_open, "fail_reason": fail_reason}
 
@@ -1949,6 +2174,8 @@ def main():
     # with generated labels (v0.3b, Kurt review).
     log_run({"label": args.label or f"auto:{mode}", "repo": meta["repo"], "mode": mode,
              "head": head[:10], "n_hunks": meta["n_hunks"],
+             # r10-m2: the same post-judge n_analyzed as meta (r9-M1) —
+             # the logged record is what sweep gate_run :98 checks.
              "n_analyzed": meta["n_analyzed"], "verdict": verdict,
              # Step 0′: structured completeness — gate_run reads these
              # (never defaulting a missing count to 0 when base_verdict
