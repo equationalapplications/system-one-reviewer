@@ -338,9 +338,34 @@ def test_shape_errors_reach_fail_open(jr):
         calls.append(1)
         return {"answers": {}}, 1.0  # transport OK, answers shape wrong
 
-    findings, _lat = jr.judge(hunks, bad_ask)
+    findings, _lat, _meta = jr.judge(hunks, bad_ask)
     assert findings is None, "consecutive shape errors must trigger fail-open"
     assert len(calls) == jr.CALL_FAIL_LIMIT
+
+
+def test_shape_errors_fail_open_mid_run_after_good_unit(jr):
+    """r17-M1 (Opus round-3): the consecutive shape-error counter must
+    survive ACROSS units when one unit parses fine in between — a good
+    unit then 2 bad ones must fail open (None) at the 2nd bad call, not
+    run all N units to an incomplete verdict. (r8-M1's original
+    guarantee; the r15 parse_failures reset defeated it.)"""
+    def mk_hunk(i):
+        return {"file": "f.py", "line": i, "hunk_start": 1, "lines": ["x"],
+                "entries": [(" ", i, "x", 1)], "n_changed": 1, "header": "h",
+                "size": 1, "too_large": False}
+    calls = []
+
+    def good_then_bad(state, questions):
+        calls.append(1)
+        if len(calls) == 1:
+            return _ok_payload(), 1.0  # parses fine
+        return {"answers": {}}, 1.0  # transport OK, shape wrong
+
+    hunks = [mk_hunk(1), mk_hunk(2), mk_hunk(3), mk_hunk(4)]
+    findings, _lat, _meta = jr.judge(hunks, good_then_bad)
+    assert findings is None, \
+        "shape errors after a good unit must still fail open"
+    assert len(calls) == 3, "1 good + 2 bad = CALL_FAIL_LIMIT"
 
 
 def test_diff_ruN_separator_never_becomes_context(jr):
@@ -589,3 +614,98 @@ def test_render_and_meta_carry_provider(jr, tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert '"provider": "jev"' in out
     assert '"model": null' in out  # JSON null, not Python None
+
+
+# ---------- Task 7 (D7): ledger contract stamps + v08-ast record version ----
+
+_TASK7_DIFF = ("diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+               "@@ -1,1 +1,2 @@\n x\n+x = 2\n")
+
+
+def _run_main_task7(jr, monkeypatch, tmp_path, capsys, diff):
+    """Drive main() offline for the Task 7 ledger-stamp assertions (the
+    test_enrichment._run_main pattern): fake judge captures the judged
+    units, log_run captures the ledger record. Returns (json_out,
+    kept_units, records)."""
+    import json as _json
+    records: list = []
+    judged_units: list = []
+
+    def fake_judge(kept, ask, errors=None, split_unit=None):
+        judged_units.extend(kept)
+        return ([{"hunk": h, "severity": 1.0, "is_real": 0.1,
+                  "category": "style", "rubric": "code-change",
+                  "references_remaining": None,
+                  "change_type": h.get("change_type", "code-change"),
+                  "latency_ms": 1.0} for h in kept], [1.0] * len(kept),
+               {"added_units": 0, "avg_input_tokens": None})
+
+    monkeypatch.setattr(jr, "judge", fake_judge)
+    monkeypatch.setattr(jr, "judge_pr_level",
+                        lambda f, a, size_skipped_code=None:
+                        {"overall_risk": 1.0, "needs_human_review": 0.5,
+                         "latency_ms": 1.0})
+    monkeypatch.setattr(jr, "resolve_diff",
+                        lambda repo, args: (diff, "0" * 40, "staged"))
+    monkeypatch.setattr(jr, "log_run", lambda rec: records.append(rec))
+    monkeypatch.setattr(jr, "make_provider",
+                        lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
+    monkeypatch.setattr(jr, "load_api_key", lambda: "k")
+    monkeypatch.setattr(jr.sys, "argv",
+                        ["system-one-reviewer", "--repo", str(tmp_path),
+                         "--staged", "--provider", "jev", "--json"])
+    jr.main()
+    out = _json.loads(capsys.readouterr().out)
+    return out, judged_units, records
+
+
+def test_ledger_stamps_v08_ast_record_version(jr, monkeypatch, tmp_path,
+                                              capsys):
+    """Plan Task 7: PACKAGING_VERSION -> v08-ast, asserted on the LOGGED
+    ledger record of a real main()-level run (the record gate_run checks)."""
+    out, judged_units, records = _run_main_task7(jr, monkeypatch, tmp_path,
+                                                 capsys, _TASK7_DIFF)
+    assert len(records) == 1
+    assert records[0]["packaging_version"] == "v08-ast"
+
+
+def test_ledger_stamps_transport_and_record_version(jr, monkeypatch, tmp_path,
+                                                    capsys):
+    """D7 (brief r4-MAJOR-3): every run stamps `transport`
+    ('per-cluster' — D5, the transport did not change) and the
+    record-version, so old and new ledgers can never be silently
+    compared as if equivalent."""
+    out, judged_units, records = _run_main_task7(jr, monkeypatch, tmp_path,
+                                                 capsys, _TASK7_DIFF)
+    rec = records[0]
+    assert rec["transport"] == "per-cluster"
+    assert rec["record_version"] == "v08-ast"
+    assert out["meta"]["record_version"] == "v08-ast"
+
+
+def test_wire_format_hunk_state_v1_when_no_ast_engaged(jr, monkeypatch,
+                                                       tmp_path, capsys):
+    """D7: no AST engagement (every unit a whole parent) -> wire_format
+    'hunk_state-v1'. Enrichment stays a SEPARATE axis (run-level stamp +
+    per-unit judged flags, Task 6) — a same-shaped state never masquerades
+    as a transport change."""
+    out, judged_units, records = _run_main_task7(jr, monkeypatch, tmp_path,
+                                                 capsys, _TASK7_DIFF)
+    rec = records[0]
+    assert all("parent_cluster" not in u for u in judged_units)
+    assert rec["wire_format"] == "hunk_state-v1"
+    assert rec["enrichment"] == "none"
+
+
+def test_stamp_wire_format_ast_units_only_when_ast_engaged(jr):
+    """D7: the wire-format stamp is 'ast-units-v1' exactly when any unit
+    CAME FROM AST (carries its parent cluster); whole parents and the
+    empty run stay 'hunk_state-v1'. Probed directly — driving a real
+    oversize AST split through main() is Task 8's corpus replay job."""
+    parent = {"file": "m.py", "hunk_start": 1}
+    assert jr.stamp_wire_format([]) == "hunk_state-v1"
+    assert jr.stamp_wire_format([{"parent_cluster": parent}]) == "ast-units-v1"
+    assert jr.stamp_wire_format([{}, {"parent_cluster": parent}]) \
+        == "ast-units-v1"
+    # a whole parent is NOT an AST unit (its parent_cluster key is absent)
+    assert jr.stamp_wire_format([{"parent_cluster": None}]) == "hunk_state-v1"

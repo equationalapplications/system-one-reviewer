@@ -76,8 +76,10 @@ def test_gate_rejects_wrong_packaging_version(sw):
 def test_gate_rejects_sha_mismatch(sw):
     bad = _run("x", "positive", [])
     bad["fixture_head"] = "c" * 40
+    # Task 7: the default gate now reads v08-ast; this fixture is v03b, so
+    # the version is passed explicitly (r1-m1: v03b still gates).
     with pytest.raises(SystemExit, match="fixture_head"):
-        sw.gate_run(bad, EXPECTED)
+        sw.gate_run(bad, EXPECTED, packaging_version="v03b")
 
 
 def test_gate_rejects_missing_judged(sw):
@@ -101,7 +103,8 @@ def _run0(label, fixture, judged, n_dropped=0, n_unjudged=0,
 def test_gate_admits_size_skipped_only_run(sw):
     """The core Step 0′ behavior: a size-skip alone must NOT disqualify."""
     sw.gate_run(_run0("x", "positive", [_judged(10, 0.9)],
-                      n_size_skipped_code=8), EXPECTED["positive"])
+                      n_size_skipped_code=8), EXPECTED["positive"],
+                packaging_version="v03b")
 
 
 def test_gate_rejects_dropped_with_base_verdict(sw):
@@ -144,7 +147,8 @@ def test_gate_legacy_suffix_fallback_still_rejects(sw):
 def test_gate_legacy_clean_run_still_admitted(sw):
     rec = _run("x", "positive", [])
     rec["verdict"] = "Approved"
-    sw.gate_run(rec, EXPECTED["positive"])
+    # Task 7: v03b records gate under the explicit version (r1-m1).
+    sw.gate_run(rec, EXPECTED["positive"], packaging_version="v03b")
 
 
 def test_select_runs_requires_three_per_fixture(sw, tmp_path):
@@ -156,7 +160,9 @@ def test_select_runs_requires_three_per_fixture(sw, tmp_path):
 def test_select_runs_gates_and_splits(sw):
     recs = _pos_runs([_judged(10, 0.9)]) + _neg_runs([])
     stale = _run("v03b-test-baseline-9", "positive", [], pv="v01")
-    pos, neg = sw.select_runs(recs + [stale], EXPECTED, "v03b-test-")[:2]
+    # Task 7: v03b records select under the explicit version (r1-m1).
+    pos, neg = sw.select_runs(recs + [stale], EXPECTED, "v03b-test-",
+                              packaging_version="v03b")[:2]
     assert len(pos) == 3 and len(neg) == 3
 
 
@@ -297,7 +303,145 @@ def test_main_end_to_end_on_synthetic_metrics(jr, sw, tmp_path, capsys):
     shas.write_text(f"positive={POS_SHA}\nnegative={NEG_SHA}\n")
     rc = sw.main(["--metrics", str(metrics), "--label", "v03b-test-",
                   "--golden", golden, "--negative-golden", golden,
-                  "--shas", str(shas)])
+                  "--shas", str(shas),
+                  # Task 7: the default CLI gate is v08-ast now; this
+                  # synthetic metrics file is v03b-tagged (r1-m1).
+                  "--packaging-version", "v03b"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "candidate" in out and "0.50" in out
+
+
+# ---------- Task 7 (D7): v08-ast packaging-version cutover ----------
+
+# synthetic full-40 SHAs for the v08 field-mode tests (the test_field_sweep
+# PR43/44/45 constants live in another module's namespace)
+PR43_08 = "8" * 40
+PR44_08 = "9" * 40
+PR45_08 = "0" * 40
+
+
+def _v08_run(label, fixture, judged, pv="v08-ast", **kw):
+    return _run(label, fixture, judged, pv=pv, **kw)
+
+
+def _v08_pos_runs(judged, n=3, **kw):
+    return [_v08_run(f"v08-test-baseline-{i}", "positive", judged, **kw)
+            for i in range(1, n + 1)]
+
+
+def _v08_neg_runs(judged, n=3, **kw):
+    return [_v08_run(f"v08-test-negative-{i}", "negative", judged, **kw)
+            for i in range(1, n + 1)]
+
+
+def test_sweep_admits_v08_ast_runs(jr, sw, tmp_path):
+    """Plan Task 7: the sweep recognizes v08-ast — gated runs enter the
+    curve through the (post-flip) default gates, exactly like v03b did."""
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    judged = [_judged(10, 0.90)]
+    res = sw.sweep(jr, _v08_pos_runs(judged), _v08_neg_runs([]), golden)
+    assert res["rows"] and res["candidate"] in sw.GRID
+
+
+def test_select_runs_default_admits_v08_ast(sw):
+    """r8-m2 default-site 2 of 4: select_runs' packaging_version default
+    reads v08-ast, so a bare sweep call admits v08 runs (no straggler can
+    silently gate them out)."""
+    recs = _v08_pos_runs([_judged(10, 0.9)]) + _v08_neg_runs([])
+    pos, neg = sw.select_runs(recs, EXPECTED, "v08-test-")[:2]
+    assert len(pos) == 3 and len(neg) == 3
+
+
+def test_gate_run_default_admits_v08_ast(sw):
+    """r8-m2 default-site 1 of 4: gate_run's packaging_version default
+    reads v08-ast — a v08 record passes without an explicit argument."""
+    sw.gate_run(_v08_run("x", "positive", [_judged(10, 0.9)]),
+                EXPECTED["positive"])
+
+
+def test_select_field_runs_default_admits_v08_ast(sw):
+    """r8-m2 default-site 3 of 4: select_field_runs' default reads
+    v08-ast (field-run record shape: fixture=None, head is the key)."""
+    def _f_run(label, head):
+        return {"label": label, "fixture": None, "fixture_head": head,
+                "head": head[:10], "packaging_version": "v08-ast",
+                "provider": "jev", "model": None, "judged": [],
+                "verdict": "Approved", "fail_open": False, "n_analyzed": 0}
+    runs = sw.select_field_runs([_f_run("v08cj-pr43-x", PR43_08)],
+                                {43: PR43_08}, "v08cj-")
+    assert set(runs) == {43}
+
+
+def test_argparse_default_reads_v08_ast(sw):
+    """r8-m2 default-site 4 of 4: the CLI --packaging-version default is
+    v08-ast (asserted against the parser's own default, not a run)."""
+    import argparse
+    ap = argparse.ArgumentParser()
+    sw._add_packaging_version_arg(ap)
+    args = ap.parse_args([])
+    assert args.packaging_version == "v08-ast"
+
+
+def test_rubric_versions_extended_not_overwritten(sw):
+    """r5-m5: RUBRIC_VERSIONS EQUALS {"v03b", "v08-ast"} — v08-ast is
+    ADDED because v08 judged entries carry rubric/reference fields, and
+    v03b STAYS so rewrap() keeps dying on malformed v03b entries."""
+    assert sw.RUBRIC_VERSIONS == {"v03b", "v08-ast"}
+
+
+def test_rewrap_still_rejects_malformed_v03b_entries(sw):
+    """r5-m5 regression guard: extending RUBRIC_VERSIONS must not stop
+    the rewrap() guard from dying on a rubric-era v03b entry missing
+    `rubric`."""
+    bad = {"file": "a.py", "line": 1, "severity": 2.2, "is_real": 0.9,
+           "category": None, "confidence": None, "reported": True}
+    with pytest.raises(SystemExit, match="no rubric"):
+        sw.rewrap(bad, run_version="v03b")
+
+
+def test_rewrap_accepts_rubricless_v08_before_rubric_fields_v03b_ok(sw):
+    """Sanity on the same guard: a v03b entry WITH rubric replays fine
+    (the guard fires only on malformed entries, never on shape)."""
+    f = sw.rewrap(_judged(10, 0.9), run_version="v03b")
+    assert f["rubric"] == "code-change"
+
+
+def test_old_version_ledgers_gate_under_explicit_v03b(sw):
+    """r1-m1: v03b is the ONLY previously stamped packaging version (the
+    brief's v06-postmerge is a corpus run LABEL) — old ledgers still gate
+    when the caller passes --packaging-version v03b explicitly."""
+    sw.gate_run(_run("x", "positive", [_judged(10, 0.9)], pv="v03b"),
+                EXPECTED["positive"], packaging_version="v03b")
+    pos, neg = sw.select_runs(
+        _pos_runs([_judged(10, 0.9)]) + _neg_runs([]),
+        EXPECTED, "v03b-test-", packaging_version="v03b")[:2]
+    assert len(pos) == 3 and len(neg) == 3
+
+
+def test_v08_run_rejected_when_gating_for_v03b(sw):
+    """The flip side of like-for-like replay: a v08 record must NOT pass
+    a gate that asks for v03b (the record-version contract is exact)."""
+    with pytest.raises(SystemExit, match="packaging_version"):
+        sw.gate_run(_v08_run("x", "positive", []), EXPECTED["positive"],
+                    packaging_version="v03b")
+
+
+def test_field_select_default_admits_v08_field_runs(sw):
+    """Field mode shares the cutover: v08-tagged CJ-style runs select via
+    the default packaging version, mirroring the v03b flow (field runs
+    carry fixture=None; fixture_head is the identity — the field-run
+    record shape from tests/test_field_sweep.py)."""
+    def _f_run(label, head, judged):
+        return {"label": label, "fixture": None, "fixture_head": head,
+                "head": head[:10], "packaging_version": "v08-ast",
+                "provider": "jev", "model": None, "judged": judged,
+                "verdict": "Approved", "fail_open": False,
+                "n_analyzed": len(judged)}
+    judged = [_judged(1, True, sev=2.0, file="gone.ts")]
+    recs = [_f_run("v08cj-pr43-x", PR43_08, judged),
+            _f_run("v08cj-pr44-x", PR44_08, []),
+            _f_run("v08cj-pr45-x", PR45_08, [])]
+    runs = sw.select_field_runs(recs, {43: PR43_08, 44: PR44_08,
+                                       45: PR45_08}, "v08cj-")
+    assert set(runs) == {43, 44, 45}

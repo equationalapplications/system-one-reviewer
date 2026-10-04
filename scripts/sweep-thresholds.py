@@ -38,7 +38,9 @@ DELETION_SHIPPED = 0.70
 # (first: v03b, Opus r2 B1). rewrap() dies on a run from one of these
 # versions whose entries lack `rubric`. Bump PACKAGING_VERSION? Add the
 # new tag here if it still carries the fields (Opus r5 m5).
-RUBRIC_VERSIONS = {"v03b"}
+# Task 7 (r5-m5): v08-ast EXTENDED IN — never overwritten. v03b stays so
+# the rewrap() guard keeps dying on malformed v03b judged entries.
+RUBRIC_VERSIONS = {"v03b", "v08-ast"}
 
 # 0.30 + 0.05*k, k = 0..8 (top of grid: 0.70; 0.75+ excluded by the plateau rule).
 GRID = [round(0.30 + 0.05 * k, 2) for k in range(9)]
@@ -69,7 +71,24 @@ def threshold_grid():
     return list(GRID)
 
 
-def gate_run(rec, expected, packaging_version="v03b"):
+# Task 7 (r8-m2): the sweep gates v08-ast by default — the packaging
+# version the tool has stamped since the AST-units cutover. Old-version
+# ledgers gate under an explicit --packaging-version v03b (the only
+# previously stamped value). The four default sites are gate_run,
+# select_runs, select_field_runs, and the argparse default below; each is
+# test-asserted (r8-m2: exactly four — RUBRIC_VERSIONS holds versions).
+DEFAULT_PACKAGING_VERSION = "v08-ast"
+
+
+def _add_packaging_version_arg(ap):
+    """The --packaging-version flag, one definition so the CLI default
+    and the function defaults cannot drift apart (Task 7 r8-m2)."""
+    ap.add_argument("--packaging-version",
+                    default=DEFAULT_PACKAGING_VERSION)
+
+
+def gate_run(rec, expected,
+             packaging_version=DEFAULT_PACKAGING_VERSION):
     """Reject stale, hand-edited, fail-open, or incomplete runs loudly.
 
     r12 MINOR 2: the verdict is checked too — `n_analyzed` counts
@@ -155,7 +174,8 @@ def check_single_provider_group(recs):
     return groups.pop()
 
 
-def select_runs(recs, expected, label_prefix, packaging_version="v03b"):
+def select_runs(recs, expected, label_prefix,
+                packaging_version=DEFAULT_PACKAGING_VERSION):
     sel = [r for r in recs if str(r.get("label", "")).startswith(label_prefix)]
     if not sel:
         die(f"no runs with label prefix {label_prefix!r}")
@@ -415,7 +435,8 @@ def load_field_goldens(path):
     return goldens
 
 
-def select_field_runs(recs, goldens, label_prefix, packaging_version="v03b"):
+def select_field_runs(recs, goldens, label_prefix,
+                      packaging_version=DEFAULT_PACKAGING_VERSION):
     """Map field runs to their PR via fixture_head SHA; gate like fixtures.
 
     The CJ field runs carry fixture=None, so the fixture selector ignores
@@ -567,7 +588,7 @@ def main(argv=None):
                          "requires --field-goldens, forbids fixture args")
     ap.add_argument("--field-goldens",
                     help="field golden TSV: pr<TAB>full40sha<TAB>expected")
-    ap.add_argument("--packaging-version", default="v03b")
+    _add_packaging_version_arg(ap)  # Task 7 r8-m2: default = v08-ast
     args = ap.parse_args(argv)
 
     if args.field:

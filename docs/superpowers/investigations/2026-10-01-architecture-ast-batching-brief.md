@@ -512,3 +512,42 @@ The 32k budget (state + single longest question) is the binding limit:
   (`u<N>_*` triples for every unit). **Investigation COMPLETE —
   implementation planning cleared.** Plan prerequisite from req 8
   carries: build the defect-positive fixture before G-B runs.
+
+## Verification appendix — Task 10 constraint checklist (2026-10-04)
+
+Implementation-side confirmation of every architectural constraint in
+this brief, as shipped on `impl/ast-units`:
+
+- **Cluster-as-unit, per-cluster transport:** shipped. Per-file judgment
+  batching was built and GATED (G-B, plan Task 9): it FAILED every
+  criterion (mean signed Δsev −0.30, report-flip 17.2% vs calibration
+  0%, verdict flip to Approved on the defect-positive PR 3/3) —
+  `docs/evals/2026-10-02-gb-batching-gate.md`. D5 default outcome
+  stands: batching retired, per-cluster + enrichment is the shipped
+  transport.
+- **MAX_HUNK_LINES retired for jev:** shipped (triage is
+  provider-gated; laya keeps the legacy skip). `--max-hunks` redefined
+  as units-per-run ceiling, first-come-across-files, no file-level
+  drops (r4-MAJOR-1).
+- **Budget guard:** Task 1 token estimator (serialized state + longest
+  question), 28k soft cap → pre-judge expansion, 56k hard send-gate,
+  `_OverBudget` (400 + `max_tokens_exceeded`, lenient match)
+  halve-and-retry with depth-capped unconditional termination and
+  explicit unjudged leaves (r3-M5).
+- **Wire format D8:** per-unit `u<N>_*` triples; addressing by
+  documented backticked object paths only; contexts deduplicated
+  (r3-M6).
+- **Enrichment D3/Arch 2:** `attach_ast_context` on the default jev
+  path, bounded (r2-m3), laya never carries the key (r5-m3);
+  post-enrichment re-estimate terminates at step 0 (context dropped,
+  never split because of enrichment — r12-M1).
+- **Ledger contract D7:** `transport` / `wire_format` / `enrichment` /
+  `PACKAGING_VERSION` stamps on every run record.
+- **D1 tree-sitter:** lazy, loader-injected, optional
+  (`tree-sitter-language-pack`); line-window fallback verified on
+  TS/JS; stdlib-only default preserved.
+- **Gates:** G-A PASS (zero hunk>120 skips on jev; write.rs-class sends
+  legal), G-C PASS as amended (Kurt ruling 2026-10-04, results doc
+  §10), G-D PASS with the #46 exclusion documented, re-sweep KEEP
+  0.50/0.70, G-B FAIL (retired per D5). Full numbers in
+  `docs/evals/2026-10-02-v08-gate-results.md`.

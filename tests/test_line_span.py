@@ -39,9 +39,10 @@ def test_judged_and_findings_carry_span(jr, tmp_path, monkeypatch):
     monkeypatch.setattr(jr, "load_api_key", lambda: "k")
     monkeypatch.setattr(jr, "resolve_diff", lambda r, a: (_modify_diff(), "0" * 40, "m"))
 
-    def fake_judge(kept, ask, errors=None):
-        return [{"hunk": h, "severity": 2.6, "is_real": 0.9, "category": "bug-risk",
-                 "confidence": 0.8, "rubric": "code-change"} for h in kept], [10.0]
+    def fake_judge(kept, ask, errors=None, split_unit=None):
+        return ([{"hunk": h, "severity": 2.6, "is_real": 0.9, "category": "bug-risk",
+                  "confidence": 0.8, "rubric": "code-change"} for h in kept],
+                [10.0], {"added_units": 0, "avg_input_tokens": None})
     monkeypatch.setattr(jr, "judge", fake_judge)
     monkeypatch.setattr(jr, "judge_pr_level", lambda f, a, size_skipped_code=None: None)
     out = tmp_path / "out.json"

@@ -1,0 +1,10 @@
+# curated-journal PR #43 defect-positive goldens — BAND anchors (r8-M2/r11-m4
+# side file). These anchors sit inside >120-line clusters on the current
+# build, so triage() skips them before any model call and they CANNOT be
+# verified by the per-cluster transport at Task 0 time; they are the INPUT to
+# G-D's defect-positive band check (span-containment HIT criterion, Task 8,
+# v08 build). NOT in the scored TSV — a band anchor scored today would count
+# as a miss by construction.
+# Format: file<TAB>line<TAB>desc (3 tab-separated fields max); at SHA 11be74c
+src/machines/importMachine.ts	16	Signature contract: ImportApi.importDump declares signal: AbortSignal and Promise<void>, but the only wired caller (import.tsx) and the machine pass/expect different shapes across the stack; bcca842 must retcon the parameter to a full AbortController and the result to Promise<{completed}> to make caller and callee agree (fixed by bcca842; bot comment "importDump signature changed but callers not updated")
+src/machines/importMachine.ts	119	Abort race (stopped-flag): the import actor's teardown aborts the controller but the in-flight importDump promise keeps running; its settled handlers check controller.signal.aborted and can fire PROGRESS/IMPORTED/FAIL into a torn-down actor, and cleanup() can delete temp files while a chunk write is still in flight (fixed by 95e011a's stopped flag; bot comment at 11be74c :145 "cleanup() deletes temp files that are still being read/written")
