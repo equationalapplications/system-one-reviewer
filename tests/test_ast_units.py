@@ -212,11 +212,10 @@ def test_deleted_run_assigned_by_old_symbol(jr):
         ("+", 3, "    return payload", 1),
     ]
     subs = jr.ast_units("m.py", pre, post, entries, change_type="code-change")
-    assert subs is not None and len(subs) == 1
-    sub = subs[0]
-    kinds = {e[0] for e in sub["entries"]}
-    assert kinds == {"+", "-"}, "matched '-' lines join the post unit"
-    _assert_partition(subs, entries)
+    # r16-M1: the single-sub result is now a NO-OP CUT (changed entries
+    # == input) — ast_units returns None and the caller falls through to
+    # line windows/halving instead of looping to the depth cap.
+    assert subs is None
 
 
 def test_deletion_only_cluster_splits(jr):

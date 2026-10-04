@@ -807,10 +807,13 @@ def package_hunks(diff):
 
 def _top_level_units(tree_src):
     """(name, start_line, end_line) for a parsed module's top-level
-    def/class nodes (end_lineno is 3.8+). Deterministic source order."""
+    def/class nodes (end_lineno is 3.8+). Deterministic source order.
+    r16-m5 (round-2): ValueError joins SyntaxError — on Python 3.10/3.11
+    `ast.parse` raises ValueError (not SyntaxError) for NUL bytes, which
+    `git_show_or_none`'s 8 KB head-check misses on large files."""
     try:
         tree = ast.parse(tree_src)
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return None
     units = []
     for node in tree.body:
@@ -1030,23 +1033,22 @@ def _changed_entries(entries):
 def _window_line(e):
     """The line a window cutter sizes by (r15-m5): e[4] — the HEAD-side
     anchor — for '-' entries, the tracked new line otherwise. ONE
-    coordinate system for sizing, matching _entry_sort_key's primary
-    key, so `line - run_start` can never go negative mid-run."""
+    coordinate system for sizing; iteration order is the parent's diff
+    order (r16-M3), so a window's entries stay contiguous in the diff.
+    A '-' entry with a missing anchor sorts last within its run."""
     return e[4] if (len(e) > 4 and e[4] is not None) else \
         (e[1] if e[0] != "-" else 0)
 
 
 def _entry_sort_key(e):
-    # '+' entries sort by tracked new line, '-' by old-file line (the
-    # position the content occupies in ITS image); e[4] (head anchor)
-    # never orders assignment (r5-M1) — it is the tiebreaker only.
-    # r15-m5: the window SIZE key (_window_line, e[4]-first) differs
-    # from this ORDER key by design — ordering is per-image (r5-M1),
-    # sizing is head-anchored. line_window_subclusters therefore takes
-    # its sizing line from _window_line, not from the sort key.
-    if e[0] == "+":
-        return (e[1], 0)
-    return (e[1], 1, e[4] if len(e) > 4 and e[4] is not None else 0)
+    # r16-M3 (Opus Task-10 round-2 review): entries arrive in DIFF order
+    # and the parent's diff order is the only globally consistent order —
+    # per-image line keys scramble `code_before_change` whenever a hunk's
+    # old/new starts differ (deletions jump ahead of their leading
+    # context). Cutters preserve input order; this helper now sorts by
+    # new-file line only for callers that explicitly need that order
+    # (currently none — kept for API stability).
+    return (e[1],)
 
 
 def ast_units(path, before_text, after_text, entries, change_type="code-change",
@@ -1148,14 +1150,16 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
         hi = max((e[1] for e in group), default=en)
         glue = [c for c in context if s - 4 <= c[1] <= en + 4
                 and not (lo < c[1] < hi)]
-        subs.append(_subcluster(parent, sorted(group + glue,
-                                               key=_entry_sort_key),
+        # r16-M3: keep the parent's DIFF order (no per-image re-sort) —
+        # `sorted(group+glue, key=...)` scrambled before/after text.
+        subs.append(_subcluster(parent, group + glue,
                                 change_type=change_type,
                                 hunk_start=parent["hunk_start"]))
     # unmatched pre-image symbols: own sub-clusters cut on PRE-image
     # boundaries, anchored via e[4], parent change_type kept (r6-M2)
     if own:
-        own.sort(key=_entry_sort_key)
+        # r16-M3: keep diff order (no _entry_sort_key re-sort).
+        pass
         if pre_units:
             bounds: dict[int, list] = {i: [] for i in range(len(pre_units))}
             loose = []
@@ -1200,6 +1204,16 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
                        if len(e) > 4 and e[4] is not None), run[0][1])
             subs[-1]["line"] = fb
     if not subs:
+        return None
+    # r16-M1 (Opus Task-10 round-2 review): a single sub-cluster whose
+    # changed entries EQUAL the input's is a no-op cut — the common case
+    # is every change inside ONE top-level def/class. Returning it let
+    # _split_once treat it as progress: expand_oversize_units looped to
+    # the depth cap (oversize -> false leaf; band -> judged whole) and a
+    # runtime 400 burned 6 split attempts. `None` makes the caller fall
+    # through to line windows / halving, as with any other no-gain cut.
+    if len(subs) == 1 and \
+            {id(e) for e in subs[0]["entries"]} == {id(e) for e in entries}:
         return None
     return subs
 
@@ -1286,16 +1300,22 @@ def ts_units(path, before_text, after_text, entries,
         return None
     subs = []
     for i in sorted(by_post):
-        subs.append(_subcluster(parent, sorted(by_post[i],
-                                               key=_entry_sort_key),
+        # r16-M3: keep diff order (no per-image re-sort).
+        subs.append(_subcluster(parent, by_post[i],
                                 change_type=change_type,
                                 hunk_start=parent["hunk_start"]))
     if len(subs) == 1:
         return None  # no boundary gain -> let the caller fall through
     if rest:
-        subs.append(_subcluster(parent, sorted(rest, key=_entry_sort_key),
-                                change_type=change_type,
-                                hunk_start=parent["hunk_start"]))
+        # r16-M2 (Opus Task-10 round-2 review): `rest` is all-context —
+        # sending it as its own sub-cluster means judging UNCHANGED code
+        # under HUNK_QUESTIONS (false-positive risk + a wasted
+        # --max-hunks slot). Glue it to the FIRST unit sub-cluster
+        # instead; union == original is preserved.
+        subs[0] = _subcluster(
+            parent,
+            list(subs[0]["entries"]) + rest,
+            change_type=change_type, hunk_start=parent["hunk_start"])
     return subs
 
 
@@ -1315,7 +1335,9 @@ def line_window_subclusters(path, entries, change_type="code-change",
         "file": path, "hunk_start": next(
             (e[3] for e in changed if len(e) > 3), 1),
         "change_type": change_type}
-    ordered = sorted(entries, key=_entry_sort_key)
+    # r16-M3: iterate in the parent's DIFF order (no re-sort); window
+    # SIZING still uses _window_line (one coordinate system, r15-m5).
+    ordered = list(entries)
     groups: list = []
     run: list = []
     run_start = None
@@ -1353,6 +1375,18 @@ def line_window_subclusters(path, entries, change_type="code-change",
         run.append(e)
     if run:
         groups.append(run)
+    # r16-M2 (Opus Task-10 round-2 review): a group with NO changed
+    # entries is pure context (leading/trailing context past the last
+    # window cut) — judging it scores UNCHANGED code. Merge it into the
+    # NEIGHBORING group so no entry is lost (union == original holds;
+    # the union assertion in the tests covers this).
+    kept_groups: list[list] = []
+    for g in groups:
+        if _changed_entries(g) or not kept_groups:
+            kept_groups.append(g)
+        else:
+            kept_groups[-1].extend(g)
+    groups = kept_groups
     if len(groups) <= 1:
         return None  # a single window is no split at all
     subs = []
@@ -1594,6 +1628,7 @@ def git_show_or_none(repo, rev, path):
 
 
 _IMAGE_CACHE: dict = {}
+_MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable)
 
 
 def mode_file_images(repo, mode, head, path, old_file=None,
@@ -1618,16 +1653,17 @@ def mode_file_images(repo, mode, head, path, old_file=None,
             return fetch(repo_, rev, path_)
         return git_show_or_none(repo_, rev, path_)
 
-    _mb_cache: dict = {}
-
     def _merge_base(repo_, base_ref, head_):
-        # r15-m9: one subprocess (or injected call) per (repo, ref, head)
-        # per RUN, not per unit — mode_file_images is called once per
-        # unit and all units share the same merge base. The cache is a
-        # closure local, so it dies with the run (no cross-run state).
+        # r15-m9 + r16-m6 (round-2): the cache lives at MODULE level so
+        # it survives across mode_file_images() calls within the run —
+        # it is keyed by (repo, base_ref, head), and a git merge-base
+        # answer for a given key is immutable for the process lifetime,
+        # so cross-RUN reuse is also correct (unlike image contents,
+        # which are keyed mode-aware precisely because they are NOT
+        # immutable across modes).
         key = (repo_, base_ref, head_)
-        if key in _mb_cache:
-            return _mb_cache[key]
+        if key in _MERGE_BASE_CACHE:
+            return _MERGE_BASE_CACHE[key]
         if merge_base is not None:
             mb = merge_base(repo_, base_ref, head_)
         else:
@@ -1640,7 +1676,7 @@ def mode_file_images(repo, mode, head, path, old_file=None,
             else:
                 out = r.stdout.strip()
                 mb = out.splitlines()[0] if out else None  # FIRST (r2-m6)
-        _mb_cache[key] = mb
+        _MERGE_BASE_CACHE[key] = mb
         return mb
 
     def cached(rev):
@@ -2018,19 +2054,37 @@ def _judge_unit(h, ask, split_unit, depth):
                 # shape, not `unsplittable>cap` — the digest must say
                 # the provider call failed (and the fail-open check must
                 # see a real transport failure, not a budget leaf).
+                # r16-m2: siblings judged BEFORE the failure are kept —
+                # discarding real findings (and their latencies) made the
+                # failure strictly more destructive than the bug it
+                # guards against. The chain still reports transport_fail
+                # exactly once, so the consecutive-failure accounting is
+                # unchanged; the leaf record is dropped (the failure
+                # itself feeds judge()'s parse_error record).
+                if sub_records:
+                    records.extend(r for r in sub_records
+                                   if "_payload" in r)
                 tleaf = _budget_leaf(sub, "transport-failure-below-split")
-                return ([tleaf], 0, [], *zero, sub_fail, None)
+                return (records + [tleaf], 0, lat, tok_sum, tok_n,
+                        sub_fail, None)
             if sub_shape is not None:
                 # a shape error below the split bubbles up the same way.
+                # r16-m2: keep already-judged siblings here too.
+                if sub_records:
+                    records.extend(r for r in sub_records
+                                   if "_payload" in r)
                 sleaf = _budget_leaf(sub, "shape-failure-below-split")
-                return ([sleaf], 0, [], *zero, None, sub_shape)
+                return (records + [sleaf], 0, lat, tok_sum, tok_n,
+                        None, sub_shape)
             records.extend(sub_records)
-            # r15-m2: a sub that resolved to its own explicit leaf
-            # reports sub_added = 1 "because depth > 0", but the parent
-            # chain's `added = len(subs) - 1` ALREADY counted this slot;
-            # the leaf bonus would double-count it. Net growth for a
-            # leaf-resolved sub is exactly the chain's base.
-            added += sub_added
+            # r16-m1 (round-2): a sub at depth+1 that resolves to its own
+            # explicit leaf reports sub_added = 1 ("the leaf replaces a
+            # split-allocated sub-unit"), but this chain's base
+            # `len(subs) - 1` ALREADY counted that slot — the bonus
+            # double-counted it. A leaf-resolved sub is NET-ZERO growth.
+            added += 0 if (sub_records and len(sub_records) == 1
+                           and sub_records[0].get("parse_error")
+                           and sub_records[0].get("reason")) else sub_added
             lat.extend(sub_lat)
             tok_sum += sub_tok
             tok_n += sub_n
@@ -2125,7 +2179,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                 meta = {"added_units": added_units,
                         "avg_input_tokens": None}
                 return None, latencies, meta  # fail-open signal
-            findings.append({"hunk": h, "parse_error": True,
+            findings.append({"hunk": rec_hunk, "parse_error": True,
                              "raw": None, "latency_ms": 0.0})
             continue
         if not (records and "_payload" in records[0]):
@@ -2216,7 +2270,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                 meta = {"added_units": added_units,
                         "avg_input_tokens": None}
                 return None, latencies, meta  # fail-open signal
-            findings.append({"hunk": h, "parse_error": True,
+            findings.append({"hunk": rec_hunk, "parse_error": True,
                              "raw": payload, "latency_ms": round(ms, 1)})
         # remaining carriers from this unit's runtime split parse with
         # the same shape contract (usage extraction + answers parsing).
@@ -2272,7 +2326,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                     meta = {"added_units": added_units,
                             "avg_input_tokens": None}
                     return None, latencies, meta  # fail-open signal
-                findings.append({"hunk": h, "parse_error": True,
+                findings.append({"hunk": pc_hunk, "parse_error": True,
                                  "raw": payload,
                                  "latency_ms": round(ms, 1)})
     # M2 (r9), the reviewer's stronger option: if EVERY call failed
@@ -2280,12 +2334,18 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
     # regardless of the consecutive-counter arithmetic. m1 (r11): a
     # 200-with-garbage provider never appends a latency either, so
     # "nothing judged" means no successful parse, not just no transport
-    # success. Task 5: a reason-marked budget leaf is an EXPLICIT unjudged
-    # skip (the provider answered 400s / the gate refused), not a dead
-    # provider — an all-leaf run stays non-fail-open and feeds the
-    # incomplete-review downgrade instead.
+    # success. Task 5: a reason-marked BUDGET leaf is an EXPLICIT unjudged
+    # skip (the gate refused / the cutters exhausted), not a dead
+    # provider. r16-m3 (round-2): a leaf whose reason names a TRANSPORT
+    # or shape failure is the opposite — it must NOT suppress fail-open
+    # (a run whose every call failed must read "Unavailable", not
+    # "incomplete"), so those reasons are excluded from the skip check.
+    _failure_reasons = ("transport-failure-below-split",
+                        "shape-failure-below-split")
     if kept_hunks and not any(not f.get("parse_error") for f in findings) \
-            and not any(f.get("reason") for f in findings):
+            and not any(f.get("reason")
+                        and f.get("reason") not in _failure_reasons
+                        for f in findings):
         meta = {"added_units": added_units, "avg_input_tokens": None}
         return None, latencies, meta
     meta = {"added_units": added_units,
