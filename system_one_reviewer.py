@@ -810,10 +810,15 @@ def _top_level_units(tree_src):
     def/class nodes (end_lineno is 3.8+). Deterministic source order.
     r16-m5 (round-2): ValueError joins SyntaxError — on Python 3.10/3.11
     `ast.parse` raises ValueError (not SyntaxError) for NUL bytes, which
-    `git_show_or_none`'s 8 KB head-check misses on large files."""
+    `git_show_or_none`'s 8 KB head-check misses on large files.
+    r19-MAJOR-1 (round-5): RecursionError/MemoryError join too — a
+    pathological deep expression (`a + b + …` × thousands) raises
+    RecursionError out of `ast.parse`; uncaught, it crashes the whole
+    run from enrichment or the cutter. A file we cannot parse safely
+    yields None and the callers fall back to line windows."""
     try:
         tree = ast.parse(tree_src)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
     units = []
     for node in tree.body:
@@ -868,7 +873,7 @@ def _file_symbol_table(src):
     src_lines = src.splitlines()
     try:
         tree = ast.parse(src)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
     table: dict[str, str] = {}
     for name, s, _en in units[:ENRICHMENT_MAX_SYMBOLS]:
@@ -902,7 +907,7 @@ def _enclosing_chain(src, lineno):
     line (module-level change)."""
     try:
         tree = ast.parse(src)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
     best: list[str] = []
     for node, chain in _walk_with_parents(tree):
@@ -924,7 +929,7 @@ def _symbol_context_window(src, lineno):
     enclosing-symbol shape."""
     try:
         tree = ast.parse(src)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         return []
     src_lines = src.splitlines()
     best = None
@@ -1017,9 +1022,11 @@ def _subcluster(parent, entries, change_type=None, hunk_start=None):
         "hunk_start": hunk_start if hunk_start is not None
         else parent["hunk_start"],
         "header": (f"@@ {parent['file']} around line {anchor} "
-                   f"({len(entries)} changed lines) @@"),
+                   f"({len(_changed_entries(entries))} changed lines) @@"),
         "lines": lines, "entries": list(entries),
-        "n_changed": len(entries),
+        # r19-m6 (round-5): count only CHANGED entries — the header the
+        # model sees ("N changed lines") counted glued context too.
+        "n_changed": len(_changed_entries(entries)),
         "change_type": change_type or parent.get("change_type",
                                                  "code-change"),
         "parent_cluster": parent,
@@ -1042,11 +1049,9 @@ def _window_line(e):
     return e[4] if (len(e) > 4 and e[4] is not None) else e[1]
 
 
-def _entry_sort_key(e):
-    # r16-M3 / r18: cutters iterate in the parent's DIFF order; this
-    # legacy per-image sort key is RETIRED (no callers). Kept as a
-    # one-line shim because older out-of-tree probes imported it.
-    return (e[1],)
+# r19-m7 (round-5): `_entry_sort_key` RETIRED — cutters iterate in the
+# parent's diff order (r16-M3/r18-M1); the legacy per-image key had no
+# callers left.
 
 
 def ast_units(path, before_text, after_text, entries, change_type="code-change",
@@ -1080,13 +1085,13 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
     # reach this function on those paths.
     try:
         post_units = _top_level_units(after_text)
-    except (ValueError, TypeError):
-        post_units = None
+    except (ValueError, TypeError, RecursionError, MemoryError):
+        post_units = None  # r19-MAJOR-1: pathological parse -> line windows
     pre_units = None
     if before_text:
         try:
             pre_units = _top_level_units(before_text)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError, MemoryError):
             pre_units = None
     if not post_units:
         return None  # parse error / non-Python -> line-window fallback
@@ -1160,10 +1165,9 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
                                 change_type=change_type,
                                 hunk_start=parent["hunk_start"]))
     # unmatched pre-image symbols: own sub-clusters cut on PRE-image
-    # boundaries, anchored via e[4], parent change_type kept (r6-M2)
+    # boundaries, anchored via e[4], parent change_type kept (r6-M2);
+    # r16-M3: keep diff order (no per-image re-sort).
     if own:
-        # r16-M3: keep diff order (no _entry_sort_key re-sort).
-        pass
         if pre_units:
             bounds: dict[int, list] = {i: [] for i in range(len(pre_units))}
             loose = []
@@ -1270,8 +1274,33 @@ def ts_units(path, before_text, after_text, entries,
         root = tree.root_node
         units = []
         for node in root.children:
-            name_node = (node.child_by_field_name("name")
-                         if hasattr(node, "child_by_field_name") else None)
+            # r19-MAJOR-2 (round-5): unwrap `export_statement` to its
+            # `declaration` (export function/class/const are the
+            # MAJORITY of real TS/JS top-level symbols; without this the
+            # cutter saw none of them) and read const names from the
+            # nested variable_declarator. Fall back to the node's own
+            # `name` field for plain function/class.
+            target = node
+            if node.type == "export_statement":
+                decl = node.child_by_field_name("declaration") \
+                    if hasattr(node, "child_by_field_name") else None
+                if decl is None:
+                    continue
+                target = decl
+            name_node = (target.child_by_field_name("name")
+                         if hasattr(target, "child_by_field_name")
+                         else None)
+            if name_node is None and target.type in (
+                    "lexical_declaration", "variable_declaration"):
+                # const f = ... / var g = ...: name lives on the
+                # variable_declarator's `name` field
+                for child in target.children:
+                    if child.type == "variable_declarator":
+                        name_node = (child.child_by_field_name("name")
+                                     if hasattr(child,
+                                                "child_by_field_name")
+                                     else None)
+                        break
             if name_node is None:
                 continue
             units.append((name_node.text.decode("utf-8", "replace"),
@@ -1651,6 +1680,16 @@ def git_show_or_none(repo, rev, path):
 
 _IMAGE_CACHE: dict = {}
 _MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable)
+
+
+def clear_runtime_caches():
+    """r19-m5 (round-5): drop per-run caches. Called at the top of
+    main() — `_IMAGE_CACHE` keys are mode-aware but NOT repo-aware, so
+    in-process reuse (tests, sweep scripts, a second main()) could serve
+    another repo's image. Library callers doing multiple runs should
+    call this between runs too."""
+    _IMAGE_CACHE.clear()
+    _MERGE_BASE_CACHE.clear()
 
 
 def mode_file_images(repo, mode, head, path, old_file=None,
@@ -2055,7 +2094,17 @@ def _judge_unit(h, ask, split_unit, depth):
             # depth 0: the unit IS the leaf (count unchanged). depth > 0:
             # the leaf replaces a split-allocated sub-unit (+1).
             return ([leaf], 1 if depth > 0 else 0, [], *zero, None, None)
-        subs = split_unit(h)
+        try:
+            subs = split_unit(h)
+        except (RecursionError, MemoryError) as split_exc:
+            # r19-MAJOR-1 (round-5): the splitter runs INSIDE this
+            # `except _OverBudget:` handler — a sibling clause can never
+            # catch what raises here (Python semantics), so the splitter
+            # needs its own guard. A crashed split becomes the explicit
+            # leaf, exactly like an unsplittable unit; never a crash.
+            return ([_budget_leaf(h, f"splitter-failed: {split_exc!r}"
+                                  [:120])],
+                    1 if depth > 0 else 0, [], *zero, None, None)
         if not subs:
             return ([leaf], 1 if depth > 0 else 0, [], *zero, None, None)
         records: list = []   # carriers + leaf records, in unit order
@@ -2086,8 +2135,17 @@ def _judge_unit(h, ask, split_unit, depth):
                 if sub_records:
                     records.extend(r for r in sub_records
                                    if "_payload" in r)
-                tleaf = _budget_leaf(sub, "transport-failure-below-split")
-                return (records + [tleaf], 0, lat, tok_sum, tok_n,
+                # r19-m3 (round-5): the failing sub AND every later
+                # (untried) sibling get an explicit leaf record — the
+                # run's coverage accounting must see them, not silently
+                # drop them. Growth stays the chain base `len(subs)-1`
+                # (the parent slot is replaced by the records we emit:
+                # judged carriers + leaves for the rest).
+                failed_i = subs.index(sub)
+                for s in subs[failed_i:]:
+                    records.append(_budget_leaf(
+                        s, "transport-failure-below-split"))
+                return (records, len(subs) - 1, lat, tok_sum, tok_n,
                         sub_fail, None)
             if sub_shape is not None:
                 # a shape error below the split bubbles up the same way.
@@ -2096,8 +2154,12 @@ def _judge_unit(h, ask, split_unit, depth):
                     records.extend(r for r in sub_records
                                    if "_payload" in r)
                 sleaf = _budget_leaf(sub, "shape-failure-below-split")
-                return (records + [sleaf], 0, lat, tok_sum, tok_n,
-                        None, sub_shape)
+                failed_i = subs.index(sub)
+                for s in subs[failed_i + 1:]:
+                    records.append(_budget_leaf(
+                        s, "shape-failure-below-split"))
+                return (records + [sleaf], len(subs) - 1, lat, tok_sum,
+                        tok_n, None, sub_shape)
             records.extend(sub_records)
             # r16-m1 (round-2): a sub at depth+1 that resolves to its own
             # explicit leaf reports sub_added = 1 ("the leaf replaces a
@@ -2113,11 +2175,14 @@ def _judge_unit(h, ask, split_unit, depth):
         return (records, added, lat, tok_sum, tok_n, None, None)
     except Exception as exc:
         # The ask itself failed with an ordinary (non-over-budget) error.
-        # r15-m4 note: this SAME handler also guards the split recursion
-        # above (a sub's ask can raise here after propagation); m4's
-        # concern was a crash escape, and this handler already converts
-        # every escape into the transport_fail channel — judge() counts
-        # it and appends its own parse_error record, never a crash.
+        # r19-MAJOR-1 CORRECTION (round-5): the earlier r15-m4 note here
+        # was WRONG — an exception raised inside the `except _OverBudget:`
+        # handler above (splitter crash, a sub's hunk_state exploding) is
+        # NOT matched by this sibling clause. That path now has its own
+        # guards: the splitter is wrapped (leaf on RecursionError/
+        # MemoryError) and the AST helpers catch RecursionError/
+        # MemoryError alongside SyntaxError/ValueError, so nothing
+        # escapes _judge_unit.
         return ([], 0, [], *zero, repr(exc)[:300], None)
     # sentinel dict: distinguishes "transport success" from leaf records;
     # `_hunk` carries the ACTUAL unit judged (r15-M4: runtime-split subs
@@ -2249,8 +2314,9 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                                  "raw": None, "latency_ms": 0.0})
             continue
         # transport success resets the shared counter BEFORE parsing
-        # starts (m3 (r11) semantics preserved)
-        failures = 0
+        # starts (m3 (r11) semantics preserved); r19-m4: the reset moved
+        # into the carriers-nonempty branch above — an all-leaf chain
+        # (no provider contact) no longer resets it.
         if shape_fail is not None:
             if errors is not None:
                 errors.append(shape_fail)
@@ -2274,8 +2340,13 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
         carriers = [r for r in records if "_payload" in r]
         # r18-B1: an all-leaf chain (nothing was ever judged) has no
         # carrier to parse — its leaves already carry the coverage.
+        # r19-m4 (round-5): such a chain NEVER CONTACTED the provider, so
+        # it must NOT reset the consecutive-failure counter (a dead
+        # provider interleaved with send-gate leaves would otherwise
+        # never reach CALL_FAIL_LIMIT).
         if not carriers:
             continue
+        failures = 0
         carrier = carriers[0]
         pending_carriers = carriers[1:]
         payload, ms, state = carrier["_payload"], carrier["_ms"], \
@@ -2756,6 +2827,7 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
 # ---------- main ----------
 
 def main():
+    clear_runtime_caches()  # r19-m5: per-run caches, never across runs
     ap = argparse.ArgumentParser(prog="system-one-reviewer")
     ap.add_argument("--version", action="version",
                     version=f"%(prog)s {__version__}")

@@ -233,11 +233,14 @@ systematically lowers scores and flipped the defect-positive PR's
 verdict to Approved) — per-cluster transport stays;
 [docs/evals/2026-10-02-gb-batching-gate.md](docs/evals/2026-10-02-gb-batching-gate.md).
 
-tree-sitter is an OPTIONAL dependency (`pip install
-tree-sitter-language-pack`): without it, non-Python oversize clusters
-use deterministic line windows; with it, symbol-boundary units. The
-import is lazy and loader-injected; the tool still runs stdlib-only by
-default.
+tree-sitter is an OPTIONAL dependency. For TypeScript/JavaScript
+symbol-boundary units install the grammar packages themselves —
+`pip install tree-sitter tree-sitter-typescript tree-sitter-javascript`
+(the `tree_sitter_language_pack` alone does NOT provide the
+`tree_sitter_typescript`/`tree_sitter_javascript` modules this tool
+imports). Without them, non-Python oversize clusters use deterministic
+line windows. The import is lazy and loader-injected; the tool still
+runs stdlib-only by default.
 
 ## Status
 
