@@ -940,11 +940,17 @@ def _symbol_context_window(src, lineno):
         end = getattr(node, "end_lineno", None)
         if end is None or not (node.lineno <= lineno <= end):
             continue
-        if best is None or (node.lineno, end) <= best:
-            best = (node.lineno, end)
+        # r20-M1 (round-6): pick the NARROWEST enclosing span (innermost
+        # symbol), not the smallest start line — `(lineno, end) <= best`
+        # kept `class Big(1-35)` over `def m(32-35)`, so a method change
+        # got the class header as "context". Ties go to the deeper node
+        # (larger start), which encloses less.
+        span = end - node.lineno
+        if best is None or (span, -node.lineno) < best:
+            best = (span, -node.lineno, end)
     if best is None:
         return []
-    s, en = best
+    s, en = best[1] * -1, best[2]
     lo = max(1, min(s, len(src_lines)))
     hi = min(len(src_lines), en)
     return [src_lines[i - 1].rstrip() for i in range(lo, hi + 1)] \
@@ -1533,13 +1539,34 @@ def _split_once(unit, images):
         med_entry = changed[med_i]
         med_entries_idx = next(i for i, e in enumerate(entries)
                                if e is med_entry or e == med_entry)
+        # r20-M2 (round-6): a half with NO changed entries is context
+        # glue, not a judgment unit — the old cut put pure context in
+        # `left` and judged it under HUNK_QUESTIONS. When both halves
+        # carry changed entries, emit both; when only one does, emit
+        # ONLY the changed half (the context half's entries are dropped
+        # from judgment, not from the union bookkeeping — a runtime
+        # split exists to shrink the payload, and context-only halves
+        # are exactly what should not be sent). A len(changed)==1 unit
+        # still splits at runtime (the 400 is about tokens, not the
+        # changed-line count): its changed half is the single line,
+        # which is the plan's ±1-line leaf window.
         left = entries[:med_entries_idx]
         right = entries[med_entries_idx:]
-        if left and right:
+        left_ch = _changed_entries(left)
+        right_ch = _changed_entries(right)
+        if left_ch and right_ch and left and right:
             return ([_subcluster(parent, left, change_type=change_type,
                                  hunk_start=parent["hunk_start"]),
-                     _subcluster(parent, right, change_type=change_type,
-                                 hunk_start=parent["hunk_start"])], None)
+                     _subcluster(parent, right,
+                                 change_type=change_type,
+                                 hunk_start=parent["hunk_start"])],
+                    None)
+        if (left_ch or right_ch) and left and right:
+            kept_entries = left if left_ch else right
+            return ([_subcluster(parent, kept_entries,
+                                 change_type=change_type,
+                                 hunk_start=parent["hunk_start"])],
+                    None)
     # unsplittable: a single changed line still over cap (or no cutter
     # helped and halving has nothing to cut) — the leaf case
     return None, unit
@@ -2108,6 +2135,7 @@ def _judge_unit(h, ask, split_unit, depth):
         if not subs:
             return ([leaf], 1 if depth > 0 else 0, [], *zero, None, None)
         records: list = []   # carriers + leaf records, in unit order
+        sub_added_list: list = []  # r20-M3: nested growth deltas, kept
         # the parent is REPLACED by len(subs) units (r7-m1): base NET is
         # len(subs) - 1; recursion adds each sub's own nested delta.
         added = len(subs) - 1
@@ -2145,8 +2173,13 @@ def _judge_unit(h, ask, split_unit, depth):
                 for s in subs[failed_i:]:
                     records.append(_budget_leaf(
                         s, "transport-failure-below-split"))
-                return (records, len(subs) - 1, lat, tok_sum, tok_n,
-                        sub_fail, None)
+                # r20-M3 (round-6): the nested deltas (sub_added) are real
+                # units already created below the split — zeroing them
+                # under-reported the growth and broke the depth-cap
+                # termination math whenever sub 1 split before sub 2
+                # failed. Sum the nested deltas into the chain base.
+                return (records, (len(subs) - 1) + sum(sub_added_list),
+                        lat, tok_sum, tok_n, sub_fail, None)
             if sub_shape is not None:
                 # a shape error below the split bubbles up the same way.
                 # r16-m2: keep already-judged siblings here too.
@@ -2161,6 +2194,10 @@ def _judge_unit(h, ask, split_unit, depth):
                 return (records + [sleaf], len(subs) - 1, lat, tok_sum,
                         tok_n, None, sub_shape)
             records.extend(sub_records)
+            sub_added_list.append(
+                0 if (sub_records and len(sub_records) == 1
+                      and sub_records[0].get("parse_error")
+                      and sub_records[0].get("reason")) else sub_added)
             # r16-m1 (round-2): a sub at depth+1 that resolves to its own
             # explicit leaf reports sub_added = 1 ("the leaf replaces a
             # split-allocated sub-unit"), but this chain's base

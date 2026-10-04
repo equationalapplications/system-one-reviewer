@@ -525,7 +525,10 @@ def _wire_runtime_split_main(jr, monkeypatch, tmp_path, records, usage):
 def test_runtime_split_counts_consistent(jr, monkeypatch, tmp_path, capsys):
     """r2-M2/r9-m1: a run where one unit 400s then splits at runtime —
     len(judged) == n_analyzed on the LOGGED record, n_dropped == 0, and
-    NO '(incomplete' suffix (a legal runtime split is complete)."""
+    NO '(incomplete' suffix (a legal runtime split is complete).
+    r20-M2 (round-6): the halving cut now emits only the CHANGED half
+    (a context-only half is glue, never judged), so 1 unit -> 1 judged
+    sub-unit; the counts stay consistent on that."""
     records = []
     _wire_runtime_split_main(jr, monkeypatch, tmp_path, records,
                              usage={"input_tokens": 900})
@@ -537,7 +540,7 @@ def test_runtime_split_counts_consistent(jr, monkeypatch, tmp_path, capsys):
         "runtime-split run: judged entries == n_analyzed")
     assert rec["n_dropped"] == 0
     assert "(incomplete" not in rec["verdict"]
-    assert out["meta"]["n_analyzed"] == 2  # 1 unit -> 2 leaves
+    assert out["meta"]["n_analyzed"] == 1  # 1 unit -> 1 changed-half sub
 
 
 def test_input_tokens_logged(jr, monkeypatch, tmp_path, capsys):

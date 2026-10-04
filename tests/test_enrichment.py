@@ -115,7 +115,10 @@ def test_enrichment_present_for_python(jr):
     assert ctx["enclosing"] == "C.method"
     assert set(ctx["symbols"]) == {"C", "top"}
     assert ctx["symbols"]["top"] == "def top():"
-    assert ctx["context"][0] == "class C:"
+    assert ctx["context"][0] == "    def method(self):"
+    # r20-M1: the context window is the INNERMOST enclosing symbol (the
+    # method), not the class header — the old head-first pick showed
+    # `class C:` + attributes and never the changed method.
     # non-Python text: no usable symbol table -> NO key (not None-valued)
     txt = {"file": "r.txt", "line": 1, "hunk_start": 1,
            "entries": [("+", 1, "hello", 1)], "change_type": "code-change"}
