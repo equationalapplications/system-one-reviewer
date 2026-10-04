@@ -821,3 +821,33 @@
 - **Laya regression risk (r5-M4 corrected):** near-zero, and now MECHANICAL — the AST/budget path is gated on `provider == "jev"` via `triage()`'s size_policy param and `main()`'s enrichment attachment; laya keeps `MAX_HUNK_LINES` skips + whole-cluster judging. One honest correction (r3-M4): the r1 claim "the split loop runs in `judge()`, which laya's transport never enters" was FALSE — laya runs through `judge()` too (:1343); the real laya safety is the provider gate (no sub-clusters/`ast_context` ever created) plus `_OverBudget` being raisable only inside `jev_ask`, which laya's transport never calls.
 - **Tree-sitter wheel choice** (tree-sitter-languages vs per-language): verify maintained wheel at implementation time (brief req 6); either way the import stays lazy, loader-injected, and optional.
 - **Fossil-string tests (r5-m7):** `test_render_collapses_duplicate_skips` (tests/test_triage_and_failreason.py :222–229) hardcodes `"hunk>120 lines"` — it STAYS VALID as-is (r5-m7: laya still emits that string, so it remains a live expectation, not a fossil); do NOT update it. `tests/test_score_corpus.py:97` also contains the string as OLD-LEDGER fixture data exercising the back-compat path — intentional, leave as-is with a comment.
+
+---
+
+## AS-BUILT addendum (2026-10-04, appended at Task 10 close-out)
+
+> Records how implementation actually resolved against rev 14. Every
+> delta below was reviewed in the Task-10 loop and is either gate
+> evidence or a reviewed fix — none is a design deviation.
+
+### Task 8 — gate outcomes (as run)
+- **G-A: PASS** — zero `hunk>` skips; importMachine.ts (209 lines) splits into symbol-aligned units, all judged; band geometry verified every review round.
+- **G-C: PASS, with one amended ruling (Kurt, 2026-10-04):** curated-journal PR #46 produced exactly one FP major (dev-model.js:112–220 scored 0.54–0.58 against the 0.50 line, stable across runs). Ruling: **threshold stays 0.50; the FP is accepted as reasonable product cost** ("a quick and low quality review that still catches plenty of positives… we can fine-tune it later"). This amends G-C as written; recorded in `docs/evals/2026-10-02-v08-gate-results.md` §10.
+- **G-D: PASS** — corpus replay FP count 2.98 → 2.00 per run vs contemporaneous control.
+- **Threshold re-sweep: KEEP 0.50** (rule 2 held on every negative run; rule 1 not met). Re-verified at r15, r19, r20, r22, and the r22 delta.
+
+### Task 9 — G-B outcome
+- Ran exactly as specified: 64 live reviews (arms A/B/C × 3 repeats × CJ PRs 43–47), out-of-tree harness.
+- **FAIL on every criterion:** mean signed severity shift −0.30; 17.2% chunk-verdict flip rate vs 0% calibration noise; sign test 47 pos / 144 neg; defect-positive PR #43 flipped "Changes requested" → "Approved" 3/3.
+- Disposition per D5 default: **per-file batching stays RETIRED.** Documented in `docs/evals/2026-10-02-gb-batching-gate.md` (ca68328). No batching transport code; the ~37× speedup stays dead, now with measured evidence.
+
+### Task 10 — review loop, as built
+- Plan wording: "Opus review of the full diff until APPROVE / APPROVE WITH NITS."
+- As-built: **seven Opus rounds** (r15→r21 fix cycles; REQUEST CHANGES each round; every BLOCKER/MAJOR fixed with a regression test), then **Kurt redirected (2026-10-04): stop Opus, run the dual cycle with GLM 5.3.** GLM r22 review + r22 delta review followed: **no BLOCKER, no MAJOR**; findings (n_sent KeyError on non-JSON runs, dead shape-fail branch accounting, duplicated predicate, stale comment) all fixed with gates re-verified green each time.
+- Loop outcome: ended by Kurt's instruction at a clean point (minors/nits only, 367 tests passing, all gates green) rather than a formal APPROVE verdict.
+
+### Implementation deltas vs plan (all reviewed, none design-level)
+1. **ts_units export unwrapping (r19-M2):** plan said "lazy tree-sitter import"; as-built also unwraps `export_statement`/`lexical_declaration` so `export const X = …` yields real symbol units (the importMachine.ts pattern). README names the grammar packages, not the language-pack meta-package.
+2. **Innermost-symbol enrichment context (r20-M1):** brief Arch 2 was ambiguous about which enclosing span supplies context; as-built picks the NARROWEST enclosing symbol (method, not class header). Reviewed; regression-tested.
+3. **Runtime-split failure accounting (r17-B1 → r21-M1):** plan's "bounded termination; chain = ONE attempt" held throughout; the fix cycle was correctness of *accounting* on nested-split failures (failing sub keeps its records incl. its own leaves; growth sums nested deltas; leaves only for never-tried siblings), not a design change.
+4. **Reviewer identity:** the plan's Task 10 named Opus only; as-built the dual cycle is Opus + GLM 5.3 (Kurt's ruling). Future plans should name both reviewers up front.
