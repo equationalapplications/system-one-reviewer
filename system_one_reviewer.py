@@ -1360,10 +1360,12 @@ def ts_units(path, before_text, after_text, entries,
     if len(subs) == 1:
         return None  # no boundary gain -> let the caller fall through
     if rest:
-        # r16-M2 (Opus Task-10 round-2 review): `rest` is all-context —
-        # sending it as its own sub-cluster means judging UNCHANGED code
-        # under HUNK_QUESTIONS (false-positive risk + a wasted
-        # --max-hunks slot). Glue it to the FIRST unit sub-cluster
+        # r16-M2 (Opus Task-10 round-2 review): `rest` is UNMATCHED
+        # entries — usually context, but CHANGED entries outside every
+        # top-level unit land here too (r21-m3, round-7): they ride
+        # with subs[0] and are judged as part of its window. Sending
+        # `rest` alone would judge UNCHANGED code under HUNK_QUESTIONS
+        # (false-positive risk + a wasted --max-hunks slot).
         # instead; union == original is preserved.
         # r18-M1 (round-4): rebuild in the parent's DIFF order (filter
         # `entries` against the selected set), not `entries + rest`.
@@ -2225,18 +2227,23 @@ def _judge_unit(h, ask, split_unit, depth):
                         (len(subs) - 1) + sum(sub_added_list),
                         lat, tok_sum, tok_n, None, sub_shape)
             records.extend(sub_records)
-            sub_added_list.append(
-                0 if (sub_records and len(sub_records) == 1
-                      and sub_records[0].get("parse_error")
-                      and sub_records[0].get("reason")) else sub_added)
+            # r22-delta (D4/D6): one shared predicate — a leaf-resolved
+            # sub is NET-ZERO growth (r16-m1); also true on the fail
+            # paths above. The tok merges here and on the fail paths
+            # are dead arithmetic today (_judge_unit never parses
+            # payloads — judge() counts tokens at carrier-parse time),
+            # kept so the tuple contract stays uniform if that changes.
+            _net_sub_added = 0 if (sub_records and len(sub_records) == 1
+                                   and sub_records[0].get("parse_error")
+                                   and sub_records[0].get("reason")) \
+                else sub_added
+            sub_added_list.append(_net_sub_added)
             # r16-m1 (round-2): a sub at depth+1 that resolves to its own
             # explicit leaf reports sub_added = 1 ("the leaf replaces a
             # split-allocated sub-unit"), but this chain's base
             # `len(subs) - 1` ALREADY counted that slot — the bonus
             # double-counted it. A leaf-resolved sub is NET-ZERO growth.
-            added += 0 if (sub_records and len(sub_records) == 1
-                           and sub_records[0].get("parse_error")
-                           and sub_records[0].get("reason")) else sub_added
+            added += _net_sub_added
             lat.extend(sub_lat)
             tok_sum += sub_tok
             tok_n += sub_n
