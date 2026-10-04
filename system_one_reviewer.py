@@ -1031,23 +1031,21 @@ def _changed_entries(entries):
 
 
 def _window_line(e):
-    """The line a window cutter sizes by (r15-m5): e[4] — the HEAD-side
-    anchor — for '-' entries, the tracked new line otherwise. ONE
-    coordinate system for sizing; iteration order is the parent's diff
-    order (r16-M3), so a window's entries stay contiguous in the diff.
-    A '-' entry with a missing anchor sorts last within its run."""
-    return e[4] if (len(e) > 4 and e[4] is not None) else \
-        (e[1] if e[0] != "-" else 0)
+    """The line a window cutter sizes by. r18-M2 (round-4): a deletion
+    run's entries all share e[4] (new_line never advances across '-'
+    lines), which made `line - run_start + 1` stay at 1 — a 2,000-line
+    deletion never cut. Size by e[1] (the line that ADVANCES for the
+    entry's own kind: old-file for '-', new-file otherwise); one
+    coordinate system per RUN, which is all the window cutter needs."""
+    if e[0] == "-":
+        return e[1]
+    return e[4] if (len(e) > 4 and e[4] is not None) else e[1]
 
 
 def _entry_sort_key(e):
-    # r16-M3 (Opus Task-10 round-2 review): entries arrive in DIFF order
-    # and the parent's diff order is the only globally consistent order —
-    # per-image line keys scramble `code_before_change` whenever a hunk's
-    # old/new starts differ (deletions jump ahead of their leading
-    # context). Cutters preserve input order; this helper now sorts by
-    # new-file line only for callers that explicitly need that order
-    # (currently none — kept for API stability).
+    # r16-M3 / r18: cutters iterate in the parent's DIFF order; this
+    # legacy per-image sort key is RETIRED (no callers). Kept as a
+    # one-line shim because older out-of-tree probes imported it.
     return (e[1],)
 
 
@@ -1152,7 +1150,13 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
                 and not (lo < c[1] < hi)]
         # r16-M3: keep the parent's DIFF order (no per-image re-sort) —
         # `sorted(group+glue, key=...)` scrambled before/after text.
-        subs.append(_subcluster(parent, group + glue,
+        # r18-M1 (round-4): `group + glue` still broke diff order (glue
+        # appended AFTER the changed lines, incl. leading `def` lines).
+        # Rebuild by filtering the parent's `entries` in order against
+        # the selected set — entries keep their diff sequence.
+        selected = set(map(id, group + glue))
+        in_order = [e for e in entries if id(e) in selected]
+        subs.append(_subcluster(parent, in_order,
                                 change_type=change_type,
                                 hunk_start=parent["hunk_start"]))
     # unmatched pre-image symbols: own sub-clusters cut on PRE-image
@@ -1319,9 +1323,12 @@ def ts_units(path, before_text, after_text, entries,
         # under HUNK_QUESTIONS (false-positive risk + a wasted
         # --max-hunks slot). Glue it to the FIRST unit sub-cluster
         # instead; union == original is preserved.
+        # r18-M1 (round-4): rebuild in the parent's DIFF order (filter
+        # `entries` against the selected set), not `entries + rest`.
+        selected = set(map(id, subs[0]["entries"] + rest))
+        in_order = [e for e in entries if id(e) in selected]
         subs[0] = _subcluster(
-            parent,
-            list(subs[0]["entries"]) + rest,
+            parent, in_order,
             change_type=change_type, hunk_start=parent["hunk_start"])
     return subs
 
@@ -1485,12 +1492,20 @@ def _split_once(unit, images):
     # any unit with >= 2 changed entries.
     changed = _changed_entries(entries)
     if len(entries) > 1 and changed:
-        med = sorted((e[4] if e[0] == "-" else e[1]) for e in changed)[
-            len(changed) // 2]
-        left = [e for e in entries
-                if (e[4] if e[0] == "-" else e[1]) < med]
-        right = [e for e in entries
-                 if (e[4] if e[0] == "-" else e[1]) >= med]
+        # r18-M2 (round-4): split by CHANGED-ENTRY POSITION (index in the
+        # diff-ordered changed list), not by line key — a deletion run's
+        # keys are all identical (e[1] advances but e[4] doesn't, and
+        # mixed runs mix coordinates), so a median KEY put every
+        # deletion in `right` and left a context-only `left`.
+        # Every entry (changed or context) goes by its INDEX in the
+        # diff-ordered `entries` list vs the median changed entry's
+        # index — leading context goes left, trailing goes right.
+        med_i = len(changed) // 2
+        med_entry = changed[med_i]
+        med_entries_idx = next(i for i, e in enumerate(entries)
+                               if e is med_entry or e == med_entry)
+        left = entries[:med_entries_idx]
+        right = entries[med_entries_idx:]
         if left and right:
             return ([_subcluster(parent, left, change_type=change_type,
                                  hunk_start=parent["hunk_start"]),
@@ -2248,17 +2263,19 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
             findings.append({"hunk": h, "parse_error": True,
                              "raw": None, "latency_ms": 0.0})
             continue
-        if not (records and "_payload" in records[0]):
-            # a non-failure unit that produced no ask (the SEND gate
-            # leaf, or an over-budget chain resolved to leaves) — its
-            # explicit leaf records carry the coverage; nothing to parse.
-            findings.extend(records)
-            continue
-        # mixed records (split carriers + leaves): keep the leaves, parse
-        # EVERY carrier (a split parent yields 2+ judged sub-records).
+        # r18-B1 (Opus Task-10 round-4): the old `records[0]` shortcut
+        # leaked carriers whenever a LEAF came FIRST in the split order
+        # (sub1 -> leaf, sub2 -> judged): both records extended raw, the
+        # carrier without a 'hunk' key -> KeyError in _digest_label.
+        # Always partition; leaves extend, carriers parse (the loop
+        # below handles 0, 1, or N carriers uniformly).
         leaf_part = [r for r in records if "_payload" not in r]
         findings.extend(leaf_part)
         carriers = [r for r in records if "_payload" in r]
+        # r18-B1: an all-leaf chain (nothing was ever judged) has no
+        # carrier to parse — its leaves already carry the coverage.
+        if not carriers:
+            continue
         carrier = carriers[0]
         pending_carriers = carriers[1:]
         payload, ms, state = carrier["_payload"], carrier["_ms"], \

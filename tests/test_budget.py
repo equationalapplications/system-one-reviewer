@@ -307,6 +307,55 @@ def test_runtime_split_then_transport_failure_keeps_shape():
     assert errors and "sub 2 timeout" in errors[-1]
 
 
+def test_runtime_split_leaf_first_never_leaks_carriers():
+    """r18-B1 (Opus round-4): a split chain whose FIRST sub resolves to
+    a leaf and whose SECOND sub is judged (leaf-first record order) must
+    not leak the raw carrier into findings — every record carries
+    'hunk', and the judged sub's score survives."""
+    import system_one_reviewer as sor
+
+    calls = []
+
+    def over_leaf_ok(state, questions):
+        calls.append(state)
+        if len(calls) == 1:
+            raise sor._OverBudget("HTTP 400 max_tokens_exceeded")
+        if len(calls) == 2:
+            raise sor._OverBudget("HTTP 400 max_tokens_exceeded")
+        return {"answers": {
+            "severity": {"score": 2.0, "probabilities": None,
+                         "confidence": 0.9},
+            "is_real_issue": {"noul": 0.8},
+            "category": {"choice": "bug-risk", "probabilities": None}}}, 1.0
+
+    parent = {"file": "f.py", "line": 1, "hunk_start": 1,
+              "lines": ["x", "x"], "entries": [(" ", 1, "x", 1),
+                                               (" ", 2, "x", 2)],
+              "n_changed": 2, "header": "h", "size": 2, "too_large": False}
+    sub_a = dict(parent, line=2)
+    sub_b = dict(parent, line=3)
+
+    def split_unit(unit):
+        # first split: 2 subs; sub_a then splits no further (leaf)
+        return [sub_a, sub_b]
+
+    def split_unit_leaf(unit):
+        return None  # unsplittable -> leaf
+
+    def router(unit):
+        return split_unit(unit) if unit is parent else split_unit_leaf(unit)
+
+    findings, _lat, _meta = sor.judge([parent], over_leaf_ok,
+                                      split_unit=router)
+    assert findings is not None
+    for f in findings:
+        assert "hunk" in f, f"raw carrier leaked: {f!r}"
+    judged = [f for f in findings if not f.get("parse_error")]
+    assert len(judged) == 1 and judged[0]["severity"] == 2.0
+    leaves = [f for f in findings if f.get("parse_error")]
+    assert len(leaves) == 1 and leaves[0]["reason"] == "unsplittable>cap"
+
+
 def test_budget_termination_bounded(jr):
     """r2-m2: the recursion helper terminates on synthetic multi-unit
     input where every attempt still over-budgets — terminates, marks
