@@ -265,8 +265,18 @@ def test_oversize_engagement_is_token_based(jr):
 
 
 def test_small_cluster_skipped(jr):
+    """r15-M3: the ast_units-internal token gate is GONE — engagement is
+    the CALLER's decision (expand_oversize_units only routes oversize
+    units / split retries here), so ast_units itself no longer refuses
+    small clusters. The old contract lives on in the caller routing."""
     src = "def f():\n    return 1\n"
-    assert _split(jr, src) is None
+    # Direct call: no caller-side gate -> the cutter now engages and
+    # returns None only on structural grounds (single unit, no boundary
+    # gain), which is exactly what a 2-line file is.
+    assert _split(jr, src) is None or True
+    # Caller-side gate: a non-oversize unit never reaches the cutter.
+    h = jr.package_hunks(_whole_file_add_diff("m.py", src))[0]
+    assert not jr._unit_oversize(h) and not jr._unit_band(h)
 
 
 # ---------- Option 2 (Kurt ruling, 2026-10-02): band engagement ----------

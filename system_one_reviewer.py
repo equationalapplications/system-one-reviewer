@@ -200,15 +200,19 @@ class _OverBudget(_NoRetry):
 
 
 def _is_max_tokens_body(raw):
-    """True when an HTTP-error body marks the failure as a token-budget
-    rejection (the `max_tokens_exceeded` marker in Jev's error JSON).
-    Tolerant: any nesting, case-insensitive marker match."""
+    """True when the HTTP body matches the over-budget shape: the
+    `error_type` field carrying `max_tokens_exceeded` (community-measured
+    400 body, 2026-09 probes). Case-insensitive, any nesting.
+    r15-m7 (Opus Task-10 review): the previous `max_tokens` + `exceed`
+    two-word match also caught PARAMETER-validation 400s ("max_tokens
+    must not exceed N"), sending healthy units into split cascades —
+    the marker must name the OVER-BUDGET error type, not mention the
+    parameter."""
     try:
         text = raw.decode("utf-8", "replace").lower()
     except Exception:
         return False
-    return "max_tokens_exceeded" in text or "max_tokens" in text \
-        and "exceed" in text
+    return "max_tokens_exceeded" in text
 
 
 def payload_over_hard_cap(state, questions):
@@ -1023,10 +1027,23 @@ def _changed_entries(entries):
     return [e for e in entries if e[0] != " "]
 
 
+def _window_line(e):
+    """The line a window cutter sizes by (r15-m5): e[4] — the HEAD-side
+    anchor — for '-' entries, the tracked new line otherwise. ONE
+    coordinate system for sizing, matching _entry_sort_key's primary
+    key, so `line - run_start` can never go negative mid-run."""
+    return e[4] if (len(e) > 4 and e[4] is not None) else \
+        (e[1] if e[0] != "-" else 0)
+
+
 def _entry_sort_key(e):
     # '+' entries sort by tracked new line, '-' by old-file line (the
     # position the content occupies in ITS image); e[4] (head anchor)
     # never orders assignment (r5-M1) — it is the tiebreaker only.
+    # r15-m5: the window SIZE key (_window_line, e[4]-first) differs
+    # from this ORDER key by design — ordering is per-image (r5-M1),
+    # sizing is head-anchored. line_window_subclusters therefore takes
+    # its sizing line from _window_line, not from the sort key.
     if e[0] == "+":
         return (e[1], 0)
     return (e[1], 1, e[4] if len(e) > 4 and e[4] is not None else 0)
@@ -1053,18 +1070,14 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
     changed = _changed_entries(entries)
     if not changed:
         return None
-    # TOKEN-based engagement (r1-M4): only proceed when the cluster's own
-    # serialized state exceeds SOFT_CAP_TOKENS — a small cluster is never
-    # split, whatever its line count.
-    if estimate_call_size(
-            hunk_state({"file": path, "line": 1, "entries": changed,
-                        "change_type": change_type}), HUNK_QUESTIONS) \
-            <= SOFT_CAP_TOKENS:
-        return None
-    parent = parent_cluster if parent_cluster is not None else {
-        "file": path, "hunk_start": next(
-            (e[3] for e in changed if len(e) > 3), 1),
-        "change_type": change_type}
+    # TOKEN-based engagement was REMOVED (r15-M3, Opus Task-10 review):
+    # band units (121+ lines, under cap by definition) and runtime-400
+    # units are all <= SOFT_CAP_TOKENS, so an internal check here made
+    # them fall through to arbitrary line windows, contradicting the
+    # band contract (the caller's cutter order). The CALLERS decide when
+    # the AST cutter engages (expand_oversize_units only calls it for
+    # oversize units / split retries); a small top-level entry can never
+    # reach this function on those paths.
     try:
         post_units = _top_level_units(after_text)
     except (ValueError, TypeError):
@@ -1077,6 +1090,8 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
             pre_units = None
     if not post_units:
         return None  # parse error / non-Python -> line-window fallback
+    # r15-m8: single `parent` build, after the parse succeeds (the old
+    # pre-parse build was dead — unconditionally rebuilt here).
     parent = parent_cluster if parent_cluster is not None else {
         "file": path, "hunk_start": next(
             (e[3] for e in changed if len(e) > 3), 1),
@@ -1163,10 +1178,26 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
                     hunk_start=parent["hunk_start"]))
                 subs[-1]["line"] = anchor_fb
             own = loose
-        for e in own:  # no pre-image: one sub-cluster per run of '-' lines
-            subs.append(_subcluster(parent, [e], change_type=change_type,
+        # r15-M5 (Opus Task-10 review): the old per-entry loop made one
+        # Jev call per deleted line — a 60-deletion refactor became 60
+        # single-line calls that could fill the --max-hunks ceiling.
+        # Contiguous loose entries (adjacent in the sort order, same
+        # coordinate system) now group into one sub-cluster per run.
+        runs: list[list] = []
+        for e in own:
+            if runs:
+                prev = runs[-1][-1]
+                gap = (e[1] - prev[1] if e[0] == "-" and prev[0] == "-"
+                       else None)
+                if gap is not None and 0 < gap <= 2:
+                    runs[-1].append(e)
+                    continue
+            runs.append([e])
+        for run in runs:
+            subs.append(_subcluster(parent, run, change_type=change_type,
                                     hunk_start=parent["hunk_start"]))
-            fb = e[4] if len(e) > 4 and e[4] is not None else e[1]
+            fb = next((e[4] for e in run
+                       if len(e) > 4 and e[4] is not None), run[0][1])
             subs[-1]["line"] = fb
     if not subs:
         return None
@@ -1230,6 +1261,17 @@ def ts_units(path, before_text, after_text, entries,
         "change_type": change_type}
     by_post: dict[int, list] = {}
     rest: list = []
+    # r15-m6 (documented, not "fixed"): '-' entries map by their
+    # OLD-file line into POST-image unit ranges. A true PRE-image parse
+    # (like ast_units' r5-M1 handling) would need the pre-image units
+    # here too; ts_units is the single-image band path (the band's
+    # before/after images differ only by the changed lines, and the
+    # band is < 84k chars), so the drift is bounded by the deletion
+    # offset above each unit — misassignment can only move a deletion
+    # to a NEIGHBORING unit, never out of the file, and the union of
+    # entries is preserved either way. ast_units keeps the strict
+    # pre/post pairing (r5-M1) for the Python oversize path, where the
+    # images are parsed separately.
     for e in entries:
         if e[0] == " ":
             rest.append(e)
@@ -1278,7 +1320,7 @@ def line_window_subclusters(path, entries, change_type="code-change",
     run: list = []
     run_start = None
     for e in ordered:
-        line = e[4] if e[0] == "-" else e[1]
+        line = _window_line(e)  # r15-m5: ONE sizing coordinate system
         if run_start is None:
             run_start = line
         if run and line - run_start + 1 > window_lines:
@@ -1287,7 +1329,7 @@ def line_window_subclusters(path, entries, change_type="code-change",
             # hard-cut at the overflow point; never mid-line.
             cut = len(run)
             for k in range(len(run) - 1, 0, -1):
-                rk = run[k][4] if run[k][0] == "-" else run[k][1]
+                rk = _window_line(run[k])  # r15-m5
                 if rk - run_start + 1 > window_lines:
                     break
                 if not str(run[k][2]).strip():
@@ -1295,7 +1337,7 @@ def line_window_subclusters(path, entries, change_type="code-change",
                     break
             else:
                 for k in range(len(run) - 1, 0, -1):
-                    rk = run[k][4] if run[k][0] == "-" else run[k][1]
+                    rk = _window_line(run[k])  # r15-m5
                     if rk - run_start + 1 <= window_lines:
                         cut = k + 1
                         break
@@ -1305,7 +1347,7 @@ def line_window_subclusters(path, entries, change_type="code-change",
                 # an identical-entry overflow can empty the run (a window
                 # cannot shrink below one line) — reset to the NEXT entry
                 # and let the current `e` seed the new run instead.
-                run_start = (run[0][4] if run[0][0] == "-" else run[0][1])
+                run_start = _window_line(run[0])  # r15-m5
             else:
                 run_start = None
         run.append(e)
@@ -1394,16 +1436,20 @@ def _split_once(unit, images):
     # 400 retry has no other cutter left). Halving requires >= 2 entries
     # total, not >= 2 changed entries — a single changed line with its
     # context CAN split at runtime (the plan's ±1-line leaf windows).
-    # mid_line = the FIRST changed line: entries before it (context or
-    # earlier changes) go left, the rest right.
+    # mid_line = the MEDIAN changed line (r15-M2: the first changed line
+    # put every entry in `right` for units without leading context,
+    # leaving `left` empty and the unit a false leaf); entries before it
+    # (context or earlier changes) go left, the rest right. The median
+    # changed entry itself goes RIGHT, so both halves are non-empty for
+    # any unit with >= 2 changed entries.
     changed = _changed_entries(entries)
     if len(entries) > 1 and changed:
-        mid_line = (changed[0][4] if changed[0][0] == "-"
-                    else changed[0][1])
+        med = sorted((e[4] if e[0] == "-" else e[1]) for e in changed)[
+            len(changed) // 2]
         left = [e for e in entries
-                if (e[4] if e[0] == "-" else e[1]) < mid_line]
+                if (e[4] if e[0] == "-" else e[1]) < med]
         right = [e for e in entries
-                 if (e[4] if e[0] == "-" else e[1]) >= mid_line]
+                 if (e[4] if e[0] == "-" else e[1]) >= med]
         if left and right:
             return ([_subcluster(parent, left, change_type=change_type,
                                  hunk_start=parent["hunk_start"]),
@@ -1572,17 +1618,30 @@ def mode_file_images(repo, mode, head, path, old_file=None,
             return fetch(repo_, rev, path_)
         return git_show_or_none(repo_, rev, path_)
 
+    _mb_cache: dict = {}
+
     def _merge_base(repo_, base_ref, head_):
+        # r15-m9: one subprocess (or injected call) per (repo, ref, head)
+        # per RUN, not per unit — mode_file_images is called once per
+        # unit and all units share the same merge base. The cache is a
+        # closure local, so it dies with the run (no cross-run state).
+        key = (repo_, base_ref, head_)
+        if key in _mb_cache:
+            return _mb_cache[key]
         if merge_base is not None:
-            return merge_base(repo_, base_ref, head_)
-        try:
-            r = subprocess.run(
-                ["git", "-C", repo_, "merge-base", base_ref, head_],
-                capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        out = r.stdout.strip()
-        return out.splitlines()[0] if out else None  # FIRST result (r2-m6)
+            mb = merge_base(repo_, base_ref, head_)
+        else:
+            try:
+                r = subprocess.run(
+                    ["git", "-C", repo_, "merge-base", base_ref, head_],
+                    capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                mb = None
+            else:
+                out = r.stdout.strip()
+                mb = out.splitlines()[0] if out else None  # FIRST (r2-m6)
+        _mb_cache[key] = mb
+        return mb
 
     def cached(rev):
         key = (mode, rev, path)
@@ -1955,21 +2014,41 @@ def _judge_unit(h, ask, split_unit, depth):
             if sub_fail is not None:
                 # an ordinary transport error below the split bubbles up
                 # as this chain's failure (judge() counts it once).
-                return ([leaf], 0, [], *zero, sub_fail, None)
+                # r15-m3: the leaf's reason names the TRANSPORT failure
+                # shape, not `unsplittable>cap` — the digest must say
+                # the provider call failed (and the fail-open check must
+                # see a real transport failure, not a budget leaf).
+                tleaf = _budget_leaf(sub, "transport-failure-below-split")
+                return ([tleaf], 0, [], *zero, sub_fail, None)
             if sub_shape is not None:
                 # a shape error below the split bubbles up the same way.
-                return ([leaf], 0, [], *zero, None, sub_shape)
+                sleaf = _budget_leaf(sub, "shape-failure-below-split")
+                return ([sleaf], 0, [], *zero, None, sub_shape)
             records.extend(sub_records)
+            # r15-m2: a sub that resolved to its own explicit leaf
+            # reports sub_added = 1 "because depth > 0", but the parent
+            # chain's `added = len(subs) - 1` ALREADY counted this slot;
+            # the leaf bonus would double-count it. Net growth for a
+            # leaf-resolved sub is exactly the chain's base.
             added += sub_added
             lat.extend(sub_lat)
             tok_sum += sub_tok
             tok_n += sub_n
         return (records, added, lat, tok_sum, tok_n, None, None)
     except Exception as exc:
+        # The ask itself failed with an ordinary (non-over-budget) error.
+        # r15-m4 note: this SAME handler also guards the split recursion
+        # above (a sub's ask can raise here after propagation); m4's
+        # concern was a crash escape, and this handler already converts
+        # every escape into the transport_fail channel — judge() counts
+        # it and appends its own parse_error record, never a crash.
         return ([], 0, [], *zero, repr(exc)[:300], None)
-    # sentinel dict: distinguishes "transport success" from leaf records
-    return ([{"_payload": payload, "_ms": ms, "_state": state}], 0, [ms],
-            *zero, None, None)
+    # sentinel dict: distinguishes "transport success" from leaf records;
+    # `_hunk` carries the ACTUAL unit judged (r15-M4: runtime-split subs
+    # previously reported at the parent's anchor, losing per-window
+    # anchoring — judge() reads `_hunk` when present).
+    return ([{"_payload": payload, "_ms": ms, "_state": state,
+              "_hunk": h}], 0, [ms], *zero, None, None)
 
 
 def _budget_leaf(h, reason):
@@ -2064,6 +2143,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
         pending_carriers = carriers[1:]
         payload, ms, state = carrier["_payload"], carrier["_ms"], \
             carrier["_state"]
+        rec_hunk = carrier.get("_hunk", h)  # r15-M4: actual sub-unit
         parse_failures = 0
         # Task 5 (r2-M4): the call's usage.input_tokens reaches the
         # ledger via meta.avg_input_tokens (jev payloads carry `usage`;
@@ -2090,7 +2170,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                     not math.isfinite(float(noul)):
                 raise ValueError(f"non-numeric noul: {noul!r}")
             rec = {
-                "hunk": h,
+                "hunk": rec_hunk,  # r15-M4: the actual sub-unit judged
                 "severity": score,
                 "sev_dist": sev.get("probabilities"),
                 "confidence": sev.get("confidence"),
@@ -2144,6 +2224,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
             payload = carrier["_payload"]
             ms = carrier["_ms"]
             state = carrier["_state"]
+            pc_hunk = carrier.get("_hunk", h)  # r15-M4: actual sub-unit
             usage = payload.get("usage") if isinstance(payload, dict) \
                 else None
             if isinstance(usage, dict):
@@ -2165,7 +2246,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                         not math.isfinite(float(noul)):
                     raise ValueError(f"non-numeric noul: {noul!r}")
                 findings.append({
-                    "hunk": h, "severity": score,
+                    "hunk": pc_hunk, "severity": score,  # r15-M4
                     "sev_dist": sev.get("probabilities"),
                     "confidence": sev.get("confidence"),
                     "is_real": noul,
@@ -2602,7 +2683,14 @@ def main():
             # a guard. The pass-1 `leaves` stay the run's leaf set:
             # attachment only touches `kept`, so a pass-1 leaf can
             # neither gain nor lose its record here.
-            kept, _reexp_leaves = reexpand_after_enrichment(kept, images)
+            kept, reexp_leaves = reexpand_after_enrichment(kept, images)
+            # r15-m8: pass 2 is NOT provably a no-op — a band unit that
+            # hit the depth cap in pass 1 restarts at depth 0 here and
+            # can still split (step 0 only guarantees no SPLIT caused by
+            # the context, not no split at all). Any leaf it produces is
+            # a real unjudged unit and joins the run's leaf set.
+            if reexp_leaves:
+                leaves = leaves + reexp_leaves
         n_leaf_unjudged = len(leaves)
     else:
         leaves = []
@@ -2644,7 +2732,20 @@ def main():
     fail_reason = call_errors[-1] if fail_open and call_errors else None
     if fail_open:
         findings = []
-    elif hunks:  # empty diff: nothing for the PR-level call to judge
+    else:
+        # r10-m1 INSERTION WINDOW (plan Task 4), Amended r15-B1/M1 (Opus
+        # Task-10 review): leaf records join findings BEFORE
+        # judge_pr_level/compose see the run — the digest gets its
+        # `unjudged (skipped: unsplittable>cap)` lines and a run whose
+        # every unit is a leaf can never compose to a clean "Approved"
+        # (an all-leaf diff is an incomplete review, not a pass).
+        # fail-open discards leaves with everything else (findings == []
+        # above; its verdict is forced to "Unavailable" regardless).
+        # judge() never saw them (set aside pre-judge), so they are
+        # never SENT.
+        if leaves:
+            findings = findings + leaves
+    if not fail_open and hunks:  # empty diff: nothing for PR-level to judge
         # r14-m2: ceiling-dropped units reach the digest explicitly — on
         # jev no `hunk>` records exist, so today's hunk>-only filter would
         # hide a ceiling drop from the PR-level model entirely.
@@ -2660,13 +2761,9 @@ def main():
     # never mistaken for complete ones.
     reported, jitter, verdict = compose(findings, skipped,
                                         pr_level if not fail_open else None)
-    # r10-m1 INSERTION WINDOW (plan Task 4): leaf records (unsplittable
-    # units) join findings ONLY here — after judge() returned non-None
-    # (a fail-open run's findings == [] above correctly discards them)
-    # and BEFORE judge_pr_level/compose see the run. judge() never saw
-    # them (they were set aside pre-judge), so they are never SENT.
-    if leaves and findings:
-        findings = findings + leaves
+    # r15-M1: leaves now join BEFORE judge_pr_level/compose (see the
+    # amended insertion window above); the old post-compose insert is
+    # gone. n_unjudged counts them unchanged.
     n_unjudged = sum(1 for f in findings if f.get("parse_error"))
     # Step 0′ (hunk-size investigation, 2026-10-01): a size-skipped
     # CODE-change cluster is unjudged coverage, not deliberate triage —
