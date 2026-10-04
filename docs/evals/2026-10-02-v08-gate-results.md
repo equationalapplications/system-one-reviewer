@@ -163,3 +163,27 @@ estimates; no fail-open anywhere.
   decision on #46: options are (a) accept the #46 FP as option-2's cost,
   (b) raise `BAND_ENGAGE_LINES`, (c) gate band engagement on per-window
   content heuristics. Everything else is green.
+
+## 10. Post-ruling close-out: #46 FP accepted, G-C bar amended (Kurt, 2026-10-04)
+
+Kurt reviewed the §4 regression evidence and ruled (Discord, 2026-10-04):
+
+- **The #46 bm-FP on `scripts/dev-model.js:112-220` is ACCEPTED as
+  option-2's cost.** No code change, no threshold change. The goal is a
+  quick, low-quality-but-helpful review that catches most real defects —
+  not zero false positives. Fine-tuning (e.g. a raised is_real bar for
+  band-split windows) remains a future option, deliberately not foreclosed.
+- **G-C's "≤1 reported FP major per defect-free head" bar is AMENDED by
+  Kurt's authority as product owner.** The band-window FP on #46 is a
+  deliberate product ruling, not a slipped criterion. All other G-C
+  measurements stand as recorded in §4.
+- Investigated before ruling: `dev-model.js:112-220` is hand-written
+  shell-out logic (curl/adb model push), not generated/config content, so
+  fix option 3 (per-window content gate) does not fit this failure mode;
+  option 2 (raise `BAND_ENGAGE_LINES`) is dead per §"Fix options" (it would
+  un-split importMachine.ts). Fix option 4 (second model pass) was declined
+  for now.
+
+**Effect: Task 8 closes. Branch `impl/ast-units` is landable. No re-runs
+were required — no code or threshold changed under this ruling.** Task 9
+(G-B, out-of-tree, may NEGATE the feature) is the only remaining plan task.
