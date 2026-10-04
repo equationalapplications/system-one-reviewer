@@ -343,6 +343,31 @@ def test_shape_errors_reach_fail_open(jr):
     assert len(calls) == jr.CALL_FAIL_LIMIT
 
 
+def test_shape_errors_fail_open_mid_run_after_good_unit(jr):
+    """r17-M1 (Opus round-3): the consecutive shape-error counter must
+    survive ACROSS units when one unit parses fine in between — a good
+    unit then 2 bad ones must fail open (None) at the 2nd bad call, not
+    run all N units to an incomplete verdict. (r8-M1's original
+    guarantee; the r15 parse_failures reset defeated it.)"""
+    def mk_hunk(i):
+        return {"file": "f.py", "line": i, "hunk_start": 1, "lines": ["x"],
+                "entries": [(" ", i, "x", 1)], "n_changed": 1, "header": "h",
+                "size": 1, "too_large": False}
+    calls = []
+
+    def good_then_bad(state, questions):
+        calls.append(1)
+        if len(calls) == 1:
+            return _ok_payload(), 1.0  # parses fine
+        return {"answers": {}}, 1.0  # transport OK, shape wrong
+
+    hunks = [mk_hunk(1), mk_hunk(2), mk_hunk(3), mk_hunk(4)]
+    findings, _lat, _meta = jr.judge(hunks, good_then_bad)
+    assert findings is None, \
+        "shape errors after a good unit must still fail open"
+    assert len(calls) == 3, "1 good + 2 bad = CALL_FAIL_LIMIT"
+
+
 def test_diff_ruN_separator_never_becomes_context(jr):
     """m1 (r8): after a hunk's counts are exhausted, a `diff -ruN ...`
     separator line must be ignored, not appended as fake context."""

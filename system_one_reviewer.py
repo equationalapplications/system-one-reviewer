@@ -1212,8 +1212,15 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
     # the depth cap (oversize -> false leaf; band -> judged whole) and a
     # runtime 400 burned 6 split attempts. `None` makes the caller fall
     # through to line windows / halving, as with any other no-gain cut.
+    # r17-m2 (round-3): compare CHANGED entries — context glue is
+    # deliberately partial (±4-line windows), so comparing ALL entries
+    # made the no-op check miss the common case. Key = (kind, new-line,
+    # text) so a glued-but-identical entry set compares equal.
+    def _changed_key(e):
+        return (e[0], e[1], e[2])
     if len(subs) == 1 and \
-            {id(e) for e in subs[0]["entries"]} == {id(e) for e in entries}:
+            {_changed_key(e) for e in _changed_entries(subs[0]["entries"])} \
+            == {_changed_key(e) for e in changed}:
         return None
     return subs
 
@@ -2151,7 +2158,66 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
             # limit exactly as before. An _OverBudget arrives here with
             # its explicit unjudged leaf in `records` and counts ONCE
             # toward the counter for the WHOLE chain (r3-M5).
-            findings.extend(records)
+            # r17-B1 (Opus Task-10 round-3): `records` may hold raw
+            # sentinel CARRIERS ({"_payload", ...}) from sub-units that
+            # were judged BEFORE a sibling's transport failure (r16-m2
+            # keeps them). Extending them into `findings` leaked dicts
+            # with no "hunk" key — a KeyError in _digest_label/main.
+            # PARSE each successful carrier here (same shape contract as
+            # the main path) so its real judgment survives; a carrier
+            # that does not parse becomes a parse_error record on its
+            # own sub-unit. Conversion-only was wrong: it discarded a
+            # successful judgment and could trip the all-failed check.
+            for r in records:
+                if "_payload" not in r:
+                    findings.append(r)
+                    continue
+                pl, r_ms, r_state = r["_payload"], r["_ms"], r["_state"]
+                r_hunk = r.get("_hunk", h)
+                r_usage = pl.get("usage") if isinstance(pl, dict) else None
+                if isinstance(r_usage, dict):
+                    it = r_usage.get("input_tokens")
+                    if isinstance(it, (int, float)) and \
+                            math.isfinite(float(it)):
+                        tokens_sum += float(it)
+                        tokens_n += 1
+                try:
+                    r_ans = pl["answers"]
+                    r_sev = r_ans["severity"]
+                    r_real = r_ans["is_real_issue"]
+                    r_cat = r_ans["category"]
+                    r_score = float(r_sev.get("score", 0))
+                    r_noul = r_real.get("noul")
+                    if not math.isfinite(r_score):
+                        raise ValueError(f"non-finite severity: {r_score!r}")
+                    if not isinstance(r_noul, (int, float, bool)) or \
+                            not math.isfinite(float(r_noul)):
+                        raise ValueError(f"non-numeric noul: {r_noul!r}")
+                    findings.append({
+                        "hunk": r_hunk, "severity": r_score,
+                        "sev_dist": r_sev.get("probabilities"),
+                        "confidence": r_sev.get("confidence"),
+                        "is_real": r_noul,
+                        "category": r_cat.get("choice"),
+                        "cat_dist": r_cat.get("probabilities"),
+                        "rubric": ("deletion"
+                                   if r_state["change_type"] in
+                                   ("deletion-only", "whole-file-deleted")
+                                   else "code-change"),
+                        "references_remaining":
+                            r_state.get("references_remaining"),
+                        "change_type": r_state["change_type"],
+                        "latency_ms": round(r_ms, 1),
+                    })
+                except (KeyError, TypeError, AttributeError,
+                        ValueError) as r_exc:
+                    if errors is not None:
+                        errors.append(f"bad response shape: {r_exc!r}"[:300])
+                    findings.append({"hunk": r_hunk, "parse_error": True,
+                                     "raw": pl,
+                                     "latency_ms": round(r_ms, 1),
+                                     "reason":
+                                         "shape-failure-below-split"})
             if errors is not None:
                 errors.append(transport_fail)
             failures += 1
@@ -2179,7 +2245,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                 meta = {"added_units": added_units,
                         "avg_input_tokens": None}
                 return None, latencies, meta  # fail-open signal
-            findings.append({"hunk": rec_hunk, "parse_error": True,
+            findings.append({"hunk": h, "parse_error": True,
                              "raw": None, "latency_ms": 0.0})
             continue
         if not (records and "_payload" in records[0]):
@@ -2198,7 +2264,9 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
         payload, ms, state = carrier["_payload"], carrier["_ms"], \
             carrier["_state"]
         rec_hunk = carrier.get("_hunk", h)  # r15-M4: actual sub-unit
-        parse_failures = 0
+        # (r17-M1: the parse_failures reset that stood here defeated the
+        # consecutive shape-error counter — main() resets ONLY after a
+        # successful parse, at the `parse_failures = 0` inside the try.)
         # Task 5 (r2-M4): the call's usage.input_tokens reaches the
         # ledger via meta.avg_input_tokens (jev payloads carry `usage`;
         # laya's do not — None, never fabricated).
@@ -2340,6 +2408,10 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
     # or shape failure is the opposite — it must NOT suppress fail-open
     # (a run whose every call failed must read "Unavailable", not
     # "incomplete"), so those reasons are excluded from the skip check.
+    # r17-B1 (round-3): records converted FROM carriers at a below-split
+    # transport failure carry no reason, so the same exclusion needs a
+    # marker — those conversions carry reason
+    # "transport-failure-below-split" too (set at the conversion site).
     _failure_reasons = ("transport-failure-below-split",
                         "shape-failure-below-split")
     if kept_hunks and not any(not f.get("parse_error") for f in findings) \

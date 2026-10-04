@@ -269,6 +269,44 @@ def test_runtime_400_max_tokens_splits(jr):
     assert len(asks) == 3, "1 parent ask + 2 leaf asks (real retry)"
 
 
+def test_runtime_split_then_transport_failure_keeps_shape():
+    """r17-B1 (Opus round-3): a runtime split where sub 1 succeeds and
+    sub 2 then hits an ordinary transport error must NOT leak raw
+    sentinel carriers into findings — every record carries a 'hunk' key
+    (the chain's transport_fail still feeds the consecutive counter)."""
+    import system_one_reviewer as sor
+
+    calls = []
+
+    def ok_then_dead(state, questions):
+        calls.append(state)
+        if len(calls) == 1:
+            raise sor._OverBudget("HTTP 400 max_tokens_exceeded")
+        if len(calls) == 2:
+            return _ok_payload(), 1.0  # sub 1 succeeds
+        raise RuntimeError("sub 2 timeout")  # sub 2 transport failure
+
+    parent = _hunk(1)
+    sub_a = dict(_hunk(2), file="f.py")
+    sub_b = dict(_hunk(3), file="f.py")
+
+    def split_unit(unit):
+        return [sub_a, sub_b]
+
+    errors = []
+    findings, _lat, _meta = sor.judge(
+        [dict(parent, entries=[(" ", 1, "x", 1), (" ", 2, "x", 2)],
+              n_changed=2)],
+        ok_then_dead, errors=errors, split_unit=split_unit)
+    assert findings is not None
+    for f in findings:
+        assert "hunk" in f, f"carrier leaked into findings: {f!r}"
+    # sub 1's success is a real finding; sub 2's failure is a leaf/record
+    judged = [f for f in findings if not f.get("parse_error")]
+    assert len(judged) == 1, "sub 1's successful judgment survives"
+    assert errors and "sub 2 timeout" in errors[-1]
+
+
 def test_budget_termination_bounded(jr):
     """r2-m2: the recursion helper terminates on synthetic multi-unit
     input where every attempt still over-budgets — terminates, marks
