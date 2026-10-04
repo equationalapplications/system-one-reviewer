@@ -119,6 +119,20 @@ def test_enrichment_present_for_python(jr):
     # r20-M1: the context window is the INNERMOST enclosing symbol (the
     # method), not the class header — the old head-first pick showed
     # `class C:` + attributes and never the changed method.
+    # r22-m5: ExceptHandler names never enter the chain — `except E as
+    # err:` wrapping a nested def gives 'f.helper', not 'f.err.helper'.
+    post2 = ("def f():\n"
+             "    try:\n"
+             "        pass\n"
+             "    except ValueError as err:\n"
+             "        def helper():\n"
+             "            return 1\n"
+             "        return helper()\n")
+    unit2 = {"file": "m2.py", "line": 6, "hunk_start": 1,
+             "entries": [("+", 6, "            return 1", 1)],
+             "change_type": "code-change"}
+    units2 = jr.attach_ast_context([unit2], lambda p, i: (None, post2))
+    assert units2[0]["ast_context"]["enclosing"] == "f.helper"
     # non-Python text: no usable symbol table -> NO key (not None-valued)
     txt = {"file": "r.txt", "line": 1, "hunk_start": 1,
            "entries": [("+", 1, "hello", 1)], "change_type": "code-change"}

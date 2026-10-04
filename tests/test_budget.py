@@ -307,6 +307,61 @@ def test_runtime_split_then_transport_failure_keeps_shape():
     assert errors and "sub 2 timeout" in errors[-1]
 
 
+def test_nested_split_transport_failure_two_level_accounting():
+    """r21-M1 (Opus round-7): a transport failure TWO splits deep —
+    parent U splits into [A, B]; A splits into [A1, A2]; A1 judged,
+    A2 transport-fails. The chain must report exactly 3 units (A1
+    judged + A2 leaf + B leaf), added_units == 2, and A1's latency
+    must survive — no overlapping leaf for A, no lost counts."""
+    import system_one_reviewer as sor
+
+    calls = []
+
+    def transport(state, questions):
+        calls.append(state)
+        if len(calls) == 1:
+            raise sor._OverBudget("HTTP 400")       # U splits -> A, B
+        if len(calls) == 2:
+            raise sor._OverBudget("HTTP 400")       # A splits -> A1, A2
+        if len(calls) == 3:
+            return _ok_payload(), 2.5               # A1 judged
+        raise RuntimeError("A2 transport down")     # A2 fails
+
+    parent = _hunk(1)
+    sub_a = dict(_hunk(2), file="f.py", entries=[(" ", 1, "x", 1),
+                                                 ("+", 2, "y", 1)],
+                 n_changed=1)
+    sub_b = dict(_hunk(3), file="f.py", entries=[(" ", 3, "z", 1),
+                                                 ("+", 4, "w", 1)],
+                 n_changed=1)
+
+    def split_unit(unit):
+        if unit is parent:
+            return [sub_a, sub_b]
+        a1 = dict(_hunk(4), file="f.py")
+        a2 = dict(_hunk(5), file="f.py")
+        return [a1, a2]
+
+    findings, lat, meta = sor.judge(
+        [dict(parent, entries=[(" ", 1, "x", 1), ("+", 2, "y", 1),
+                               (" ", 3, "z", 1), ("+", 4, "w", 1)],
+              n_changed=2)],
+        transport, split_unit=split_unit)
+    assert findings is not None
+    judged = [f for f in findings if not f.get("parse_error")]
+    leaves = [f for f in findings if f.get("parse_error")]
+    assert len(judged) == 1, "A1's judgment survives"
+    assert len(leaves) == 2, "A2 and B leaves — NO leaf for A itself"
+    for leaf in leaves:
+        assert leaf["hunk"] is not sub_a, (
+            "overlapping leaf for the whole failing sub A")
+    # 3 units total (A1, A2, B) replacing parent + A's nested pair:
+    # base len(subs)-1 = 1, plus A's own chain delta 1 = 2.
+    assert meta["added_units"] == 2, (
+        f"nested growth kept: got {meta['added_units']}")
+    assert 2.5 in lat, "A1's latency merged into the chain's latencies"
+
+
 def test_runtime_split_leaf_first_never_leaks_carriers():
     """r18-B1 (Opus round-4): a split chain whose FIRST sub resolves to
     a leaf and whose SECOND sub is judged (leaf-first record order) must

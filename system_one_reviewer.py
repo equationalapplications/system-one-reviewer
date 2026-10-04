@@ -894,7 +894,14 @@ def _walk_with_parents(tree):
     while stack:
         node, chain = stack.pop()
         name = getattr(node, "name", None)
-        here = chain + [name] if isinstance(name, str) else chain
+        # r21-m5 (round-7): only real symbols extend the chain —
+        # ExceptHandler/alias/MatchAs also carry str names and produced
+        # chains like 'err.helper'.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)) and isinstance(name, str):
+            here = chain + [name]
+        else:
+            here = chain
         yield node, here
         for child in ast.iter_child_nodes(node):
             stack.append((child, here))
@@ -2147,7 +2154,7 @@ def _judge_unit(h, ask, split_unit, depth):
              sub_fail, sub_shape) = _judge_unit(sub, ask, split_unit,
                                                 depth + 1)
             if sub_fail is not None:
-                # an ordinary transport error below the split bubbles up
+                # ordinary transport error below the split bubbles up
                 # as this chain's failure (judge() counts it once).
                 # r15-m3: the leaf's reason names the TRANSPORT failure
                 # shape, not `unsplittable>cap` — the digest must say
@@ -2158,41 +2165,65 @@ def _judge_unit(h, ask, split_unit, depth):
                 # failure strictly more destructive than the bug it
                 # guards against. The chain still reports transport_fail
                 # exactly once, so the consecutive-failure accounting is
-                # unchanged; the leaf record is dropped (the failure
-                # itself feeds judge()'s parse_error record).
+                # unchanged.
+                # r21-M1 (round-7): the failing sub is a NESTED SPLIT
+                # that already failed below itself — its sub_records
+                # carry BOTH its judged carriers AND its own leaves for
+                # its unjudged parts; extend ALL of them (extending
+                # carriers only produced an overlapping leaf for the
+                # whole failing sub + lost its latency/token counts).
+                # Its growth (sub_added) and lat/tok merge too, and the
+                # chain's own leaves cover only the never-tried
+                # siblings subs[failed_i+1:].
                 if sub_records:
-                    records.extend(r for r in sub_records
-                                   if "_payload" in r)
-                # r19-m3 (round-5): the failing sub AND every later
-                # (untried) sibling get an explicit leaf record — the
-                # run's coverage accounting must see them, not silently
-                # drop them. Growth stays the chain base `len(subs)-1`
-                # (the parent slot is replaced by the records we emit:
-                # judged carriers + leaves for the rest).
+                    records.extend(sub_records)
+                else:
+                    # r21-M1: the failing sub's own failure carried NO
+                    # records of its own (an ordinary transport error on
+                    # an unsplit sub) — it needs its explicit leaf here,
+                    # or its slot vanishes from coverage (a nested
+                    # sub's leaves only exist when IT had split).
+                    records.append(_budget_leaf(
+                        sub, "transport-failure-below-split"))
+                sub_added_list.append(sub_added)
+                lat.extend(sub_lat)
+                tok_sum += sub_tok
+                tok_n += sub_n
+                # r19-m3 (round-5): every later (untried) sibling gets
+                # an explicit leaf record — the run's coverage
+                # accounting must see them, not silently drop them.
+                # r21-M1: this loop covers ONLY later siblings — the
+                # failing sub is covered by its own records/leaf above
+                # (the old `subs[failed_i:]` overlapped the carriers we
+                # just kept).
                 failed_i = subs.index(sub)
-                for s in subs[failed_i:]:
+                for s in subs[failed_i + 1:]:
                     records.append(_budget_leaf(
                         s, "transport-failure-below-split"))
-                # r20-M3 (round-6): the nested deltas (sub_added) are real
-                # units already created below the split — zeroing them
-                # under-reported the growth and broke the depth-cap
-                # termination math whenever sub 1 split before sub 2
-                # failed. Sum the nested deltas into the chain base.
                 return (records, (len(subs) - 1) + sum(sub_added_list),
                         lat, tok_sum, tok_n, sub_fail, None)
             if sub_shape is not None:
-                # a shape error below the split bubbles up the same way.
-                # r16-m2: keep already-judged siblings here too.
+                # DEAD PATH today (no _judge_unit return creates a fresh
+                # shape_fail — every sub_shape propagates from this very
+                # branch). Kept as defensive coverage; r22 review: the
+                # body MIRRORS r21-M1's transport branch so if a future
+                # path ever sets shape_fail, accounting stays correct.
                 if sub_records:
-                    records.extend(r for r in sub_records
-                                   if "_payload" in r)
-                sleaf = _budget_leaf(sub, "shape-failure-below-split")
+                    records.extend(sub_records)
+                else:
+                    records.append(_budget_leaf(
+                        sub, "shape-failure-below-split"))
+                sub_added_list.append(sub_added)
+                lat.extend(sub_lat)
+                tok_sum += sub_tok
+                tok_n += sub_n
                 failed_i = subs.index(sub)
                 for s in subs[failed_i + 1:]:
                     records.append(_budget_leaf(
                         s, "shape-failure-below-split"))
-                return (records + [sleaf], len(subs) - 1, lat, tok_sum,
-                        tok_n, None, sub_shape)
+                return (records,
+                        (len(subs) - 1) + sum(sub_added_list),
+                        lat, tok_sum, tok_n, None, sub_shape)
             records.extend(sub_records)
             sub_added_list.append(
                 0 if (sub_records and len(sub_records) == 1
