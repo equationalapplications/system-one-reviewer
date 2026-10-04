@@ -190,6 +190,55 @@ that sweep — see
 [docs/evals/2026-09-28-field-evals-cj-prs.md](docs/evals/2026-09-28-field-evals-cj-prs.md)
 for the full evidence and the open v0.3 questions.
 
+## AST-aware batching and the budget guard (v08)
+
+Oversize clusters are no longer skipped by a line count. Under the
+default `jev` provider, the pre-judge pipeline is:
+
+1. **Route** — deterministic triage still skips generated files, docs,
+   lockfiles, and data blobs. Under `laya` the old `hunk>120` skip is
+   kept; `jev` never size-skips.
+2. **Expand** — a cluster whose serialized state exceeds the 28k-token
+   soft cap is split on Python AST boundaries (stdlib `ast`);
+   TypeScript/JavaScript and other languages use tree-sitter when the
+   optional wheel is installed, falling back to line windows otherwise.
+   Splitting recurses (depth-capped) until every unit fits; a unit that
+   cannot fit is marked an explicit unjudged leaf, never silently
+   dropped.
+3. **Enrich** — each unit can carry an `ast_context`: the enclosing
+   symbol chain and a bounded source window from the file images,
+   deduplicated per call. Disable with `--no-enrichment` (measurement
+   only; the default is on).
+4. **Re-estimate and re-expand** — enrichment can push a unit over the
+   cap; in that case the context is dropped and the unit is re-checked
+   (no split is ever caused by enrichment).
+5. **Cap the run** — `--max-hunks` now means max UNITS per run (default
+   40), applied after expansion in first-come-across-files order. The
+   old behavior of dropping whole oversize files is gone.
+
+The send gate is token-based: a payload whose state plus longest
+question exceeds the 32k budget is split before sending; a 400
+`max_tokens_exceeded` at runtime triggers a halve-and-retry through the
+same splitter, terminating in bounded calls. Whole-file deletions stay
+deliberately unsplit (no post-image to parse).
+
+Every metrics record stamps `transport`, `wire_format`, `enrichment`,
+and `PACKAGING_VERSION`, so replay comparisons are only ever
+like-for-like. Evidence: fixture stability (G-A), 5-clean-PR field
+regression (G-C), replay-equivalence vs the v0.3b control (G-D), and
+the threshold re-sweep — see
+[docs/evals/2026-10-02-v08-gate-results.md](docs/evals/2026-10-02-v08-gate-results.md).
+The per-file judgment-batching gate (G-B) FAILED (batching
+systematically lowers scores and flipped the defect-positive PR's
+verdict to Approved) — per-cluster transport stays;
+[docs/evals/2026-10-02-gb-batching-gate.md](docs/evals/2026-10-02-gb-batching-gate.md).
+
+tree-sitter is an OPTIONAL dependency (`pip install
+tree-sitter-language-pack`): without it, non-Python oversize clusters
+use deterministic line windows; with it, symbol-boundary units. The
+import is lazy and loader-injected; the tool still runs stdlib-only by
+default.
+
 ## Status
 
 Experimental, built in public. Verdicts are advisory. The evaluation
