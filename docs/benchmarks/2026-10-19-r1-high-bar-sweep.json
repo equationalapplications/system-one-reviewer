@@ -1,0 +1,908 @@
+{
+ "window_fps": [
+  {
+   "file": "src/data-plane/migrate-tenant.ts",
+   "line": 49,
+   "is_real": 0.73,
+   "sev": 2.5,
+   "label": "wf:SynapseTree:59:fix-delta-nits",
+   "repo": "SynapseTree"
+  },
+  {
+   "file": "src/data-plane/migrate-tenant.ts",
+   "line": 93,
+   "is_real": 0.75,
+   "sev": 1.75,
+   "label": "wf:SynapseTree:59:fix-delta-nits",
+   "repo": "SynapseTree"
+  },
+  {
+   "file": "src/data-plane/migrate-tenant.ts",
+   "line": 49,
+   "is_real": 0.75,
+   "sev": 2.46,
+   "label": "wf:SynapseTree:59:fix-delta-nits2",
+   "repo": "SynapseTree"
+  },
+  {
+   "file": "src/data-plane/migrate-tenant.ts",
+   "line": 93,
+   "is_real": 0.75,
+   "sev": 1.71,
+   "label": "wf:SynapseTree:59:fix-delta-nits2",
+   "repo": "SynapseTree"
+  },
+  {
+   "file": "src/data-plane/migrate-tenant.ts",
+   "line": 49,
+   "is_real": 0.74,
+   "sev": 2.47,
+   "label": "wf:SynapseTree:59:fix-delta-nits3",
+   "repo": "SynapseTree"
+  },
+  {
+   "file": "src/data-plane/migrate-tenant.ts",
+   "line": 93,
+   "is_real": 0.76,
+   "sev": 1.77,
+   "label": "wf:SynapseTree:59:fix-delta-nits3",
+   "repo": "SynapseTree"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 395,
+   "is_real": 0.58,
+   "sev": 1.86,
+   "label": "byok-task-A1",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/infra.test.ts",
+   "line": 316,
+   "is_real": 0.56,
+   "sev": 1.54,
+   "label": "byok-task-A1",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 513,
+   "is_real": 0.58,
+   "sev": 1.5,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 516,
+   "is_real": 0.6,
+   "sev": 1.72,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 867,
+   "is_real": 0.56,
+   "sev": 1.02,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 873,
+   "is_real": 0.6,
+   "sev": 1.23,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 897,
+   "is_real": 0.52,
+   "sev": 1.69,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 907,
+   "is_real": 0.57,
+   "sev": 1.01,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 913,
+   "is_real": 0.65,
+   "sev": 1.14,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 205,
+   "is_real": 0.55,
+   "sev": 1.49,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 210,
+   "is_real": 0.65,
+   "sev": 2.07,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 245,
+   "is_real": 0.56,
+   "sev": 1.14,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 256,
+   "is_real": 0.62,
+   "sev": 2.22,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-registration.test.ts",
+   "line": 113,
+   "is_real": 0.6,
+   "sev": 1.68,
+   "label": "byok-task-A4",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 45,
+   "is_real": 0.65,
+   "sev": 1.81,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 81,
+   "is_real": 0.56,
+   "sev": 1.41,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 191,
+   "is_real": 0.57,
+   "sev": 1.22,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 375,
+   "is_real": 0.58,
+   "sev": 1.16,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-registration.ts",
+   "line": 383,
+   "is_real": 0.71,
+   "sev": 2.06,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-registration.test.ts",
+   "line": 244,
+   "is_real": 0.52,
+   "sev": 1.8,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-registration.test.ts",
+   "line": 333,
+   "is_real": 0.66,
+   "sev": 1.42,
+   "label": "byok-task-A5",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 743,
+   "is_real": 0.73,
+   "sev": 1.56,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 762,
+   "is_real": 0.59,
+   "sev": 1.32,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 767,
+   "is_real": 0.66,
+   "sev": 2.15,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 780,
+   "is_real": 0.67,
+   "sev": 1.65,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 784,
+   "is_real": 0.57,
+   "sev": 1.35,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 786,
+   "is_real": 0.65,
+   "sev": 1.95,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 839,
+   "is_real": 0.72,
+   "sev": 1.3,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "infra/stack.ts",
+   "line": 844,
+   "is_real": 0.72,
+   "sev": 1.19,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 154,
+   "is_real": 0.66,
+   "sev": 1.36,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 174,
+   "is_real": 0.61,
+   "sev": 1.9,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-envelope.ts",
+   "line": 178,
+   "is_real": 0.6,
+   "sev": 1.36,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-tables.ts",
+   "line": 56,
+   "is_real": 0.6,
+   "sev": 1.68,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "src/control-plane/custody-tables.ts",
+   "line": 71,
+   "is_real": 0.62,
+   "sev": 1.44,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 240,
+   "is_real": 0.56,
+   "sev": 1.68,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 245,
+   "is_real": 0.57,
+   "sev": 1.6,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 254,
+   "is_real": 0.56,
+   "sev": 1.06,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 258,
+   "is_real": 0.58,
+   "sev": 1.81,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 264,
+   "is_real": 0.57,
+   "sev": 1.6,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 276,
+   "is_real": 0.54,
+   "sev": 1.4,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 279,
+   "is_real": 0.58,
+   "sev": 1.69,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  },
+  {
+   "file": "tests/unit/custody-stack.test.ts",
+   "line": 382,
+   "is_real": 0.58,
+   "sev": 1.97,
+   "label": "byok-task-A6fix",
+   "repo": "SynapseTree-login"
+  }
+ ],
+ "tp_instances": [
+  0.72,
+  0.55,
+  0.93,
+  0.82,
+  0.63,
+  0.71,
+  0.56,
+  0.93,
+  0.81,
+  0.64,
+  0.7,
+  0.54,
+  0.93,
+  0.79,
+  0.65,
+  0.69,
+  0.54,
+  0.93,
+  0.82,
+  0.65,
+  0.73,
+  0.58,
+  0.93,
+  0.83,
+  0.65,
+  0.71,
+  0.58,
+  0.94,
+  0.61,
+  0.63,
+  0.73,
+  0.55,
+  0.93,
+  0.62,
+  0.62,
+  0.69,
+  0.56,
+  0.93,
+  0.63,
+  0.66,
+  0.7,
+  0.57,
+  0.94,
+  0.77,
+  0.62,
+  0.71,
+  0.57,
+  0.93,
+  0.74,
+  0.66,
+  0.71,
+  0.56,
+  0.94,
+  0.74,
+  0.61,
+  0.72,
+  0.57,
+  0.93,
+  0.75,
+  0.63,
+  0.7,
+  0.58,
+  0.93,
+  0.76,
+  0.61,
+  0.7,
+  0.57,
+  0.94,
+  0.75,
+  0.68,
+  0.7,
+  0.56,
+  0.93,
+  0.75,
+  0.62,
+  0.71,
+  0.59,
+  0.93,
+  0.72,
+  0.64,
+  0.74,
+  0.56,
+  0.94,
+  0.74,
+  0.65,
+  0.69,
+  0.55,
+  0.93,
+  0.72,
+  0.63,
+  0.71,
+  0.54,
+  0.93,
+  0.7,
+  0.65,
+  0.71,
+  0.56,
+  0.93,
+  0.73,
+  0.63,
+  0.72,
+  0.56,
+  0.93,
+  0.7,
+  0.66,
+  0.72,
+  0.56,
+  0.93,
+  0.71,
+  0.68,
+  0.69,
+  0.56,
+  0.94,
+  0.72,
+  0.63,
+  0.93,
+  0.6,
+  0.72,
+  0.76,
+  0.65,
+  0.93,
+  0.61,
+  0.71,
+  0.78,
+  0.67,
+  0.94,
+  0.63,
+  0.73,
+  0.78,
+  0.69,
+  0.94,
+  0.61,
+  0.74,
+  0.79,
+  0.65,
+  0.95,
+  0.65,
+  0.72,
+  0.76,
+  0.66,
+  0.94,
+  0.6,
+  0.73,
+  0.76,
+  0.66,
+  0.94,
+  0.63,
+  0.72,
+  0.78,
+  0.66,
+  0.94,
+  0.62,
+  0.75,
+  0.76,
+  0.68,
+  0.94,
+  0.61,
+  0.73,
+  0.78,
+  0.68,
+  0.94,
+  0.61,
+  0.7,
+  0.77,
+  0.66,
+  0.94,
+  0.57,
+  0.73,
+  0.78,
+  0.63,
+  0.94,
+  0.6,
+  0.72,
+  0.77,
+  0.64,
+  0.94,
+  0.62,
+  0.71,
+  0.76,
+  0.67,
+  0.94,
+  0.61,
+  0.73,
+  0.77,
+  0.67,
+  0.94,
+  0.61,
+  0.7,
+  0.78,
+  0.69,
+  0.93,
+  0.59,
+  0.74,
+  0.77,
+  0.72,
+  0.94,
+  0.63,
+  0.73,
+  0.77,
+  0.64,
+  0.94,
+  0.59,
+  0.74,
+  0.77,
+  0.64
+ ],
+ "per_run_tps": {
+  "v02-r3-baseline-1 09-27T19:58": [
+   0.72,
+   0.55,
+   0.93,
+   0.82,
+   0.63
+  ],
+  "v02-r3-baseline-2 09-27T19:58": [
+   0.71,
+   0.56,
+   0.93,
+   0.81,
+   0.64
+  ],
+  "v02-r3-baseline-3 09-27T19:58": [
+   0.7,
+   0.54,
+   0.93,
+   0.79,
+   0.65
+  ],
+  "v03-branch-baseline-1 09-28T03:19": [
+   0.69,
+   0.54,
+   0.93,
+   0.82,
+   0.65
+  ],
+  "v03-branch-baseline-3 09-28T03:20": [
+   0.73,
+   0.58,
+   0.93,
+   0.83,
+   0.65
+  ],
+  "v03-r1-baseline-1 09-28T03:25": [
+   0.71,
+   0.58,
+   0.94,
+   0.61,
+   0.63
+  ],
+  "v03-r1-baseline-2 09-28T03:25": [
+   0.73,
+   0.55,
+   0.93,
+   0.62,
+   0.62
+  ],
+  "v03-r1-baseline-3 09-28T03:25": [
+   0.69,
+   0.56,
+   0.93,
+   0.63,
+   0.66
+  ],
+  "v03b-pos-1 09-28T04:08": [
+   0.72,
+   0.57,
+   0.93,
+   0.75,
+   0.63
+  ],
+  "v03b-pos-2 09-28T04:08": [
+   0.7,
+   0.58,
+   0.93,
+   0.76,
+   0.61
+  ],
+  "v03b-pos-3 09-28T04:08": [
+   0.7,
+   0.57,
+   0.94,
+   0.75,
+   0.68
+  ],
+  "v03b-pos2-1 09-28T04:16": [
+   0.7,
+   0.56,
+   0.93,
+   0.75,
+   0.62
+  ],
+  "v03b-pos2-2 09-28T04:21": [
+   0.71,
+   0.59,
+   0.93,
+   0.72,
+   0.64
+  ],
+  "v03b-pos2-3 09-28T04:21": [
+   0.74,
+   0.56,
+   0.94,
+   0.74,
+   0.65
+  ],
+  "v03b-pos2-1 09-28T04:25": [
+   0.69,
+   0.55,
+   0.93,
+   0.72,
+   0.63
+  ],
+  "v06-postmerge-test-1 09-29T15:31": [
+   0.71,
+   0.54,
+   0.93,
+   0.7,
+   0.65
+  ],
+  "v06-postmerge-test-2 09-29T15:37": [
+   0.71,
+   0.56,
+   0.93,
+   0.73,
+   0.63
+  ],
+  "conv-thesis-pos-1 09-29T16:30": [
+   0.72,
+   0.56,
+   0.93,
+   0.7,
+   0.66
+  ],
+  "conv-thesis-pos-2 09-29T16:30": [
+   0.72,
+   0.56,
+   0.93,
+   0.71,
+   0.68
+  ],
+  "conv-thesis-pos-3 09-29T16:30": [
+   0.69,
+   0.56,
+   0.94,
+   0.72,
+   0.63
+  ],
+  "task8-ga-pos-1 10-03T02:49": [
+   0.94,
+   0.61,
+   0.74,
+   0.79,
+   0.65
+  ],
+  "task8-ga-pos-2 10-03T02:49": [
+   0.95,
+   0.65,
+   0.72,
+   0.76,
+   0.66
+  ],
+  "task8-ga-pos-3 10-03T02:49": [
+   0.94,
+   0.6,
+   0.73,
+   0.76,
+   0.66
+  ],
+  "t10fix-pos-1 10-04T12:33": [
+   0.94,
+   0.63,
+   0.72,
+   0.78,
+   0.66
+  ],
+  "t10fix-pos-2 10-04T12:33": [
+   0.94,
+   0.62,
+   0.75,
+   0.76,
+   0.68
+  ],
+  "t10fix-pos-3 10-04T12:33": [
+   0.94,
+   0.61,
+   0.73,
+   0.78,
+   0.68
+  ],
+  "t10r2-pos-1 10-04T12:47": [
+   0.94,
+   0.61,
+   0.7,
+   0.77,
+   0.66
+  ],
+  "t10r2-pos-2 10-04T12:47": [
+   0.94,
+   0.57,
+   0.73,
+   0.78,
+   0.63
+  ],
+  "t10r2-pos-3 10-04T12:47": [
+   0.94,
+   0.6,
+   0.72,
+   0.77,
+   0.64
+  ],
+  "t10r4-pos-1 10-04T13:03": [
+   0.94,
+   0.62,
+   0.71,
+   0.76,
+   0.67
+  ],
+  "t10r4-pos-2 10-04T13:03": [
+   0.94,
+   0.61,
+   0.73,
+   0.77,
+   0.67
+  ],
+  "t10r4-pos-3 10-04T13:03": [
+   0.94,
+   0.61,
+   0.7,
+   0.78,
+   0.69
+  ],
+  "t10r5-pos-1 10-04T13:09": [
+   0.93,
+   0.59,
+   0.74,
+   0.77,
+   0.72
+  ],
+  "t10r5-pos-2 10-04T13:09": [
+   0.94,
+   0.63,
+   0.73,
+   0.77,
+   0.64
+  ],
+  "t10r5-pos-3 10-04T13:09": [
+   0.94,
+   0.59,
+   0.74,
+   0.77,
+   0.64
+  ]
+ },
+ "sweep": {
+  "0.6": [
+   26,
+   179,
+   12
+  ],
+  "0.7": [
+   10,
+   117,
+   0
+  ],
+  "0.73": [
+   7,
+   86,
+   0
+  ],
+  "0.74": [
+   5,
+   77,
+   0
+  ],
+  "0.75": [
+   4,
+   70,
+   0
+  ],
+  "0.8": [
+   0,
+   45,
+   0
+  ],
+  "0.85": [
+   0,
+   41,
+   0
+  ],
+  "0.9": [
+   0,
+   41,
+   0
+  ],
+  "0.95": [
+   0,
+   1,
+   0
+  ]
+ },
+ "summary": {
+  "date": "2026-10-19",
+  "question": "Does a is_real threshold bar separate the 48 adjudicated window FPs (Oct 15-19 fix-window runs) from the 205 fixture TP instances (41 5/5 golden records) ?",
+  "fp_max_is_real": 0.76,
+  "result": {
+   "bar_0.75": {
+    "fps_surviving": 4,
+    "tp_instances_surviving": 70,
+    "runs_keeping_5of5": 0
+   },
+   "bar_0.80": {
+    "fps_surviving": 0,
+    "tp_instances_surviving": 45,
+    "runs_keeping_5of5": 0
+   }
+  },
+  "finding": "Zero-FP zone exists at bar >= 0.80 (0 FPs, ~22% of TP instances), but NO bar preserves full 5/5 per-run fixture recall. The generic question can be a zero-FP reflex at 0.80+, not a full-recall reviewer.",
+  "model_calls": 0
+ }
+}
