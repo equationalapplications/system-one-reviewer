@@ -1015,9 +1015,10 @@ def attach_ast_context(units, images):
     return out
 
 
-def _subcluster(parent, entries, change_type=None, hunk_start=None):
+def _subcluster(parent, entries, change_type=None, hunk_start=None, cut=None):
     """Assemble one sub-cluster record from `entries`, sharing the parent's
-    identity (D8) and anchoring via the SHARED anchor chain."""
+    identity (D8) and anchoring via the SHARED anchor chain. E1: cut field
+    marks which cutter produced this unit (default: inferred from parent)."""
     anchor = _cluster_anchor(entries, 0, len(entries),
                              hunk_start if hunk_start is not None
                              else parent["hunk_start"])
@@ -1032,7 +1033,10 @@ def _subcluster(parent, entries, change_type=None, hunk_start=None):
             lines.append("    - " + t)
         else:
             lines.append(f"{n}:   {t}")
-    return {
+    # E1: determine cut type if not explicitly provided
+    if cut is None:
+        cut = "ast-units" if parent.get("parent_cluster") is not None else "hunk"
+    unit = {
         "file": parent["file"],
         "line": anchor,
         "line_start": min(span), "line_end": max(span),
@@ -1047,7 +1051,9 @@ def _subcluster(parent, entries, change_type=None, hunk_start=None):
         "change_type": change_type or parent.get("change_type",
                                                  "code-change"),
         "parent_cluster": parent,
+        "cut": cut,  # E1: wire_format tracking
     }
+    return unit
 
 
 def _changed_entries(entries):
@@ -1487,15 +1493,34 @@ def _unit_band(unit):
     return hi - lo + 1 > BAND_ENGAGE_LINES
 
 
+def get_unit_cut_type(unit):
+    """E1: determine which cutter produced this unit.
+
+    Heuristic: parent_cluster absence/presence indicates cutting path.
+    In v0.9: hunk (no parent), ast-units (parent_cluster set, Python).
+    Future: ts-units (parent_cluster set, TS/JS), sites (marked via cut field).
+    Returns a value from WIRE_FORMAT_ENUM.
+    """
+    cut = unit.get("cut")
+    if cut and cut in WIRE_FORMAT_ENUM:
+        return cut
+    # Fallback heuristic for backward compat:
+    if unit.get("parent_cluster") is not None:
+        return "ast-units"
+    return "hunk"
+
+
 def stamp_wire_format(units):
-    """D7 (plan Task 7): the run's wire_format stamp — `ast-units-v1` when
-    ANY judgeable unit CAME FROM AST (carries its parent cluster; the key
-    is absent on whole parents and only ever set by the Tasks 2/3
-    cutters), else `hunk_state-v1` (the pre-AST shape). Deterministic on
-    the post-expansion unit list; an empty run stamps the v1 baseline."""
-    if any(u.get("parent_cluster") is not None for u in units):
-        return "ast-units-v1"
-    return "hunk_state-v1"
+    """E1: the run's wire_format stamp — highest-precedence cutting path
+    actually used. With wire_format and per-unit `cut` field, the D7
+    like-for-like comparison contract is enforceable: wheels-present (ast-units)
+    vs wheels-absent (line-window) runs are distinguishable."""
+    if not units:
+        return "hunk"
+    cuts = [get_unit_cut_type(u) for u in units]
+    # Return max precedence
+    max_cut = max(cuts, key=lambda c: WIRE_FORMAT_PRECEDENCE.get(c, -1))
+    return max_cut
 
 
 def _split_once(unit, images):
@@ -2367,6 +2392,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                             r_state.get("references_remaining"),
                         "change_type": r_state["change_type"],
                         "latency_ms": round(r_ms, 1),
+                        "cut": r_hunk.get("cut"),  # E1: wire_format per-unit tracking
                     })
                 except (KeyError, TypeError, AttributeError,
                         ValueError) as r_exc:
@@ -2376,7 +2402,8 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                                      "raw": pl,
                                      "latency_ms": round(r_ms, 1),
                                      "reason":
-                                         "shape-failure-below-split"})
+                                         "shape-failure-below-split",
+                                     "cut": r_hunk.get("cut")})
             if errors is not None:
                 errors.append(transport_fail)
             failures += 1
@@ -2390,7 +2417,8 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
             # unless the unit already carries its own explicit leaf.
             if not records:
                 findings.append({"hunk": h, "parse_error": True,
-                                 "raw": None, "latency_ms": 0.0})
+                                 "raw": None, "latency_ms": 0.0,
+                                 "cut": h.get("cut")})
             continue
         # transport success resets the shared counter BEFORE parsing
         # starts (m3 (r11) semantics preserved); r19-m4: the reset moved
@@ -2406,7 +2434,8 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                         "avg_input_tokens": None}
                 return None, latencies, meta  # fail-open signal
             findings.append({"hunk": h, "parse_error": True,
-                             "raw": None, "latency_ms": 0.0})
+                             "raw": None, "latency_ms": 0.0,
+                             "cut": h.get("cut")})
             continue
         # r18-B1 (Opus Task-10 round-4): the old `records[0]` shortcut
         # leaked carriers whenever a LEAF came FIRST in the split order
@@ -2477,6 +2506,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                 "references_remaining": state.get("references_remaining"),
                 "change_type": state["change_type"],
                 "latency_ms": round(ms, 1),
+                "cut": rec_hunk.get("cut"),  # E1: wire_format per-unit tracking
             }
             findings.append(rec)
             parse_failures = 0
@@ -2506,7 +2536,8 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                         "avg_input_tokens": None}
                 return None, latencies, meta  # fail-open signal
             findings.append({"hunk": rec_hunk, "parse_error": True,
-                             "raw": payload, "latency_ms": round(ms, 1)})
+                             "raw": payload, "latency_ms": round(ms, 1),
+                             "cut": rec_hunk.get("cut")})
         # remaining carriers from this unit's runtime split parse with
         # the same shape contract (usage extraction + answers parsing).
         for carrier in pending_carriers:
@@ -2549,6 +2580,7 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                         state.get("references_remaining"),
                     "change_type": state["change_type"],
                     "latency_ms": round(ms, 1),
+                    "cut": pc_hunk.get("cut"),  # E1: wire_format per-unit tracking
                 })
                 parse_failures = 0
             except (KeyError, TypeError, AttributeError, ValueError) as exc:
@@ -2563,7 +2595,8 @@ def judge(hunks, ask, errors=None, *, split_unit=None):
                     return None, latencies, meta  # fail-open signal
                 findings.append({"hunk": pc_hunk, "parse_error": True,
                                  "raw": payload,
-                                 "latency_ms": round(ms, 1)})
+                                 "latency_ms": round(ms, 1),
+                                 "cut": pc_hunk.get("cut")})
     # M2 (r9), the reviewer's stronger option: if EVERY call failed
     # (nothing was ever judged), that is a dead provider — full fail-open
     # regardless of the consecutive-counter arithmetic. m1 (r11): a
@@ -2648,6 +2681,14 @@ def judge_pr_level(findings, ask, size_skipped_code=None):
     except Exception as exc:
         return {"overall_risk": None, "needs_human_review": None,
                 "error": f"pr-level model call failed ({prov_name}): {exc!r}"[:300]}
+
+
+# E1 wire_format enum (honest stamp to distinguish cutting paths per run).
+# Precedence (highest to lowest): sites > ts-units > ast-units > line-window > hunk
+# Represents which cutter paths were actually used in a run. Mixed runs carry
+# highest-precedence value and per-unit `cut` field (detail per finding).
+WIRE_FORMAT_ENUM = ["hunk", "line-window", "ast-units", "ts-units", "sites"]
+WIRE_FORMAT_PRECEDENCE = {v: i for i, v in enumerate(WIRE_FORMAT_ENUM)}
 
 
 def near(v, t, zone=0.03):
@@ -3128,6 +3169,8 @@ def main():
             # Task 7 (D7): the record-version rides in meta too, so the
             # JSON output and the ledger agree on what produced the run.
             "record_version": PACKAGING_VERSION,
+            "packaging_version": PACKAGING_VERSION,  # E1: distinct source contract
+            "wire_format": stamp_wire_format(kept),  # E1: cutting path tracking
             # r10-m2/r9-M1: the POST-judge formula — never bare len(kept),
             # or a runtime-split run logs n_analyzed short by added_units
             # and sweep :98 rejects a legal run. added_units=0 in Task 4
@@ -3141,7 +3184,8 @@ def main():
                   {"file": f["hunk"]["file"], "line": f["hunk"]["line"],
                    **_span(f["hunk"]),
                    "severity": f.get("severity"), "is_real": f.get("is_real"),
-                   "category": f.get("category"), "header": f["hunk"]["header"]}
+                   "category": f.get("category"), "header": f["hunk"]["header"],
+                   "cut": f.get("cut")}  # E1: per-unit cutting path
                   for f in reported],
               "skipped": skipped, "jitter": jitter, "verdict": verdict,
               # Step 0′: structured verdict for downstream consumers —
