@@ -107,9 +107,11 @@ Options for v0.9:
   under A), the honest exit is 0/8 golden recall with the anchor mechanism
   in place. E3/E4/E6 move to v0.10, folded into the P3
   lexicon design. Honest, shippable in days.
-- **Option B — bring the lexicon forward.** v0.9 = E1 + E2 + P3 lexicon v1 (small,
-  sourced: IAM multivalued keys, CloudTrail eventCategory semantics, logGroupArn
-  suffix rules, CloudTrail field casing — the four measured classes) + E6 with its
+- **Option B — bring the lexicon forward.** v0.9 = E1 + E2 + domain fact
+  tables v1 (small, sourced, PLATFORM-AGNOSTIC mechanism — SOR is general
+  purpose; AWS is simply the first table, and the four measured classes are
+  all AWS: IAM multivalued keys, CloudTrail eventCategory semantics,
+  logGroupArn suffix rules, CloudTrail record field casing) + E6 with its
   piloted threshold. Recall exit: ≥5/8 per the prose-probe upper bound, V3
   precision gates as written. Highest value, biggest lift (lexicon authoring +
   governance is real work), and it changes SOR's maintenance profile (a curated
@@ -328,13 +330,22 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
 
 ## Non-goals
 
-- **P3 domain fact lexicon (B1/B2/M1 classes) is NOT in v0.9.** The probe proves the
-  model USES domain facts (those classes moved 0.45–0.55 → 0.94–0.96), but the
-  facts must be GENERATED deterministically, and that requires a curated,
-  source-governed AWS lexicon. Per the Fable advisory: hold behind a governance rule
-  (every row carries a source URL + date; unsourced rows never ship); revisit as
-  v0.10 once v0.9 measures how much P1+P2 alone recover. Design notes for it stay in
-  the run-2 memo.
+- **P3 domain fact lexicon (the "used the platform wrong" class) is NOT in
+  v0.9.** The probe proves the model USES domain facts (those classes moved
+  0.45–0.55 → 0.94–0.96), but the facts must be GENERATED deterministically,
+  and that requires a curated, source-governed fact table. **The mechanism is
+  PLATFORM-AGNOSTIC (Kurt, 2026-10-19: SOR is general purpose and
+  open-source — AWS is the first table, not the point):** any curated fact
+  table for any platform rides the same key with the same governance (every
+  row carries a source URL + date; unsourced rows never ship). Revisit as
+  v0.10 once v0.9 measures how much P1+P2 alone recover. Design notes for it
+  stay in the run-2 memo.
+- **Design judgment is DEFERRED, not abandoned (Kurt, 2026-10-19).** The
+  "inverted mapping" defect class is a design judgment and stays with the
+  LLM tiers today. Future candidate, NOT implemented: judgment derived from
+  synced wisdom layers — the SynapseTree Cloud wisdom layer synced for the
+  repo, the product-manager brain, or Tessera's brain for that repo — fed to
+  preparation the same way fact tables are. No design exists yet.
 - P4 contrastive choice questions: fixture-experiment only, no production wiring.
 - No threshold changes to the generic code-change question set; the E6 test-file
   variant is a separate set with its own piloted threshold; no new providers.
