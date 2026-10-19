@@ -84,7 +84,7 @@ CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 # all, because #45 showed deletion clusters over-scoring, not
 # under-scoring. Both stay >=0.05 from the 0.80/0.90 upper region.
 REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
-DELETION_REAL_THRESHOLD = 0.70  # deletion rubric (provisional; sweep TBD)
+DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per Fable gate cond 2)
 KNOWN_FIXTURES = {"positive", "negative"}
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
 # AGAIN — references_remaining in state, three-valued change_type,
@@ -100,7 +100,11 @@ KNOWN_FIXTURES = {"positive", "negative"}
 # (Task 6). The ledger stamps transport/wire_format/enrichment/record_version
 # (D7) so replay baselines are only ever compared like-for-like. v03b
 # ledgers remain gateable under an explicit --packaging-version v03b.
-PACKAGING_VERSION = "v08-ast"
+# v09 (E1): record_version and packaging_version now carry distinct sources:
+# both are CONSTANT per release (PACKAGING_VERSION), but wire_format (E1)
+# distinguishes cutting paths and changes per run. Problem 4 fix (D7 contract).
+PACKAGING_VERSION = "v09"
+DEFAULT_PACKAGING_VERSION = PACKAGING_VERSION
 # Release version, stamped by scripts/build_release.py during semantic-release
 # (tags vX.Y.Z). Distinct from PACKAGING_VERSION, which versions the scoring
 # rubric the threshold sweep gates on.
