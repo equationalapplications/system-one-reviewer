@@ -1,19 +1,18 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
-Date: 2026-10-19 (rev 4 — Opus Tier-3 r1 adjudicated: verdict BLOCKED, 2 BLOCKER
-confirmed REAL after verification. **V0 gate executed and FAILED**: structured
-E3-schema rows without conclusion text do NOT lift Jev past the gate (M3 0.44→0.36,
-N4 0.31→0.37; only N3 crossed, from an already-clean 0.51; details below). Root
-cause of §3 confirmed and fixed: the cutters DID engage in prior runs; the wheels
-were missing from the BINARY'S interpreter (a different python3 than the one
-wheels were first tested under); wheels now installed there and the rerun measures
-top-level cutting at 46→168 units (8.8×) — EXCEEDING the OQ1 3–6× envelope, which
-must be re-ruled. E3/E4 recall premise is dead as specified; the direction fork
-goes to Kurt.)
+Date: 2026-10-19 (rev 5 — Opus r1 M1–M7 + m1–m7 mandatory fixes applied
+(dispositions: `...-opus-r1-dispositions.md`); B1/B2 were already resolved in
+rev 4 (V0 executed/failed; root cause found+fixed). OPTIONAL research annex
+added (`...-optional-suggestions.md`) — reviewers may adopt its items into the
+spec; they are not commitments. §3 corrected per Opus B2: the cutters DID
+engage (19 clusters → 46 units); the fall-through cause was missing wheels in
+the binary's own interpreter — verified, installed, and measured (168 units
+with cutting live).)
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 4 — DIRECTION FORK, awaiting Kurt's pick (see THE FORK)
-Scope: `system-one-reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
+Status: DRAFT rev 5 — in Opus delta cycle (rev-4 BLOCKED verdict resolved;
+mandatory fixes applied; optional research annex attached for reviewer adoption)
+Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
 ruling). Packaging-version bump.
@@ -38,22 +37,28 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
    Per-ledger defect-unit is_real: B1+N1 0.30, B2+M2 **0.56 (REPORTED — the finding
    anchored at the unit anchor, 38 lines from the golden anchors)**, M1 0.45, M3 0.39,
    N3 0.48, N4 0.33. Taxonomy:
-   (a) **anchor failures** — B2+M2: the unit crossed the gate; only anchor placement
-   missed (HUNK_QUESTIONS asks no location question, so ±1 golden matching succeeds
-   only if the CUTTER anchors within ±1) — fixable by E2 alone;
+   (a) **anchor + recognition failures** — B2+M2: the unit CROSSED the gate and was
+   reported, but its anchor sat 38 lines from the golden anchors (HUNK_QUESTIONS
+   asks no location question, so ±1 golden matching succeeds only if the CUTTER
+   anchors within ±1) — E2 fixes the anchor half; the recognition half (the
+   selector asks for the wrong event category) is a P3 domain class, so this
+   defect needs BOTH;
    (b) **near-gate** — M1 (0.45) and N3 (0.48) miss by 0.05/0.02; a threshold move
    would catch them but floods false positives (clean units at 0.45–0.47 exist), so
    "no threshold change fixes this" holds in conclusion;
    (c) **deep recognition failures** — B1+N1 (0.30), M3 (0.39), N4 (0.33): the actual
    E3/E4/E6 cases.
-3. **The TS cutting path never engaged on this range.** All 46 units were 120-line
-   line-window fallbacks. Cutters engage ONLY on oversize (>28k-token estimate) or
-   band (>120-line) units (`expand_oversize_units`); every cluster here is smaller,
-   so no cutter was ever consulted — with or without wheels. The tsunits receipt
-   CANNOT distinguish wheels-present from wheels-absent (the stamp's only input is
-   the parent-cluster pointer, identical either way) — which is itself the cleanest
-   demonstration of Problem 4. Wheels are now installed and `ts_units` is verified
-   working when invoked (2 subclusters on custody-envelope.ts).
+3. **The TS cutting path fell through to windows — cutters WERE consulted.**
+   The range's 19 code clusters expanded to 46 judged units, which is only
+   possible if the cutting pipeline ran; `ts_units` returned None in-run and
+   the line-window fallback produced every unit (all ≤120-line windows).
+   Root cause, found and fixed 2026-10-19: `tree_sitter` wheels were missing
+   from the BINARY'S OWN interpreter (a hermes venv distinct from other
+   python3s on the box). The tsunits receipt cannot distinguish
+   wheels-present from wheels-absent (the stamp's only input is the
+   parent-cluster pointer) — the cleanest demonstration of Problem 4.
+   With wheels installed, the rerun engaged cutting everywhere: 46 → 168
+   units (`docs/benchmarks/2026-10-19-golden-run-rootcause.json`).
 4. **The ledger cannot tell units from windows.** Both `record_version` and
    `packaging_version` are written from the single constant `PACKAGING_VERSION`, and
    the window fallback stamps the same `wire_format` input as a cut run — the D7
@@ -117,14 +122,22 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
 
 ## Design (E-numbers continue the v0.2 scheme)
 
-- **E1 — honest wire-format stamp (prerequisite, reworked per M6).**
-  `packaging_version`/`record_version` stay CONSTANT per release (`v09`) — existing
-  exact-match gates (test_sweep, test_field_sweep) keep working. The cutting path
-  rides an EXTENDED `wire_format` enum — `line-window` / `ast-units` / `ts-units` /
-  `sites` — surfaced in BOTH the `--out` JSON `meta` block and the metrics ledger,
-  plus a per-unit `cut` field on every judged entry. `gate_run`'s like-for-like
-  check compares `wire_format`, not packaging versions. A `--force-window-cut` flag
-  provides the window-only leg for V5.
+- **E1 — honest wire-format stamp (prerequisite; reworked per GLM-M6 + Opus-M5).**
+  `packaging_version`/`record_version` stay CONSTANT per release (`v09`).
+  The cutting path rides an EXTENDED `wire_format` enum — `hunk` (uncut whole
+  cluster, today's `hunk_state-v1` shape) / `line-window` / `ast-units` /
+  `ts-units` / `sites`. Real runs are MIXED; the run-level value is the
+  highest-precedence path actually used (`sites` > `ts-units` > `ast-units` >
+  `line-window` > `hunk`), and every judged entry carries a per-unit `cut`
+  field — the enum alone never has to lie about a mixed run. Surfaced in BOTH
+  the `--out` JSON `meta` block and the metrics ledger. Sweep gates check
+  `packaging_version` AND `wire_format` (dropping either check would let stale
+  v03b/v08-era runs into sweeps; keeping only the old check defeats this
+  item). `DEFAULT_PACKAGING_VERSION`, `RUBRIC_VERSIONS` and the
+  `test_package.py` asserts update with the release. Historical ledger values
+  stay readable (the old stamp maps to `line-window`/`ast-units` by its
+  recorded cutter trail, with unknown → `line-window` documented as lossy).
+  A `--force-window-cut` flag provides the window-only leg for V5.
 - **E2 — decision-site cutting (P1 substrate; engagement stated per B1).**
   ENGAGEMENT: site cutting engages for ALL code-change clusters (TS/JS/Python) —
   not only oversize/band units; the oversize/band rules keep governing the legacy
@@ -135,14 +148,24 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   `--max-hunks` continues to cap TOP-LEVEL CLUSTERS pre-expansion; site units are
   EXEMPT from the post-expansion truncation — a cluster admitted to judging is
   judged in full at site granularity. Ceiling drops keep the existing
-  incomplete-review banner at cluster level. Call growth: the ruled 3–6× envelope,
-  no run-level cap. Guards: (a) NEW compose() behavior — majors are counted per
-  PARENT cluster so one decision cannot trip the two-major rule twice (a unit is
-  its own parent when uncut); this deliberately changes verdicts vs the flat count
-  on multi-site runs, and V3 measures that change like-for-like instead of
-  forbidding it; (b) pure-data sites (e.g. 60-entry array literals) get a size
-  floor; (c) no-op guard retained — site set == changed set → judge whole / leaf
-  immediately (no depth-cap recursion).
+  incomplete-review banner at cluster level, and its denominator becomes the
+  pre-expansion cluster count + expanded site count of admitted clusters.
+  Call growth: the ruled 3–6× envelope is SUPERSEDED by measurement —
+  top-level cutting alone measured 8.8× on the golden range (Problem 6); the
+  model-off site-count gate (V7) must bring the median within a re-ruled
+  envelope before any model spend. Guards: (a) NEW compose() behavior —
+  majors are counted per ENCLOSING TOP-LEVEL DECLARATION (function/class/
+  const), not per top-level cluster and not flat, so two sites inside one
+  function cannot trip the two-major rule twice, while genuinely separate
+  declarations still count separately (a unit is its own declaration when
+  uncut); this deliberately changes verdicts vs the flat count, and V3
+  measures that change like-for-like instead of forbidding it; (b)
+  pure-data sites (e.g. 60-entry array literals) get a size floor; (c) SITE
+  SELECTION is leaf-most and NON-OVERLAPPING (a call argument inside a
+  conditional inside an object literal is ONE site — the deepest node — and
+  never also a member of its ancestors; union == original preserved, same
+  contract as the existing cutters); (d) no-op guard retained — site set ==
+  changed set → judge whole / leaf immediately (no depth-cap recursion).
 - **E3 — `structural_facts` state key (P2 substrate; GATED — see THE FORK).**
   V0 measured this mechanism inert for recall (Problem 5/6). The contract below is
   retained as the SPEC for any future facts system (P3 lexicon rows would ride the
@@ -168,15 +191,24 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   construct instances (N1);
   (5) placeholder-test — typeof/toBeDefined-only assertions with no call into a
   subject (N4; feeds E6's variant).
-  Each detector ships with a corpus false-fire screen (V4) and is dropped, not
-  tuned, if it carries no signal.
+  IMPORT RESOLVER SCOPE (m6): detector (2) resolves RELATIVE imports and
+  `index.ts` directory resolution within the diffed repo ONLY — no tsconfig
+  path aliases, no node_modules, no monorepo cross-package resolution in
+  v0.9. Unresolvable imports contribute no rows (fail-closed, same policy as
+  `references_remaining`).
+  Each detector ships with a corpus false-fire screen (V4) and is dropped,
+  not tuned, if it carries no signal.
 - **E5 — dependency packaging (pinned per M2/m4).** `tree_sitter` and
   `tree_sitter_typescript` wheels join the supported-install path with EXACT pinned
   versions recorded in the install check and stamped into each ledger record
   (grammar determinism). `--version` runs a per-cutter self-check (parse a known
   snippet per language) and reports per-cutter availability INTO THE LEDGER — so
-  "cutter never engaged" is always distinguishable from "cutter unavailable". The
-  lazy import seam and CI-without-wheels behavior stay exactly as ratified
+  "cutter never engaged" is always distinguishable from "cutter unavailable".
+  IMPLEMENTATION NOTE (Opus M7): the check runs inside EVERY run (before
+  packaging) and stamps per-cutter availability + pinned wheel versions into
+  each ledger record; `--version` prints the same table but argparse
+  `action="version"` exits before main(), so `--version` alone writes nothing.
+  The lazy import seam and CI-without-wheels behavior stay exactly as ratified
   2026-10-02. **HARD PRECONDITION (Opus r1 B2):** any V2/V5 measurement run aborts
   unless the per-cutter self-check reports TS cutting AVAILABLE in the running
   interpreter — a silent window fallback must be impossible on a measurement run.
@@ -191,29 +223,51 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   actually test anything?" (placeholder/import-justifying tests, assertions on
   imports, tests that cannot fail); `severity` criteria and `category` values stay.
   THRESHOLD: per the codebase's own precedent (deletion rubric has its own
-  threshold because answer distributions differ), the variant gets
-  `TEST_REAL_THRESHOLD`, pinned by a pre-implementation pilot (the golden N4 unit +
-  2 negative test-file units, 3×3 calls) BEFORE any V2 run. compose() routes by
-  question set. Production-code units never see the variant (enforced by V6).
+  threshold because answer distributions differ), the variant gets its OWN
+  thresholds — `TEST_REAL_THRESHOLD` AND a variant severity rubric/gate —
+  both pinned by the pre-implementation pilot (the golden N4 unit + 2
+  negative test-file units, 3×3 calls) BEFORE any V2 run. Rationale
+  (Opus M1): N4's severity sat 0.38–0.57 even with verdict-prose facts, so
+  compose's raw `sev >= 1` gate would count it unrecoverable no matter
+  where `TEST_REAL_THRESHOLD` lands; the variant's severity criteria
+  additionally include "Major: the test cannot fail / asserts nothing".
+  compose() routes by question set; the pilot pins both numbers. Production-
+  code units never see the variant (enforced by V6). Precedence (m3):
+  deletion-only clusters keep the DELETION rubric even in test files; the
+  test variant applies to code-change clusters only; test-variant findings
+  do NOT join the deletion corroboration pool.
 
 ## Validation protocol (exit contract — every gate measured, none argued)
 
 - **V1 fixture regression:** the saturated fixture golden stays 5/5 with precision
-  1.0 under site-level cutting (run-2 missing experiment #5).
+  1.0 under site-level cutting (run-2 missing experiment #5). **TS leg (m4):**
+  a second fixture with planted TS defects at known lines exercises the
+  tree-sitter site path — V1 is not green on the Python leg alone.
 - **V2 golden recall (config pinned per m3):** 8-defect Stage A golden rerun on the
   P1+P2 build at FULL coverage with an explicit `--max-hunks` value (sites exempt
-  per E2). **Exit ≥ 4/8**, with the M1-taxonomy split reported: anchor-class
-  recoveries (B2/M2) counted separately from recognition-class recoveries
-  (M3/N3/N1 via E4 facts; N4 via E6 at its piloted threshold). Stretch 6–7/8.
-  Every claim cites the E1 `wire_format` + per-unit `cut` field. V2-priming runs
-  rebuild states via `hunk_state()` (m6).
+  per E2). Pre-flight, MODEL OFF (Opus M3): run the site cutter over the range
+  and confirm every golden line has some unit anchor within ±1 before spending
+  model calls — an absence-type defect (N3's missing gate has no syntax node to
+  anchor on) documents its anchoring rule explicitly: a fact's `span` does NOT
+  move a unit anchor in v0.9; anchors are cutter-produced only, and a defect
+  with no anchorable site is reported as a coverage note, never a finding.
+  Pre-flight also records the ATTAINABLE CEILING (which defects have anchors
+  and in-scope mechanisms) next to the exit bar (Opus M2). **Exit ≥ 4/8**, with
+  the M1-taxonomy split reported: anchor-class recoveries (B2/M2) counted
+  separately from recognition-class recoveries (M3/N3/N1 via E4 facts; N4 via
+  E6 at its piloted thresholds). Stretch 6–7/8. Every claim cites the E1
+  `wire_format` + per-unit `cut` field. V2-priming runs rebuild states via
+  `hunk_state()` (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
   BASELINE build runs TWICE on the five defect-free negative heads + the three
   `reproof:` ranges — observed verdict/findings delta defines the noise band;
   (b) the new build must show no reported-findings increase beyond that band;
   (c) like-for-like verdict comparison: baseline findings replayed through the new
-  compose() — flips caused SOLELY by the per-parent major rule are counted and
-  reported separately, not forbidden;
+  compose() — flips caused SOLELY by the per-declaration major rule are counted and
+  reported separately, not forbidden. PREREQUISITE (Opus M6): judged entries gain a
+  `parent_declaration` id and `rewrap` carries it forward; old v08 ledgers have
+  neither, so the replay uses the NEW build's findings run twice (flat vs
+  per-declaration compose), not replayed v08 records;
   (d) M5 sub-gate: clean negative-head units rerun with a synthetic fact
   force-attached — is_real must stay below the report gate (anchoring bound).
 - **V4 detector screens (model off):** every E4 detector runs over the 47-PR corpus
@@ -223,9 +277,16 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   range must carry distinguishable `wire_format` values in BOTH `--out` meta and
   the ledger, and per-unit `cut` fields must agree with the actual cut path
   (fixes Problem 4; run-2 missing experiment #2).
-- **V6 routing gate (new, per M4):** the E6 routing rule runs over the 47-PR
+- **V6 routing gate (new, per M4/m3):** the E6 routing rule runs over the 47-PR
   corpus's full changed-file list; zero production-file units may route to the
-  test variant (unit test, permanent).
+  test variant. Ground truth = a ONE-TIME manually curated production/test label
+  list for those files (committed with the manifest, m5), not the heuristic
+  itself.
+- **V7 site-count gate (new, per Opus M4):** model-off census of site counts over
+  the golden range and the 47-PR corpus; if the MEDIAN expansion exceeds a
+  re-ruled envelope (the measured 8.8× top-level baseline says the old 3–6×
+  ruling is dead), the size floor tightens before any model spend. Rerun until
+  the census passes, then V2/V5 may spend.
 
 ## Non-goals
 

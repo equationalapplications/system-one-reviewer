@@ -6,6 +6,13 @@ send the unit's state to Jev 3x exactly as production packaging builds it (clean
 and 3x with a hand-written deterministic fact row of the P2/P3 shape appended under
 a `structural_facts` key. Record is_real / severity / category per call.
 
+NOTE (Opus m1/m6, honest baseline): states here are HAND-BUILT — `location`
+uses the golden anchor, `code_before_change` is 3 context lines, no diff
+entries — NOT byte-faithful production packaging (clean scores track
+production within ~0.04 but N3 sits on the opposite side of the gate: 0.52
+here vs 0.48 there). V2-priming runs must rebuild states via `hunk_state()`
+instead. This script imports the INSTALLED binary, not repo source.
+
 36 calls, fractions of a cent. Read-only w.r.t. the repo; appends NOTHING to
 metrics.jsonl (calls are made directly, not through main()).
 """
