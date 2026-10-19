@@ -332,7 +332,8 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   (Opus r2). **TERMINAL OUTCOME (Opus r3 R3):** if the census still fails
   after both tightenings, E2 does NOT ship in v0.9; the census numbers go
   back to Kurt with the envelope decision. When the census passes, V2/V5 may
-  spend.
+  spend. **ENVELOPE CONFIRMED (Kurt, msg 1561831827394793606, "Yes"):
+  median ≤ 5× is the adopted envelope.**
 
 ## Non-goals
 
