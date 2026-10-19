@@ -108,3 +108,16 @@ finding falls (measured in S0's ledger on S4/S6 arms).
   construction); the polarity detector is withdrawn.
 - Oct 4 ruling accepting the #46 band false positive: revisit under S1's
   bar.
+
+## Ideas bank (external landscape research, 2026-10-19)
+
+Digest with URLs: `docs/benchmarks/2026-10-19-landscape-research.md`
+(Sonnet research run, ~22 searches). Candidates awaiting gates, not adopted:
+Tricorder-style hard FP-rate retirement gate for reflex classes (matches the
+ship/retire bars in rule 6b); BugLens' deterministic-candidates + model-judge
+precision lift (0.1->0.72) as an external benchmark; Semgrep Assistant's
+"memories" feedback + hide-don't-delete default; Feature Slice Matching
+(arXiv 2512.24858 — embed-and-match ranking, rejected LLM judges as unstable:
+external validation for a non-LLM judge, and a candidate embed-and-match
+reflex); abstention-vs-calibration check on the 0.80 gate. Each rides an
+existing S-step's gate; none is adopted standalone.
