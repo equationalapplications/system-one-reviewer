@@ -1,5 +1,10 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
+Date rev 12: Fable final-spec gate REQUEST CHANGES applied — V1 re-pinned at
+0.50 telemetry + 0.80 surfaced-set delta (Fable recommendation, Kurt accepted,
+msg 1561884570142646433); verdict-field replacement contract added; fencing
+notes on V3(d)/V4/V6/OQ2/OQ3/Non-goals; 3 evidence wording fixes. Nothing else
+changes (Fable: "Send it back and I will issue the delta verdict").
 Date: 2026-10-19 (rev 9 — Opus r5 delta: APPROVE WITH NITS; both nits applied
 (D1 THE FORK Option A gate/fallback split to match V2/S5; D2 Option B =
 ≥5/8 in EACH of three repeats, negative heads clean, detector-alone arm
@@ -11,8 +16,9 @@ Date rev 5: Opus r1 M/minor fixes + optional research annex.
 Date rev 4: Opus r1 BLOCKERs resolved (V0 executed; root cause fixed).
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 11 — FORK RESOLVED (A+C: anchor release + triage re-scope,
-no verdict output); next: Fable final-spec gate
+Status: DRAFT rev 12 — Fable final-spec gate (2026-10-19): REQUEST CHANGES,
+delta-gated; A+C FORK RESOLVED (anchor release + triage re-scope, no verdict
+output); next: Fable delta verdict on rev 12
 Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS). E6 (test-file question variant) is SPECIFIED here but SHIPS in
@@ -35,11 +41,14 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
    (6 dropped at the `--max-hunks` ceiling) and the full-coverage run judged
    all 46 — `docs/benchmarks/2026-10-19-golden-run-*.json`.
    The run-1 adjudication ledger shows the same direction in the wild: 0/48 findings
-   sustained across the six Oct 15–19 fix-window runs.
+   sustained across the seven Oct 15–19 fix-window runs (sweep/manifest label count;
+wording fixed rev 12 — Fable evidence note).
 2. **The failure splits into three classes — only one is deep non-recognition.**
    Per-ledger defect-unit is_real: B1+N1 0.30, B2+M2 **0.56 (REPORTED — the finding
    anchored at the unit anchor, 38 lines from the golden anchors)**, M1 0.45, M3 0.39,
-   N3 0.48, N4 0.33. Taxonomy:
+   N3 0.48, N4 0.33. (Provenance, rev 12: these are run-1 PRIVATE-LEDGER values;
+   only the 0.56 and N3's 0.48 jitter entry are verifiable in committed receipts —
+   the rest are corroborated within ~0.04 by the fact probe's clean arm.) Taxonomy:
    (a) **anchor + recognition failures** — B2+M2: the unit CROSSED the gate and was
    reported, but its anchor sat 38 lines from the golden anchors (HUNK_QUESTIONS
    asks no location question, so ±1 golden matching succeeds only if the CUTTER
@@ -89,7 +98,17 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
 The anchor release (E1 + E2 + E5 + telemetry) ships WITH the triage re-scope:
 SOR emits NO Changes-requested verdicts anywhere in v0.9 — its output is ranked
 site-level triage pointers for the paid tiers (the ladder's LLM reviewers), plus
-the coverage banner. The 0.80 gate governs what surfaces as a pointer. B's
+the coverage banner. The 0.80 gate governs what surfaces as a pointer.
+**VERDICT-FIELD REPLACEMENT CONTRACT (rev 12, Fable final-spec gate):** the
+`verdict` field compose() returns today (exactly two values, "Changes requested"
+or "Approved") is REMOVED; removing only the first value would leave every run
+reading "Approved", which violates INTENT rule 3 and the AGENTS.md rule that a
+clean run is never merge evidence. The replacement is INTENT rule 3's named
+destination shape: the findings list plus the coverage banner. No rendered run
+output may contain the strings "Approved" or "Changes requested" anywhere (V2's
+TRIAGE CHECK asserts this). The fail-open "Unavailable" verdict and the
+incomplete-review banner SURVIVE unchanged — they are honest-status signals, not
+verdict authority. B's
 domain fact tables are deferred to v0.10 (platform-agnostic mechanism, sourced
 rows); the wisdom-layer judgment path is deferred with no design yet. V2's exit
 below is written for the resolved A+C shape. The A/B/C text below is retained
@@ -105,7 +124,8 @@ The ladder has now measured the mechanism from both ends. What survives:
   annotations, which has no measured value.
 - **The recall lever is P3 — domain conclusions with sourced provenance** (the
   first probe: prose conclusions lifted 5/6 units, including all three
-  domain-classes 0.45–0.55 → 0.94–0.96). That is a bigger lift: a curated AWS
+  domain-classes 0.30–0.55 → 0.94–0.96 (start span corrected rev 12 — B1+N1
+  began at 0.30, not 0.45). That is a bigger lift: a curated AWS
   lexicon with sourced-row governance (every row: source URL + date + validator),
   because conclusions cannot be derived domain-free.
 
@@ -265,10 +285,21 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
 
 ## Validation protocol (exit contract — every gate measured, none argued)
 
-- **V1 fixture regression:** the saturated fixture golden stays 5/5 with precision
-  1.0 under site-level cutting (run-2 missing experiment #5). **TS leg (m4):**
-  a second fixture with planted TS defects at known lines exercises the
-  tree-sitter site path — V1 is not green on the Python leg alone.
+- **V1 fixture regression (RE-PINNED rev 12 — Fable final-spec gate; Fable
+  recommendation, Kurt accepted msg 1561884570142646433):** the saturated fixture
+  golden is measured at TWO levels, replacing the retired 5/5-precision-1.0 bar
+  (the adopted 0.80 reflex gate yields NO sweep run keeping 5/5 — 0 of 35 at bar
+  0.80, `docs/benchmarks/2026-10-19-r1-high-bar-sweep.json`; ROADMAP S1 retires
+  the 5/5 expectation — and a gate that can only be failed or argued down is the
+  exact failure Opus r2 R1 removed):
+  (a) per-unit `is_real` scores at the LEGACY 0.50 telemetry level — a
+  cutting-regression check: site-level cutting (run-2 missing experiment #5)
+  leaves every fixture defect's score at-or-above its baseline-build value;
+  (b) the SURFACED set at the 0.80 gate is UNCHANGED versus the baseline build —
+  no new pointers surface, none are lost (a comparison only passes if identical).
+  Jitter counts at the 0.80 gate are reported alongside both legs.
+  **TS leg (m4):** a second fixture with planted TS defects at known lines
+  exercises the tree-sitter site path — V1 is not green on the Python leg alone.
 - **V2 golden recall (config pinned per m3):** 8-defect Stage A golden rerun on the
   build for the OPTION PICKED in THE FORK (per-option exit contract, Opus r3 R1)
   at FULL coverage with an explicit `--max-hunks` value (sites exempt per E2).
@@ -291,7 +322,9 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   output anywhere — every surfaced observation is a ranked triage pointer,
   and "surfaced" means is_real ≥ **0.80** (the adopted reflex gate; a
   comparison where the baseline reports at 0.50 and the new build at 0.80
-  passes trivially and is invalid). Every claim cites the E1 `wire_format` +
+  passes trivially and is invalid). The TRIAGE CHECK also asserts the
+  VERDICT-FIELD REPLACEMENT CONTRACT: output contains no "Approved"/
+  "Changes requested" anywhere, while "Unavailable" and the banner render. Every claim cites the E1 `wire_format` +
   per-unit `cut` field. V2-priming runs rebuild states via `hunk_state()`
   (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
@@ -308,16 +341,20 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   PREREQUISITE (Opus M6/r2): judged entries gain a
   `parent_declaration` id and `rewrap` carries it forward; old v08 ledgers have
   neither, so replayed v08 records are not used for this comparison;
-  (d) M5 sub-gate: clean negative-head units rerun with a synthetic fact
-  force-attached — is_real must stay below the report gate (anchoring bound).
-- **V4 detector screens (model off):** every E4 detector runs over the 47-PR corpus
+  (d) M5 sub-gate — **GATED WITH E3, SHIPS IN v0.10** (THE FORK: the E3 fact key
+does not exist in v0.9; fencing note rev 12): clean negative-head units rerun
+with a synthetic fact force-attached — is_real must stay below the report gate
+(anchoring bound). Retained verbatim as the v0.10 spec.
+- **V4 detector screens (model off) — GATED WITH E4, SHIPS IN v0.10** (V0 measured
+  E4 dead as a recall lever; THE FORK; fencing note rev 12): every E4 detector runs over the 47-PR corpus
   pinned heads; fire rate on clean heads ≥ fire rate on positive heads → detector
   dropped before any model spend.
 - **V5 stamp test:** a `--force-window-cut` run and a site-cut run of the same
   range must carry distinguishable `wire_format` values in BOTH `--out` meta and
   the ledger, and per-unit `cut` fields must agree with the actual cut path
   (fixes Problem 4; run-2 missing experiment #2).
-- **V6 routing gate (new, per M4/m3):** the E6 routing rule runs over the 47-PR
+- **V6 routing gate (new, per M4/m3) — GATED WITH E6, SHIPS IN v0.10** (THE FORK;
+  fencing note rev 12): the E6 routing rule runs over the 47-PR
   corpus's full changed-file list; zero production-file units may route to the
   test variant. Ground truth = a ONE-TIME manually curated production/test label
   list for those files (committed with the manifest, m5), not the heuristic
@@ -339,13 +376,15 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
 
 - **P3 domain fact lexicon (the "used the platform wrong" class) is NOT in
   v0.9.** The probe proves the model USES domain facts (those classes moved
-  0.45–0.55 → 0.94–0.96), but the facts must be GENERATED deterministically,
+  0.30–0.55 → 0.94–0.96), but the facts must be GENERATED deterministically,
   and that requires a curated, source-governed fact table. **The mechanism is
   PLATFORM-AGNOSTIC (Kurt, 2026-10-19: SOR is general purpose and
   open-source — AWS is the first table, not the point):** any curated fact
   table for any platform rides the same key with the same governance (every
   row carries a source URL + date; unsourced rows never ship). Revisit as
-  v0.10 once v0.9 measures how much P1+P2 alone recover. Design notes for it
+  v0.10 once v0.9 measures how much P1 alone recovers (wording fixed rev 12:
+P2 is gone per V0 — P1 here means the E1 stamp + E2 site cutting + triage
+pointers). Design notes for it
   stay in the run-2 memo.
 - **Design judgment is DEFERRED, not abandoned (Kurt, 2026-10-19).** The
   "inverted mapping" defect class is a design judgment and stays with the
@@ -367,5 +406,9 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   median ≤ 5×, pending Kurt's confirm.
 - **OQ2 — RULED (2):** test-file question variant added as E6 (scope + Non-goals
   updated accordingly; deterministic routing + piloted threshold per M3/M4).
+  **SUPERSEDED BY THE FORK (fencing note rev 12): E6 is SPECIFIED here but SHIPS
+  in v0.10**, unless re-scoped.
 - **OQ3 — RULED (1):** one release — E1 stamp + E5 wheels + E2/E3/E4 cutting ship
-  together; V5 is the release gate.
+  together; V5 is the release gate. **SUPERSEDED IN PART BY THE FORK (fencing
+  note rev 12): v0.9 ships E1+E2+E5 only; E3/E4 are v0.10-gated. V5 remains the
+  release gate for what ships.**
