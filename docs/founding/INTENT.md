@@ -98,18 +98,24 @@ the exact interpreter that runs the binary (install check added
 2026-10-19), and decision-site cutting is specified but not built
 (spec rev 4, branch `spec/v09-structural-facts`).
 
-### 3. SOR is input to adjudication, never a gate
+### 3. SOR emits no verdict; it is input to adjudication
 
-A SOR verdict is an opinion attached to a run; humans and later tiers
-decide. Findings are never auto-fixed, and a clean SOR run is never
-treated as proof the code is good — recall on subtle defects is measured,
-published, and modest by design.
+SOR's destination shape is reflex findings plus a coverage banner — no
+"Changes requested" authority. Until a finding class earns its way past the
+measured bar (see rule 4), its output is telemetry. Findings are never
+auto-fixed, and a clean SOR run is never treated as proof the code is good —
+recall on subtle defects is measured, published, and modest by design.
 
 *Why:* a cheap reflex must never carry merge authority; that is what the
-paid tiers are for.
+paid tiers are for. Measured 2026-10-19: the generic rubric's verdicts went
+0-for-5 against adjudication on fix-window runs, and its clean control unit
+scores above its own gate.
 
-**Status: Built.** Findings require written REAL/FP adjudication in the
-review loop; every run appends to the metrics ledger.
+**Status: Open decision.** The deletion rubric (with its
+`references_remaining` check) is the one shipped reflex with a measured
+zero-false-positive record. The generic rubric still emits verdicts today;
+demoting it to telemetry is gated on R1 (the free threshold-sweep replay
+in ROADMAP.md).
 
 ### 4. A false positive is a defect
 
@@ -142,22 +148,39 @@ confident noise is the most expensive output a cheap tool can emit.
 **Status: Open decision.** The exact class boundary is the current design
 question; the measured record is in the v0.9 spec's evidence receipts.
 
-### 6. Reflexes need prepared stimuli, not raw structure
+### 6. Reflexes need prepared stimuli — and the stimulus must already mean something
 
-Measured 2026-10-19: the judge acts decisively when a **conclusion** is
-stated to it (domain conclusions lifted 5 of 6 defect units past the
-report gate) and is inert to **bare structural observations** in its
-input (structured fact rows without interpretation moved scores nothing,
-or the wrong way). Preparation that wants to change judgments must
-deliver interpreted meaning — sourced, curated, and measured — not raw
-signal.
+Measured 2026-10-19, both directions. **Upper bound:** when a correct domain
+CONCLUSION is stated to the judge (hand-written prose facts), it acts
+decisively — 5 of 6 defect units crossed the report gate. **Lower bound:** the
+same units probed with structured, conclusion-free observation rows moved
+nothing (M3 0.44→0.36), and the anchoring control did not lift a clean unit.
+Caveat that keeps us honest: the prose probe is an ORACLE UPPER BOUND — the
+facts were written by someone who already knew the defects. It proves the
+judge accepts correct conclusions; it does not prove deterministic code can
+produce them. That production question is open (ROADMAP R6). Also measured:
+M3 itself is not a structural defect at all — it is a safe-default design
+judgment, which belongs to the LLM tiers by construction.
 
 *Why:* a reflex responds to a shaped stimulus; showing it anatomy does
-nothing.
+nothing, and telling it the answer is not a capability we can ship until
+something deterministic can supply the answer.
 
-**Status: Open decision.** The sourced fact-table approach (curated domain
-conclusions attached at preparation time) is the leading candidate; a
-structured-rows-only variant was probed and rejected the same day.
+**Status: Open decision.** Sourced conclusion-facts (ROADMAP R6, with an
+opportunity gate before build) are the candidate; the structured-rows-only
+variant was probed and rejected the same day.
+
+### 6b. What a reflex is
+
+A **reflex** is the unit of SOR functionality, and specs are checked against
+this definition: a deterministic trigger that prepares one narrow, fully
+stated observation about a change; a single System One judgment gating
+whether the observation is a real problem in context; a threshold set far
+from chance; and a written ledger of every firing and its adjudication. A
+reflex ships only after its ledger shows its findings are usually right
+(sustained rate ≥ 0.70 over ≥ 10 adjudicated firings) and retires
+automatically when they stop being (below 0.50 over the last 10). Outside
+its reflexes, SOR is silent.
 
 ### 7. A run is honest about what it judged
 
