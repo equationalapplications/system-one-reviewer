@@ -1,0 +1,12 @@
+# Positive golden — the 8 Stage A gate defects (Fable findings B1, B2, M1, M2, M3, N1, N3, N4)
+# Defects present at d70d225 (pre-A6fix); line numbers verified byte-exact against d70d225 tree.
+# Range under review: fb51dd6..d70d225 (the same diff the gate dual review adjudicated).
+# N2 (key ARNs → pool container env) DEFERRED to Stage B — not a defect at d70d225, excluded.
+src/control-plane/custody-tables.ts	64	B1: decrypt condition uses single-valued StringEquals on multivalued kms:EncryptionContextKeys (fails closed, denies every Decrypt)
+infra/stack.ts	791	B2: CloudTrail advancedEventSelectors select DATA events for KMS; KMS crypto calls are management events, so trail misses them
+infra/stack.ts	854	M1: metric filter uses $.resources[0].arn lowercase; CloudTrail field is ARN (case-sensitive), filter never matches
+infra/stack.ts	789	M2: cloudWatchLogsLogGroupArn carries unmodified logGroupArn `:*` suffix (must be the bare logGroupArn)
+src/control-plane/custody-envelope.ts	157	M3: KMS error mapping inverted — unavailability fragments map to integrity error and vice versa (transient KMS trouble reads as tampering)
+src/control-plane/custody-tables.ts	31	N1: dead VerifyMac/GenerateMac grants on symmetric ENCRYPT_DECRYPT CMK (MAC ops valid only on HMAC keys)
+src/control-plane/custody-envelope.ts	322	N3: openCustodyBlob lacks envelopeVersion gate — unsupported version accepted past KMS/AEAD use
+tests/unit/custody-stack.test.ts	200	N4: placeholder test (Match.objectLike typeof check) exists only to justify an import
