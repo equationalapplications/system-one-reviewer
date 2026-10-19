@@ -28,9 +28,10 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
 
 1. **Wild recall is 0.** On the SynapseTree Stage A gate range (`fb51dd6..d70d225`),
    SOR matched **0 of 8** controller-confirmed defects
-   (`examples/golden-stageA-8defects.tsv`) in BOTH configs: the default run judged
-   40 of 46 clusters (6 dropped at the `--max-hunks` ceiling) and the full-coverage
-   run judged all 46 (`--max-hunks 500`) — `docs/benchmarks/2026-10-19-golden-run-*.json`.
+   (`examples/golden-stageA-8defects.tsv`) in BOTH configs: the range's 19 code
+   clusters expanded to 46 judged units; the default run judged 40 of them
+   (6 dropped at the `--max-hunks` ceiling) and the full-coverage run judged
+   all 46 — `docs/benchmarks/2026-10-19-golden-run-*.json`.
    The run-1 adjudication ledger shows the same direction in the wild: 0/48 findings
    sustained across the six Oct 15–19 fix-window runs.
 2. **The failure splits into three classes — only one is deep non-recognition.**
@@ -99,9 +100,14 @@ The ladder has now measured the mechanism from both ends. What survives:
 
 Options for v0.9:
 - **Option A — anchor release (smallest).** v0.9 = E1 + E2 + E5 + telemetry gates
-  (V1/V2-split/V3/V5/V6). Recall exit: anchor-class 2/8 + no precision regression.
-  E3/E4/E6 move to v0.10, folded into the P3 lexicon design. Honest, shippable in
-  days, fixes a real (anchor) failure class, but recall moves 0/8 → ~2/8.
+  (V1/V2-split/V3/V5/V6). Recall exit: **anchor-placement verification only** —
+  the V2 pre-flight's site-state probe (site units for lines 789/791 judged
+  3× each) measures whether site anchors land within ±1 AND cross the 0.80
+  gate WITHOUT domain facts; if they do not, Option A's honest exit is 0/8
+  golden recall with the anchor mechanism in place for when facts arrive
+  (per §2(a), B2/M2 need anchor AND recognition — a site anchor alone does
+  not make a finding land). E3/E4/E6 move to v0.10, folded into the P3
+  lexicon design. Honest, shippable in days.
 - **Option B — bring the lexicon forward.** v0.9 = E1 + E2 + P3 lexicon v1 (small,
   sourced: IAM multivalued keys, CloudTrail eventCategory semantics, logGroupArn
   suffix rules, CloudTrail field casing — the four measured classes) + E6 with its
@@ -144,12 +150,15 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   top-level cutters exactly as today. Sites: object-literal property assignments,
   call-argument expressions, conditional expressions, and sibling-constant
   declarations become first-class anchors (tree-sitter node kinds for TS/JS; `ast`
-  walk for Python). `--max-hunks` interaction (per OQ1 "no run-level site cap"):
-  `--max-hunks` continues to cap TOP-LEVEL CLUSTERS pre-expansion; site units are
-  EXEMPT from the post-expansion truncation — a cluster admitted to judging is
-  judged in full at site granularity. Ceiling drops keep the existing
-  incomplete-review banner at cluster level, and its denominator becomes the
-  pre-expansion cluster count + expanded site count of admitted clusters.
+  walk for Python).  `--max-hunks` interaction (per OQ1 "no run-level site cap"): BEHAVIOR
+  CHANGE — truncation MOVES AHEAD OF EXPANSION: the ceiling caps TOP-LEVEL
+  CLUSTERS before any cutting (counted by parent cluster); once a cluster is
+  admitted, its sites are never truncated. (Today the ceiling applies
+  post-expansion to `kept` — the default run's 6 drops came out of 46
+  expanded units; leaving that in place would truncate ~168 site units
+  against the default 40, exactly the cap OQ1 forbids.) Ceiling drops keep
+  the existing incomplete-review banner, with its denominator = admitted
+  top-level clusters.
   Call growth: the ruled 3–6× envelope is SUPERSEDED by measurement —
   top-level cutting alone measured 8.8× on the golden range (Problem 6); the
   model-off site-count gate (V7) must bring the median within a re-ruled
@@ -202,12 +211,11 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   `tree_sitter_typescript` wheels join the supported-install path with EXACT pinned
   versions recorded in the install check and stamped into each ledger record
   (grammar determinism). `--version` runs a per-cutter self-check (parse a known
-  snippet per language) and reports per-cutter availability INTO THE LEDGER — so
-  "cutter never engaged" is always distinguishable from "cutter unavailable".
-  IMPLEMENTATION NOTE (Opus M7): the check runs inside EVERY run (before
+  snippet per language); the same check runs inside EVERY run (before
   packaging) and stamps per-cutter availability + pinned wheel versions into
-  each ledger record; `--version` prints the same table but argparse
-  `action="version"` exits before main(), so `--version` alone writes nothing.
+  each ledger record (`--version` prints the table but argparse
+  `action="version"` exits before main(), so `--version` alone writes
+  nothing).
   The lazy import seam and CI-without-wheels behavior stay exactly as ratified
   2026-10-02. **HARD PRECONDITION (Opus r1 B2):** any V2/V5 measurement run aborts
   unless the per-cutter self-check reports TS cutting AVAILABLE in the running
@@ -216,9 +224,12 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   wheels present in one python3 and absent in another produced the 46-vs-168-unit
   discrepancy between runs of the same commit.)
 - **E6 — test-file question variant (Kurt, OQ2 ruling; deterministic routing + own
-  threshold per M3/M4).** ROUTING (deterministic, no convention inference): path
-  component in {`tests`, `test`, `__tests__`, `spec`, `specs`} OR basename matching
-  `*.test.*` / `*.spec.*` / `*_test.*` / `test_*.*`; a documented override flag
+  threshold per M3/M4).**  ROUTING (deterministic, no convention inference): path
+  component in {`tests`, `test`, `__tests__`} OR basename matching
+  `*.test.*` / `*.spec.*` / `*_test.*` / `test_*.*`. The `spec`/`specs`
+  DIRECTORY components were removed (Opus r2: production TS like
+  `src/spec/openapi-builder.ts` must not route to the test rubric); a
+  documented override flag
   exists for misroutes. The variant's `is_real_issue` asks "does this test fail to
   actually test anything?" (placeholder/import-justifying tests, assertions on
   imports, tests that cannot fail); `severity` criteria and `category` values stay.
@@ -260,14 +271,17 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   `hunk_state()` (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
   BASELINE build runs TWICE on the five defect-free negative heads + the three
-  `reproof:` ranges — observed verdict/findings delta defines the noise band;
+  `reproof:` ranges — `reproof:A6fix` (SynapseTree-login `d70d225..9e70ec0`),
+  `reproof:ct-61cluster` (curated-thoughts `9806333f..d40d300`), and
+  `reproof:wf59-fixdelta` (SynapseTree `2577539..cb98858`) — observed
+  verdict/findings delta defines the noise band;
   (b) the new build must show no reported-findings increase beyond that band;
-  (c) like-for-like verdict comparison: baseline findings replayed through the new
-  compose() — flips caused SOLELY by the per-declaration major rule are counted and
-  reported separately, not forbidden. PREREQUISITE (Opus M6): judged entries gain a
+  (c) like-for-like verdict comparison: the NEW build's findings run twice —
+  once through flat compose, once through per-declaration compose — with flips
+  caused SOLELY by the per-declaration rule counted and reported separately.
+  PREREQUISITE (Opus M6/r2): judged entries gain a
   `parent_declaration` id and `rewrap` carries it forward; old v08 ledgers have
-  neither, so the replay uses the NEW build's findings run twice (flat vs
-  per-declaration compose), not replayed v08 records;
+  neither, so replayed v08 records are not used for this comparison;
   (d) M5 sub-gate: clean negative-head units rerun with a synthetic fact
   force-attached — is_real must stay below the report gate (anchoring bound).
 - **V4 detector screens (model off):** every E4 detector runs over the 47-PR corpus
@@ -283,10 +297,13 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   list for those files (committed with the manifest, m5), not the heuristic
   itself.
 - **V7 site-count gate (new, per Opus M4):** model-off census of site counts over
-  the golden range and the 47-PR corpus; if the MEDIAN expansion exceeds a
-  re-ruled envelope (the measured 8.8× top-level baseline says the old 3–6×
-  ruling is dead), the size floor tightens before any model spend. Rerun until
-  the census passes, then V2/V5 may spend.
+  the golden range and the 47-PR corpus; gate = MEDIAN expansion ≤ 5× the
+  cluster count (proposed envelope, pending Kurt's confirm — the measured
+  top-level baseline is 8.8×, so the E2 size floor must first be measured
+  doing its job); the floor may tighten at most TWICE, and a tightening that
+  drives median site size above 120 lines (i.e. collapses sites back toward
+  top-level units) is FORBIDDEN — that would silently undo the anchor fix
+  (Opus r2). Rerun until the census passes, then V2/V5 may spend.
 
 ## Non-goals
 
@@ -304,8 +321,11 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
 ## Open questions — ALL RULED (Kurt, msg 1561746424616460349, "1,2,1")
 
 - **OQ1 — RULED (1):** accept the 3–6× call envelope; no run-level site cap.
-  (B1 operationalization: `--max-hunks` caps top-level clusters pre-expansion; site
-  units exempt — the cap the ruling forbids is the post-expansion one.)
+  (B1 operationalization: `--max-hunks` caps top-level clusters BEFORE
+  expansion; sites of admitted clusters are never truncated.)
+  **SUPERSEDED IN PART by measurement (rev 4/5):** top-level cutting alone
+  measured 8.8× (Problem 6); the concrete envelope is now V7's proposed
+  median ≤ 5×, pending Kurt's confirm.
 - **OQ2 — RULED (2):** test-file question variant added as E6 (scope + Non-goals
   updated accordingly; deterministic routing + piloted threshold per M3/M4).
 - **OQ3 — RULED (1):** one release — E1 stamp + E5 wheels + E2/E3/E4 cutting ship
