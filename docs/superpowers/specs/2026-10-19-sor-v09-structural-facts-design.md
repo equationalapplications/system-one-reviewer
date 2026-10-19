@@ -1,15 +1,18 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
-Date: 2026-10-19 (rev 3 — GLM Tier-2 cycle 1 adjudicated: 14 REAL / 1 PARTIAL / 0 FP,
-dispositions in `2026-10-19-sor-v09-structural-facts-glm-r1-dispositions.md`; §1/§2/§3
-corrected to the ledger, E1 reworked per M6, E2 engagement + `--max-hunks` interaction
-stated per B1, compose guard declared NEW per B2, E3/E4 structured-row contract per M5,
-E5 pinned wheels + per-cutter self-check per M2/m4, E6 deterministic routing + own
-threshold pilot per M3/M4, V3 re-operationalized per B2, V6 routing gate added per M4.)
-Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt, msg 1561746424616460349 ("1,2,1"): accept the
-3–6× call envelope, no run-level site cap; ADD the test-file question variant (E6); one
-release, V5 is the release gate.
-Status: DRAFT rev 3 — in review ladder (cycle 1 fixes applied; Opus delta next)
+Date: 2026-10-19 (rev 4 — Opus Tier-3 r1 adjudicated: verdict BLOCKED, 2 BLOCKER
+confirmed REAL after verification. **V0 gate executed and FAILED**: structured
+E3-schema rows without conclusion text do NOT lift Jev past the gate (M3 0.44→0.36,
+N4 0.31→0.37; only N3 crossed, from an already-clean 0.51; details below). Root
+cause of §3 confirmed and fixed: the cutters DID engage in prior runs; the wheels
+were missing from the BINARY'S interpreter (a different python3 than the one
+wheels were first tested under); wheels now installed there and the rerun measures
+top-level cutting at 46→168 units (8.8×) — EXCEEDING the OQ1 3–6× envelope, which
+must be re-ruled. E3/E4 recall premise is dead as specified; the direction fork
+goes to Kurt.)
+Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
+Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
+Status: DRAFT rev 4 — DIRECTION FORK, awaiting Kurt's pick (see THE FORK)
 Scope: `system-one-reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
@@ -55,16 +58,62 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
    `packaging_version` are written from the single constant `PACKAGING_VERSION`, and
    the window fallback stamps the same `wire_format` input as a cut run — the D7
    like-for-like comparison contract is unenforceable on today's outputs.
-5. **But the model responds to deterministic facts — decisively.** Fact-sensitivity
-   probe (`docs/benchmarks/2026-10-19-fact-probe-results.json`, script
-   `docs/benchmarks/2026-10-19-fact-probe.py`; states hand-built, no `+`/`-` entry
-   prefixes, 3 context lines — tracks production within ~0.04 on all six units):
-   one hand-written fact row per defect-bearing unit, 3 clean vs 3 fact calls each,
-   repeats within ±0.04: **6/6 units moved up; 7 of 8 defects (5 of 6 units) crossed
-   the 0.50 is_real gate** — B1+N1 0.31→0.96, B2+M2 0.55→0.95, M1 0.45→0.94,
-   M3 0.43→0.88, N3 0.52→0.76; only N4 stays under (0.31→0.39, and its fact severity
-   0.53 also fails compose's sev≥1 report gate). The judge is not the bottleneck;
-   the state it sees is.
+5. **The model responds to CONCLUSIONS, not to structure — measured both ways.**
+   First probe (`docs/benchmarks/2026-10-19-fact-probe-results.json`): hand-written
+   prose facts stating the CONCLUSION moved 6/6 units; 7 of 8 defects (5/6 units)
+   crossed 0.50. **V0 gate (Opus r1 B1; `docs/benchmarks/2026-10-19-v0-probe-results.json`,
+   script `v0-probe.py`): the same units re-probed with rows in the EXACT E3 schema —
+   kind enum, identifier, span, count/presence note, ZERO conclusion text — moved
+   NOTHING past the gate: M3 0.44→0.36 (DOWN), N4 0.31→0.37 (still under); N3
+   0.51→0.60 crossed only from an already-clean start.** Conclusion: Jev uses
+   semantic/domain conclusions when a reviewer states them; bare structural
+   observations without domain interpretation are inert. SOR's recall gap cannot be
+   closed by domain-free structural facts (P2) — the working ingredient is the
+   domain-lexicon class (P3), which requires sourced-row governance.
+6. **Measured cutting cost exceeds the ruled envelope.** With wheels installed in
+   the binary's actual interpreter, top-level cutting on the golden range yields
+   46→168 units (8.8× the cluster count) — beyond the OQ1 3–6× ruling, and BEFORE
+   decision-site subdivision. The envelope needs a re-rule informed by this number
+   and by the size floor's measured reduction.
+
+## THE FORK (Kurt's pick; replaces the E3/E4 recall premise)
+
+The ladder has now measured the mechanism from both ends. What survives:
+
+- **E1 honest stamp + E2 site cutting are untouched and validated as the anchor
+  fix** — the B2/M2 class (2/8) is an anchor-placement failure, and site anchors
+  fix it with zero facts. This is worth shipping regardless.
+- **E4 domain-free structural detectors do not lift recall (V0, measured).** As
+  recall levers they are dead. Their only surviving use would be as report
+  annotations, which has no measured value.
+- **The recall lever is P3 — domain conclusions with sourced provenance** (the
+  first probe: prose conclusions lifted 5/6 units, including all three
+  domain-classes 0.45–0.55 → 0.94–0.96). That is a bigger lift: a curated AWS
+  lexicon with sourced-row governance (every row: source URL + date + validator),
+  because conclusions cannot be derived domain-free.
+
+Options for v0.9:
+- **Option A — anchor release (smallest).** v0.9 = E1 + E2 + E5 + telemetry gates
+  (V1/V2-split/V3/V5/V6). Recall exit: anchor-class 2/8 + no precision regression.
+  E3/E4/E6 move to v0.10, folded into the P3 lexicon design. Honest, shippable in
+  days, fixes a real (anchor) failure class, but recall moves 0/8 → ~2/8.
+- **Option B — bring the lexicon forward.** v0.9 = E1 + E2 + P3 lexicon v1 (small,
+  sourced: IAM multivalued keys, CloudTrail eventCategory semantics, logGroupArn
+  suffix rules, CloudTrail field casing — the four measured classes) + E6 with its
+  piloted threshold. Recall exit: ≥5/8 per the prose-probe upper bound, V3
+  precision gates as written. Highest value, biggest lift (lexicon authoring +
+  governance is real work), and it changes SOR's maintenance profile (a curated
+  knowledge base ships with the tool).
+- **Option C — triage re-scope (run-1 D4, revived).** Accept that a System One
+  judge cannot recognize these classes; stop asking it to gate. v0.9 = E1 + E2 +
+  verdict demotion for structural classes: SOR outputs ranked site-level findings
+  as TRIAGE for the paid tiers, no Changes-requested authority. Cheapest honest
+  repositioning, but abandons the autonomous-recall goal.
+
+Tessera's advisory (non-binding): **B**, with A as the fallback if lexicon
+governance stalls — the probe evidence says conclusions are the only lever that
+moves Jev, and the four measured classes are small enough to govern properly.
+E6 (test variant) rides along in either option per the OQ2 ruling.
 
 ## Design (E-numbers continue the v0.2 scheme)
 
@@ -94,7 +143,11 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
   forbidding it; (b) pure-data sites (e.g. 60-entry array literals) get a size
   floor; (c) no-op guard retained — site set == changed set → judge whole / leaf
   immediately (no depth-cap recursion).
-- **E3 — `structural_facts` state key (P2 substrate; structured rows per M5).**
+- **E3 — `structural_facts` state key (P2 substrate; GATED — see THE FORK).**
+  V0 measured this mechanism inert for recall (Problem 5/6). The contract below is
+  retained as the SPEC for any future facts system (P3 lexicon rows would ride the
+  same key with sourced `note` provenance fields added); it ships in v0.9 ONLY if
+  Option B is picked.
   Packaging may attach zero or more fact rows to a unit state. Rows are STRUCTURED:
   `kind` (fixed enum), `id` (identifier string validated
   `^[A-Za-z_$][A-Za-z0-9_$]*$`), `span` (integer line pair), `note` (fixed-vocabulary
@@ -104,8 +157,8 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
   as `references_remaining`/`ast_context`). Facts are EVIDENCE, never verdicts: they
   never gate, never compose, and are always attributable in the report
   (`facts: [...]` per finding).
-- **E4 — detector library v1 (tree-sitter query DSL, domain-free; priority per the
-  M1 taxonomy).** Detectors emit only E3-structured rows, ≤N per unit:
+- **E4 — detector library v1 (tree-sitter query DSL, domain-free; GATED — V0
+  measured NO recall lift; see THE FORK).** Detectors emit only E3-structured rows, ≤N per unit:
   (1) branch-name polarity — condition identifier tokens vs branch constructor
   tokens (M3 class, the deepest P2-covered failure);
   (2) writer/reader field symmetry — fields written into a typed object never read
@@ -124,7 +177,12 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
   snippet per language) and reports per-cutter availability INTO THE LEDGER — so
   "cutter never engaged" is always distinguishable from "cutter unavailable". The
   lazy import seam and CI-without-wheels behavior stay exactly as ratified
-  2026-10-02.
+  2026-10-02. **HARD PRECONDITION (Opus r1 B2):** any V2/V5 measurement run aborts
+  unless the per-cutter self-check reports TS cutting AVAILABLE in the running
+  interpreter — a silent window fallback must be impossible on a measurement run.
+  (Measured root cause 2026-10-19: the binary's interpreter is a distinct venv;
+  wheels present in one python3 and absent in another produced the 46-vs-168-unit
+  discrepancy between runs of the same commit.)
 - **E6 — test-file question variant (Kurt, OQ2 ruling; deterministic routing + own
   threshold per M3/M4).** ROUTING (deterministic, no convention inference): path
   component in {`tests`, `test`, `__tests__`, `spec`, `specs`} OR basename matching
