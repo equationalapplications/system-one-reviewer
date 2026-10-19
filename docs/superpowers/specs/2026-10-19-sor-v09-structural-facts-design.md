@@ -1,9 +1,15 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
-Date: 2026-10-19 (rev 1 draft — awaiting Kurt's approval; then review ladder)
-Status: DRAFT
+Date: 2026-10-19 (rev 2 — OQ1/OQ2/OQ3 ruled by Kurt, msg 1561746424616460349:
+"1,2,1". OQ1: accept the 3–6× call envelope, no run-level site cap. OQ2: ADD the
+test-file question variant (E6 — scope line updated accordingly). OQ3: one release —
+stamp fix + wheels + cutting ship together, V5 is the release gate. Awaiting review
+ladder.)
+Status: DRAFT rev 2 — rulings applied, ladder next
 Scope: `system-one-reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
-docs. No provider/API changes; no question-set changes (packaging-version bump only).
+docs. No provider/API changes; NO changes to the generic code-change question set
+(HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
+ruling). Packaging-version bump.
 Evidence base (all measured 2026-10-19, artifacts in
 `~/Documents/equational-wiki/records/investigations/2026-10-19-sor-quality-fable-step0-guidance/`,
 receipts copied in-repo under `examples/` + `docs/benchmarks/`):
@@ -74,14 +80,25 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
   the supported-install path (README + install check in `--version`); the lazy
   import seam and CI-without-wheels behavior stay exactly as ratified 2026-10-02.
 
+- **E6 — test-file question variant (Kurt, OQ2 ruling).** Test-file units get a
+  question set adapted to test-quality instead of production-bug scoring: the
+  `severity` criteria stay, `is_real_issue` becomes "does this test fail to actually
+  test anything?" (placeholder/import-justifying tests, assertions on imports,
+  tests that cannot fail), and `category` gains no new values. Applies to units
+  whose file lives under a test directory or matches the repo's test-name
+  conventions. Target: the N4 class (probe: 0.31→0.39 under the generic set)
+  crosses the 0.50 gate under the test variant, with NO is_real increase on
+  production-code units (they never see the variant).
+
 ## Validation protocol (exit contract — every gate measured, none argued)
 
 - **V1 fixture regression:** the saturated fixture golden stays 5/5 with precision
   1.0 under site-level cutting (run-2 missing experiment #5).
 - **V2 golden recall:** 8-defect Stage A golden rerun on the P1+P2 build.
   **Exit ≥ 4/8** (M3, N3, N1, N4 are the P2-covered classes); stretch 6–7/8 if
-  site-level anchors localize B2/M2 past the gate. Any recall claim cites the
-  E1-stamped cutting path per unit.
+  site-level anchors localize B2/M2 past the gate. With E6 active, N4-class sites
+  are additionally judged under the test variant — target: crossing the gate there
+  too. Any recall claim cites the E1-stamped cutting path per unit.
 - **V3 negative arm (precision):** the five defect-free negative heads and the three
   `reproof:` ranges (A6fix, ct-61cluster, wf59-fixdelta) must show NO increase in
   reported findings per run and no verdict flip beyond the calibration run's own
@@ -102,16 +119,13 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
   v0.10 once v0.9 measures how much P1+P2 alone recover. Design notes for it stay in
   the run-2 memo.
 - P4 contrastive choice questions: fixture-experiment only, no production wiring.
-- No threshold changes, no question-set changes, no new providers.
+- No threshold changes; the generic code-change question set is untouched (the E6
+  test-file variant is a separate set scoped to test files); no new providers.
 
-## Open questions (Kurt's rulings before ladder)
+## Open questions — ALL RULED (Kurt, msg 1561746424616460349, "1,2,1")
 
-- **OQ1** — site-ceiling number: memo estimates 3–6× calls on cluster-heavy ranges
-  (still cents). Accept the 3–6× envelope, or cap sites per run (e.g. 200) with the
-  over-cap landing in the existing incomplete-review banner?
-- **OQ2** — N4-class (test-code defects) stays under the gate even with facts
-  (0.39). Accept as known limitation for v0.9, or add a test-file question variant
-  (scope creep risk)?
-- **OQ3** — does the v0.9 release bump the minor version with the stamp fix + wheels
-  in the same release as the cutting change (recommended: yes, one release, V5 is
-  its gate), or split?
+- **OQ1 — RULED (1):** accept the 3–6× call envelope; no run-level site cap.
+- **OQ2 — RULED (2):** test-file question variant added as E6 (scope + Non-goals
+  updated accordingly).
+- **OQ3 — RULED (1):** one release — E1 stamp + E5 wheels + E2/E3/E4 cutting ship
+  together; V5 is the release gate.
