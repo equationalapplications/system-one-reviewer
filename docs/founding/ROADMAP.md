@@ -21,7 +21,7 @@ from written adjudications. Persist every report; an adjudications ledger
 (sustained/rejected keys per reflex class); a stats command printing
 sustained rate, cost per sustained finding, and firing counts per class.
 
-**S1 — High-bar replay, model off** [PLANNED → **MEASURED 2026-10-19**]
+**S1 — High-bar replay, model off** [ADOPTED — Kurt, msg 1561773701530386494]
 Why first: zero cost; decides whether the generic rubric keeps any verdict
 role. Method: sweep stored per-unit is_real scores (six Oct 15–19 window
 runs, six Oct 2 fixture runs, v08-gates corpus replay) at bars
@@ -34,9 +34,11 @@ calls): the 48 window FPs max out at is_real 0.76; the separating zone is
 (~22%) survive, but NO bar preserves full 5/5 per-run fixture recall
 (0/35 runs at 0.80)**. A zero-FP reflex exists today at bar 0.80+ over
 roughly a fifth of the fixture class; the generic question cannot be a
-full-recall reviewer at any bar. ADOPTION of bar 0.80 as the reflex gate
-(and retirement of the 5/5 expectation) is the pending Kurt ruling from
-this measurement.
+full-recall reviewer at any bar.
+**ADOPTED (Kurt, 2026-10-19): bar 0.80 is the reflex gate.** Findings
+below 0.80 become silent telemetry; the 5/5-fixture expectation is
+retired in favor of "fires only when solid" (INTENT rule 4/6b). The
+code-side change (gate constant + telemetry demotion) rides the v0.9 PR.
 
 **S2 — Receptive-field census + boundary write-back into INTENT.md** [PLANNED]
 Why here: turns "what SOR must never cover" from prose into a measured

@@ -128,10 +128,10 @@ the bar is treated as a bug, not a nuisance.
 *Why:* a false positive costs a person's time and often a paid re-review —
 strictly more than SOR saves.
 
-**Status: Open decision.** Current behavior fails this rule (measured
-2026-10-19: 0 of 48 findings across the week's fix-window runs survived
-adjudication; one run put 21 findings on a fix commit and all were
-rejected). Meeting this rule is the v0.9 work.
+**Status: Planned.** The reflex gate is **adopted at is_real 0.80**
+(Kurt, 2026-10-19, from the R1 sweep: zero of 48 wild false positives
+reach 0.80; code-side change rides the v0.9 PR). Current behavior still
+reports at 0.50 and fails this rule until that lands.
 
 ### 5. SOR does not cover what an LLM covers better
 
