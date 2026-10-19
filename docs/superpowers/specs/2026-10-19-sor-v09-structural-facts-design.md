@@ -1,9 +1,9 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
-Date: 2026-10-19 (rev 8 — Opus r4 delta adjudicated: ALL prior findings FIXED;
-R4 fixed (V2 Option B bar aligned to ≥5/8 with three repeats, matching THE
-FORK and ROADMAP S6); N3 Option C exit added; N4 Option A pass condition
-pinned as anchor-placement, distinct from crossing 0.80.)
+Date: 2026-10-19 (rev 9 — Opus r5 delta: APPROVE WITH NITS; both nits applied
+(D1 THE FORK Option A gate/fallback split to match V2/S5; D2 Option B =
+≥5/8 in EACH of three repeats, negative heads clean, detector-alone arm
+reported — full S6 gate).)
 Date rev 7: Opus r3 delta adjudicated (2a fixed for real; R1 per-option exit
 contract; R2 banner denominator; R3 V7 terminal outcome; N1/N2).
 Date rev 6: Opus r2 delta adjudicated (4 REAL, all fixed).
@@ -11,7 +11,7 @@ Date rev 5: Opus r1 M/minor fixes + optional research annex.
 Date rev 4: Opus r1 BLOCKERs resolved (V0 executed; root cause fixed).
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 8 — Opus delta convergence round
+Status: DRAFT rev 9 — Opus r5 APPROVE WITH NITS (nits applied); next: Fable final-spec gate
 Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
@@ -101,12 +101,11 @@ The ladder has now measured the mechanism from both ends. What survives:
 Options for v0.9:
 - **Option A — anchor release (smallest).** v0.9 = E1 + E2 + E5 + telemetry gates
   (V1/V2-split/V3/V5/V6). Recall exit: **anchor-placement verification only** —
-  the V2 pre-flight's site-state probe (site units for lines 789/791 judged
-  3× each) measures whether site anchors land within ±1 AND cross the 0.80
-  gate WITHOUT domain facts; if they do not, Option A's honest exit is 0/8
-  golden recall with the anchor mechanism in place for when facts arrive
-  (per §2(a), B2/M2 need anchor AND recognition — a site anchor alone does
-  not make a finding land). E3/E4/E6 move to v0.10, folded into the P3
+  the V2 pre-flight's site-state probe measures whether site anchors land
+  within ±1. GATE: anchored within ±1 (per V2/S5). FALLBACK: if a site
+  anchors but does not cross the 0.80 gate (recognition is out of scope
+  under A), the honest exit is 0/8 golden recall with the anchor mechanism
+  in place. E3/E4/E6 move to v0.10, folded into the P3
   lexicon design. Honest, shippable in days.
 - **Option B — bring the lexicon forward.** v0.9 = E1 + E2 + P3 lexicon v1 (small,
   sourced: IAM multivalued keys, CloudTrail eventCategory semantics, logGroupArn
@@ -275,17 +274,18 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   site unit (anchor placement, NOT crossing 0.80 — recognition is out of
   scope under A; this is also what ROADMAP S5's "B2/M2 anchor-class
   recovered" means); the honest fallback exit is 0/8 with the anchor
-  mechanism in place. Option B: **≥ 5/8** with three repeats (aligned with
-  THE FORK's Option B and ROADMAP S6; the prose-probe upper bound supports
-  it), with the attainable ceiling reported, counting anchor-class and
-  recognition-class recoveries separately. Option C: same anchor-placement
-  exit as A, plus a check that verdict demotion leaves NO Changes-requested
-  output anywhere. In ALL options and BOTH arms of every comparison
-  (baseline and new build), "reported" means is_real ≥ **0.80** — the
-  adopted reflex gate (N2; a comparison where the baseline reports at 0.50
-  and the new build at 0.80 passes trivially and is invalid). Every claim
-  cites the E1 `wire_format` + per-unit `cut` field. V2-priming runs rebuild
-  states via `hunk_state()` (m6).
+  mechanism in place. Option B: **≥ 5/8 in EACH of three repeats** (aligned
+  with THE FORK's Option B and ROADMAP S6, including S6's full gate: negative
+  heads clean AND the lexicon/detector-alone arm reported alongside the
+  full-facts arm), with the attainable ceiling reported, counting
+  anchor-class and recognition-class recoveries separately. Option C: same
+  anchor-placement exit as A, plus a check that verdict demotion leaves NO
+  Changes-requested output anywhere. In ALL options and BOTH arms of every
+  comparison (baseline and new build), "reported" means is_real ≥ **0.80** —
+  the adopted reflex gate (N2; a comparison where the baseline reports at
+  0.50 and the new build at 0.80 passes trivially and is invalid). Every
+  claim cites the E1 `wire_format` + per-unit `cut` field. V2-priming runs
+  rebuild states via `hunk_state()` (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
   BASELINE build runs TWICE on the five defect-free negative heads + the three
   `reproof:` ranges — `reproof:A6fix` (SynapseTree-login `d70d225..9e70ec0`),
