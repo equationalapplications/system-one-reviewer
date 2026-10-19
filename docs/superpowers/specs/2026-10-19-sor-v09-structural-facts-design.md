@@ -1,17 +1,18 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
-Date: 2026-10-19 (rev 5 — Opus r1 M1–M7 + m1–m7 mandatory fixes applied
-(dispositions: `...-opus-r1-dispositions.md`); B1/B2 were already resolved in
-rev 4 (V0 executed/failed; root cause found+fixed). OPTIONAL research annex
-added (`...-optional-suggestions.md`) — reviewers may adopt its items into the
-spec; they are not commitments. §3 corrected per Opus B2: the cutters DID
-engage (19 clusters → 46 units); the fall-through cause was missing wheels in
-the binary's own interpreter — verified, installed, and measured (168 units
-with cutting live).)
+Date: 2026-10-19 (rev 7 — Opus r3 delta adjudicated: prior items 1/2b/3/4
+FIXED; 2(a) actually fixed this rev (model-on 789/791 site-state sub-step in
+V2, after the model-off census); R1 per-option V2 exit contract; R2 banner
+denominator = TOTAL top-level clusters with admitted as numerator, skipped
+entries one per dropped cluster; R3 V7 terminal outcome (two tightenings
+then E2 does not ship in v0.9 — envelope returns to Kurt); N1 rev number
+corrected; N2 gate pinned at 0.80 for BOTH arms of every comparison.)
+Date rev 6: Opus r2 delta adjudicated (4 REAL, all fixed).
+Date rev 5: Opus r1 M/minor fixes + optional research annex.
+Date rev 4: Opus r1 BLOCKERs resolved (V0 executed; root cause fixed).
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 5 — in Opus delta cycle (rev-4 BLOCKED verdict resolved;
-mandatory fixes applied; optional research annex attached for reviewer adoption)
+Status: DRAFT rev 7 — Opus delta convergence round
 Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
@@ -157,8 +158,11 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   post-expansion to `kept` — the default run's 6 drops came out of 46
   expanded units; leaving that in place would truncate ~168 site units
   against the default 40, exactly the cap OQ1 forbids.) Ceiling drops keep
-  the existing incomplete-review banner, with its denominator = admitted
-  top-level clusters.
+  the existing incomplete-review banner, with its denominator = the TOTAL
+  number of top-level clusters (admitted clusters are the numerator — a
+  banner reading 40/40 while 10 clusters were dropped violates INTENT rule
+  7), and `skipped[].reason = max-hunks>ceiling` entries are written ONE PER
+  DROPPED CLUSTER so ledger audits still detect incomplete runs.
   Call growth: the ruled 3–6× envelope is SUPERSEDED by measurement —
   top-level cutting alone measured 8.8× on the golden range (Problem 6); the
   model-off site-count gate (V7) must bring the median within a re-ruled
@@ -255,18 +259,26 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   a second fixture with planted TS defects at known lines exercises the
   tree-sitter site path — V1 is not green on the Python leg alone.
 - **V2 golden recall (config pinned per m3):** 8-defect Stage A golden rerun on the
-  P1+P2 build at FULL coverage with an explicit `--max-hunks` value (sites exempt
-  per E2). Pre-flight, MODEL OFF (Opus M3): run the site cutter over the range
+  build for the OPTION PICKED in THE FORK (per-option exit contract, Opus r3 R1)
+  at FULL coverage with an explicit `--max-hunks` value (sites exempt per E2).
+  PRE-FLIGHT, MODEL OFF (Opus M3/r2): run the site cutter over the range
   and confirm every golden line has some unit anchor within ±1 before spending
   model calls — an absence-type defect (N3's missing gate has no syntax node to
   anchor on) documents its anchoring rule explicitly: a fact's `span` does NOT
   move a unit anchor in v0.9; anchors are cutter-produced only, and a defect
   with no anchorable site is reported as a coverage note, never a finding.
-  Pre-flight also records the ATTAINABLE CEILING (which defects have anchors
-  and in-scope mechanisms) next to the exit bar (Opus M2). **Exit ≥ 4/8**, with
-  the M1-taxonomy split reported: anchor-class recoveries (B2/M2) counted
-  separately from recognition-class recoveries (M3/N3/N1 via E4 facts; N4 via
-  E6 at its piloted thresholds). Stretch 6–7/8. Every claim cites the E1
+  PRE-FLIGHT, MODEL ON (Opus r3 2a — runs only after the model-off census
+  passes): the B2/M2 site units (lines 789/791) judged 3× each at the 0.80
+  gate, measuring whether site anchors land within ±1 AND cross the gate
+  WITHOUT domain facts.
+  **EXIT CONTRACT IS PER OPTION.** Option A: anchor-placement measurement
+  only — honest fallback exit is 0/8 golden recall with the anchor mechanism
+  in place. Option B: **≥ 4/8** with the attainable ceiling reported, counting
+  anchor-class and recognition-class recoveries separately. In ALL options
+  and BOTH arms of every comparison (baseline and new build), "reported"
+  means is_real ≥ **0.80** — the adopted reflex gate (N2; a comparison where
+  the baseline reports at 0.50 and the new build at 0.80 passes trivially and
+  is invalid). Stretch under Option B: 6–7/8. Every claim cites the E1
   `wire_format` + per-unit `cut` field. V2-priming runs rebuild states via
   `hunk_state()` (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
@@ -274,7 +286,8 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   `reproof:` ranges — `reproof:A6fix` (SynapseTree-login `d70d225..9e70ec0`),
   `reproof:ct-61cluster` (curated-thoughts `9806333f..d40d300`), and
   `reproof:wf59-fixdelta` (SynapseTree `2577539..cb98858`) — observed
-  verdict/findings delta defines the noise band;
+  verdict/findings delta defines the noise band; "findings" in BOTH arms
+  means is_real ≥ **0.80** (N2, same pin as V2);
   (b) the new build must show no reported-findings increase beyond that band;
   (c) like-for-like verdict comparison: the NEW build's findings run twice —
   once through flat compose, once through per-declaration compose — with flips
@@ -303,7 +316,10 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   doing its job); the floor may tighten at most TWICE, and a tightening that
   drives median site size above 120 lines (i.e. collapses sites back toward
   top-level units) is FORBIDDEN — that would silently undo the anchor fix
-  (Opus r2). Rerun until the census passes, then V2/V5 may spend.
+  (Opus r2). **TERMINAL OUTCOME (Opus r3 R3):** if the census still fails
+  after both tightenings, E2 does NOT ship in v0.9; the census numbers go
+  back to Kurt with the envelope decision. When the census passes, V2/V5 may
+  spend.
 
 ## Non-goals
 
