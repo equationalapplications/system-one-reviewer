@@ -11,11 +11,13 @@ Date rev 5: Opus r1 M/minor fixes + optional research annex.
 Date rev 4: Opus r1 BLOCKERs resolved (V0 executed; root cause fixed).
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 9 — Opus r5 APPROVE WITH NITS (nits applied); next: Fable final-spec gate
+Status: DRAFT rev 11 — FORK RESOLVED (A+C: anchor release + triage re-scope,
+no verdict output); next: Fable final-spec gate
 Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
-(HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
-ruling). Packaging-version bump.
+(HUNK_QUESTIONS). E6 (test-file question variant) is SPECIFIED here but SHIPS in
+v0.10 under the resolved A+C fork (Option A text), unless re-scoped. Packaging-
+version bump.
 Evidence base (all measured 2026-10-19, artifacts in
 `~/Documents/equational-wiki/records/investigations/2026-10-19-sor-quality-fable-step0-guidance/`,
 receipts copied in-repo under `examples/` + `docs/benchmarks/`):
@@ -82,7 +84,16 @@ Oct 15–19 reviews; run 2: deterministic-algorithm proposals).
    decision-site subdivision. The envelope needs a re-rule informed by this number
    and by the size floor's measured reduction.
 
-## THE FORK (Kurt's pick; replaces the E3/E4 recall premise)
+## THE FORK — RESOLVED (Kurt, msg 1561825940055527437, "Yes"): **A + C combined**
+
+The anchor release (E1 + E2 + E5 + telemetry) ships WITH the triage re-scope:
+SOR emits NO Changes-requested verdicts anywhere in v0.9 — its output is ranked
+site-level triage pointers for the paid tiers (the ladder's LLM reviewers), plus
+the coverage banner. The 0.80 gate governs what surfaces as a pointer. B's
+domain fact tables are deferred to v0.10 (platform-agnostic mechanism, sourced
+rows); the wisdom-layer judgment path is deferred with no design yet. V2's exit
+below is written for the resolved A+C shape. The A/B/C text below is retained
+as the decision record.
 
 The ladder has now measured the mechanism from both ends. What survives:
 
@@ -271,23 +282,18 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   passes): the B2/M2 site units (lines 789/791) judged 3× each at the 0.80
   gate, measuring whether site anchors land within ±1 AND cross the gate
   WITHOUT domain facts.
-  **EXIT CONTRACT IS PER OPTION.** Option A: anchor-placement measurement
-  only — a defect PASSES Option A's gate when it is ANCHORED within ±1 of a
-  site unit (anchor placement, NOT crossing 0.80 — recognition is out of
-  scope under A; this is also what ROADMAP S5's "B2/M2 anchor-class
+  **EXIT CONTRACT (FORK RESOLVED: A + C).** Anchor-placement measurement: a
+  defect counts as recovered when it is ANCHORED within ±1 of a site unit
+  (anchor placement, NOT crossing a verdict gate — recognition is out of
+  scope in v0.9; this is also what ROADMAP S5's "B2/M2 anchor-class
   recovered" means); the honest fallback exit is 0/8 with the anchor
-  mechanism in place. Option B: **≥ 5/8 in EACH of three repeats** (aligned
-  with THE FORK's Option B and ROADMAP S6, including S6's full gate: negative
-  heads clean AND the lexicon/detector-alone arm reported alongside the
-  full-facts arm), with the attainable ceiling reported, counting
-  anchor-class and recognition-class recoveries separately. Option C: same
-  anchor-placement exit as A, plus a check that verdict demotion leaves NO
-  Changes-requested output anywhere. In ALL options and BOTH arms of every
-  comparison (baseline and new build), "reported" means is_real ≥ **0.80** —
-  the adopted reflex gate (N2; a comparison where the baseline reports at
-  0.50 and the new build at 0.80 passes trivially and is invalid). Every
-  claim cites the E1 `wire_format` + per-unit `cut` field. V2-priming runs
-  rebuild states via `hunk_state()` (m6).
+  mechanism in place. TRIAGE CHECK: the build emits NO Changes-requested
+  output anywhere — every surfaced observation is a ranked triage pointer,
+  and "surfaced" means is_real ≥ **0.80** (the adopted reflex gate; a
+  comparison where the baseline reports at 0.50 and the new build at 0.80
+  passes trivially and is invalid). Every claim cites the E1 `wire_format` +
+  per-unit `cut` field. V2-priming runs rebuild states via `hunk_state()`
+  (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
   BASELINE build runs TWICE on the five defect-free negative heads + the three
   `reproof:` ranges — `reproof:A6fix` (SynapseTree-login `d70d225..9e70ec0`),
