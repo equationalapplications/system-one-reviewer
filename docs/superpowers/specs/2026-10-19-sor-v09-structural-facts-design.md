@@ -1,18 +1,17 @@
 # SOR v0.9 — structural facts + decision-site cutting (structural evidence for the System One classifier)
 
-Date: 2026-10-19 (rev 7 — Opus r3 delta adjudicated: prior items 1/2b/3/4
-FIXED; 2(a) actually fixed this rev (model-on 789/791 site-state sub-step in
-V2, after the model-off census); R1 per-option V2 exit contract; R2 banner
-denominator = TOTAL top-level clusters with admitted as numerator, skipped
-entries one per dropped cluster; R3 V7 terminal outcome (two tightenings
-then E2 does not ship in v0.9 — envelope returns to Kurt); N1 rev number
-corrected; N2 gate pinned at 0.80 for BOTH arms of every comparison.)
+Date: 2026-10-19 (rev 8 — Opus r4 delta adjudicated: ALL prior findings FIXED;
+R4 fixed (V2 Option B bar aligned to ≥5/8 with three repeats, matching THE
+FORK and ROADMAP S6); N3 Option C exit added; N4 Option A pass condition
+pinned as anchor-placement, distinct from crossing 0.80.)
+Date rev 7: Opus r3 delta adjudicated (2a fixed for real; R1 per-option exit
+contract; R2 banner denominator; R3 V7 terminal outcome; N1/N2).
 Date rev 6: Opus r2 delta adjudicated (4 REAL, all fixed).
 Date rev 5: Opus r1 M/minor fixes + optional research annex.
 Date rev 4: Opus r1 BLOCKERs resolved (V0 executed; root cause fixed).
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 7 — Opus delta convergence round
+Status: DRAFT rev 8 — Opus delta convergence round
 Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS); one NEW question variant scoped to test files (E6, per Kurt's OQ2
@@ -272,15 +271,21 @@ E6 (test variant) rides along in either option per the OQ2 ruling.
   gate, measuring whether site anchors land within ±1 AND cross the gate
   WITHOUT domain facts.
   **EXIT CONTRACT IS PER OPTION.** Option A: anchor-placement measurement
-  only — honest fallback exit is 0/8 golden recall with the anchor mechanism
-  in place. Option B: **≥ 4/8** with the attainable ceiling reported, counting
-  anchor-class and recognition-class recoveries separately. In ALL options
-  and BOTH arms of every comparison (baseline and new build), "reported"
-  means is_real ≥ **0.80** — the adopted reflex gate (N2; a comparison where
-  the baseline reports at 0.50 and the new build at 0.80 passes trivially and
-  is invalid). Stretch under Option B: 6–7/8. Every claim cites the E1
-  `wire_format` + per-unit `cut` field. V2-priming runs rebuild states via
-  `hunk_state()` (m6).
+  only — a defect PASSES Option A's gate when it is ANCHORED within ±1 of a
+  site unit (anchor placement, NOT crossing 0.80 — recognition is out of
+  scope under A; this is also what ROADMAP S5's "B2/M2 anchor-class
+  recovered" means); the honest fallback exit is 0/8 with the anchor
+  mechanism in place. Option B: **≥ 5/8** with three repeats (aligned with
+  THE FORK's Option B and ROADMAP S6; the prose-probe upper bound supports
+  it), with the attainable ceiling reported, counting anchor-class and
+  recognition-class recoveries separately. Option C: same anchor-placement
+  exit as A, plus a check that verdict demotion leaves NO Changes-requested
+  output anywhere. In ALL options and BOTH arms of every comparison
+  (baseline and new build), "reported" means is_real ≥ **0.80** — the
+  adopted reflex gate (N2; a comparison where the baseline reports at 0.50
+  and the new build at 0.80 passes trivially and is invalid). Every claim
+  cites the E1 `wire_format` + per-unit `cut` field. V2-priming runs rebuild
+  states via `hunk_state()` (m6).
 - **V3 negative arm (precision; re-operationalized per B2):** (a) noise band: the
   BASELINE build runs TWICE on the five defect-free negative heads + the three
   `reproof:` ranges — `reproof:A6fix` (SynapseTree-login `d70d225..9e70ec0`),
