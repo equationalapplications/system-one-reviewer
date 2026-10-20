@@ -331,14 +331,15 @@ def test_binary_alone_is_deliberate_triage(jr, monkeypatch, tmp_path, capsys):
 def test_all_skipped_doc_reports_empty_and_logs(jr, monkeypatch, tmp_path, capsys):
     text, records = run_input(jr, monkeypatch, tmp_path, capsys,
                               doc([fdoc("img.dat", "a\0b", "a\0c")]), as_json=False)
-    assert "Empty diff" in text and "input-binary" in text
+    assert "Nothing to review: all 1 changed file(s) were skipped (see below)." in text
+    assert "Empty diff" not in text and "input-binary" in text
     assert len(records) == 1 and records[0]["mode"] == "input"
     assert records[0]["judged"] == []
 
 
 def test_empty_files_reports_empty_and_logs(jr, monkeypatch, tmp_path, capsys):
     text, records = run_input(jr, monkeypatch, tmp_path, capsys, doc([]), as_json=False)
-    assert "Empty diff" in text
+    assert "Empty diff — nothing to review" in text and "Nothing to review: all" not in text
     assert len(records) == 1 and records[0]["n_hunks"] == 0
 
 
@@ -396,13 +397,15 @@ def test_git_modes_still_carry_autojunk_key(jr, monkeypatch, tmp_path, capsys):
     from test_enrichment import _add_file_diff
     diff = _add_file_diff("m.py", ["def f():", "    return 1"])
     stub_judge(monkeypatch, jr)
-    monkeypatch.setattr(jr, "log_run", lambda rec: None)
+    records: list = []
+    monkeypatch.setattr(jr, "log_run", lambda rec: records.append(rec))
     monkeypatch.setattr(jr, "resolve_diff", lambda repo, args: (diff, "0" * 40, "staged"))
     monkeypatch.setattr(jr, "mode_file_images", lambda *a, **k: (None, None))
     monkeypatch.setattr(jr.sys, "argv", ["sor", "--repo", str(tmp_path), "--staged", "--json"])
     jr.main()
     meta = json.loads(capsys.readouterr().out)["meta"]
     assert meta["n_input_autojunk"] == 0
+    assert records[0]["n_input_autojunk"] == 0
     assert meta["repo"] == os.path.basename(os.path.realpath(str(tmp_path)))
 
 
@@ -410,5 +413,111 @@ def test_autojunk_count_reaches_meta(jr, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(jr, "INPUT_MATCH_LINES", 5)
     before = "".join(f"l{i}\n" for i in range(20))
     after = before.replace("l3\n", "L3\n").replace("l15\n", "L15\n")
-    out, _ = run_input(jr, monkeypatch, tmp_path, capsys, doc([fdoc("a.py", before, after)]))
+    out, records = run_input(jr, monkeypatch, tmp_path, capsys,
+                             doc([fdoc("a.py", before, after)]))
     assert out["meta"]["n_input_autojunk"] == 1
+    assert records[0]["n_input_autojunk"] == 1  # a degraded diff is visible in the ledger
+
+
+# ---------- triage order, line cap and the all-skipped banner ----------
+
+def lines_of(n):
+    return "".join(f"v{i} = {i}\n" for i in range(n))
+
+
+@pytest.mark.parametrize("path,reason", [
+    ("package-lock.json", "docs/generated/lockfile"),
+    ("docs/a.md", "docs/generated/lockfile"),
+    ("data/a.csv", "data/snapshot"),
+    ("dist/app.js", "docs/generated/lockfile"),
+    ("__snapshots__/a.snap", "data/snapshot"),
+])
+def test_oversize_path_triage_files_are_deliberate_triage(jr, monkeypatch, tmp_path, capsys,
+                                                          path, reason):
+    monkeypatch.setattr(jr, "INPUT_MAX_FILE_LINES", 50)
+    files = [fdoc(path, lines_of(10), lines_of(60)), fdoc("src/ok.py", "y = 1\n", "y = 2\n")]
+    out, records = run_input(jr, monkeypatch, tmp_path, capsys, doc(files))
+    assert out["skipped"] == [{"file": path, "reason": reason, "line_start": 1, "line_end": 1}]
+    assert out["meta"]["status"] == "ok" and out["n_size_skipped_code"] == 0
+    assert "incomplete review" not in out["verdict"].lower()
+    assert records[0]["n_size_skipped_code"] == 0
+
+
+def test_real_20001_line_lockfile_is_not_incomplete(jr, monkeypatch, tmp_path, capsys):
+    big = "".join(f'"p{i}": 1,\n' for i in range(20_001))
+    files = [fdoc("package-lock.json", "{}\n", big), fdoc("src/ok.py", "y = 1\n", "y = 2\n")]
+    out, _ = run_input(jr, monkeypatch, tmp_path, capsys, doc(files))
+    assert out["meta"]["status"] == "ok"
+    assert [s["reason"] for s in out["skipped"]] == ["docs/generated/lockfile"]
+
+
+def test_oversize_binary_path_file_uses_the_path_reason(jr):
+    out = jr.build_input({"head": "h", "repo": "r", "files": [
+        fdoc("dist/app.js", "a\0", "b\0"), fdoc("img.bin", "a\0", "b\0")]})
+    assert [s["reason"] for s in out["skipped"]] == ["docs/generated/lockfile", "input-binary"]
+
+
+def test_oversize_deleted_code_file_is_whole_file_deleted(jr, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(jr, "INPUT_MAX_FILE_LINES", 50)
+    files = [fdoc("src/old.py", lines_of(60), None), fdoc("src/ok.py", "y = 1\n", "y = 2\n")]
+    out, _ = run_input(jr, monkeypatch, tmp_path, capsys, doc(files))
+    assert out["skipped"] == [{"file": "src/old.py", "reason": "whole-file-deleted>cap",
+                               "line_start": 1, "line_end": 1,
+                               "change_type": "whole-file-deleted"}]
+    assert out["meta"]["status"] == "ok" and out["n_size_skipped_code"] == 0
+    assert jr.size_skipped_code(out["skipped"]) == []
+
+
+@pytest.mark.parametrize("kind", ["modified", "added"])
+def test_oversize_code_still_reads_incomplete(jr, monkeypatch, tmp_path, capsys, kind):
+    monkeypatch.setattr(jr, "INPUT_MAX_FILE_LINES", 50)
+    before = lines_of(10) if kind == "modified" else None
+    files = [fdoc("src/big.py", before, lines_of(60)), fdoc("src/ok.py", "y = 1\n", "y = 2\n")]
+    out, _ = run_input(jr, monkeypatch, tmp_path, capsys, doc(files))
+    assert out["skipped"][0]["reason"] == "hunk>input-oversize"
+    assert "change_type" not in out["skipped"][0]
+    assert out["meta"]["status"] == "incomplete review" and out["n_size_skipped_code"] == 1
+
+
+def test_single_line_cap_just_over_and_just_under(jr):
+    cap = jr.INPUT_MAX_LINE_CHARS
+    over, under = "x" * (cap + 1) + "\n", "x" * cap + "\n"
+    out = jr.build_input({"head": "h", "repo": "r", "files": [
+        fdoc("a.js", "y\n", over), fdoc("b.js", over, "y\n"), fdoc("c.js", "y\n", under),
+        fdoc("d.js", "y\n", "z\n" + over[:-1]),   # unterminated last line, over
+        fdoc("e.js", "y\n", "z\n" + under[:-1]),  # unterminated last line, at the cap
+        fdoc("gone.js", over, None)]})
+    assert [(s["file"], s["reason"]) for s in out["skipped"]] == [
+        ("a.js", "hunk>input-oversize"), ("b.js", "hunk>input-oversize"),
+        ("d.js", "hunk>input-oversize"), ("gone.js", "whole-file-deleted>cap")]
+    assert list(out["images"]) == ["c.js", "e.js"]
+
+
+def test_single_line_cap_does_not_parse_the_file(jr, monkeypatch):
+    called = []
+    monkeypatch.setattr(jr, "synthesize_file_diff", lambda *a, **k: called.append(a))
+    jr.build_input({"head": "h", "repo": "r", "files": [
+        fdoc("m.js", "y\n", "x" * (jr.INPUT_MAX_LINE_CHARS + 1))]})
+    assert called == []
+
+
+def test_banner_all_skipped_counts_distinct_files(jr, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(jr, "INPUT_MAX_FILE_LINES", 5)
+    files = [fdoc("a.py", "1\n", "2\n" * 9), fdoc("b.bin", "a\0", "b\0")]
+    text, _ = run_input(jr, monkeypatch, tmp_path, capsys, doc(files), as_json=False)
+    lines = text.split("\n")
+    assert "Nothing to review: all 2 changed file(s) were skipped (see below)." in lines
+    assert "Empty diff — nothing to review (check the range/mode)." not in lines
+    assert any(ln.startswith("Skipped") and "a.py" in ln for ln in lines)
+    assert any("Incomplete" in ln for ln in lines)
+
+
+def test_banner_empty_diff_only_without_skips_in_any_mode(jr):
+    meta = {"repo": "r", "mode": "staged", "head": "h" * 40, "n_analyzed": 0, "jev_calls": 0,
+            "total_latency_ms": 0.0, "n_hunks": 0}
+    skip = {"file": "a.py", "reason": "x", "line_start": 1, "line_end": 1}
+    empty = jr.render([], [], "Judged 0 clusters", None, None, meta)
+    assert "Empty diff — nothing to review (check the range/mode)." in empty
+    skipped = jr.render([], [skip, dict(skip), {**skip, "file": "b.py"}], "v", None, None, meta)
+    assert "Nothing to review: all 2 changed file(s) were skipped (see below)." in skipped
+    assert "Empty diff" not in skipped

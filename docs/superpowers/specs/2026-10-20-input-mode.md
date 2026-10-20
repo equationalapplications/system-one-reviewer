@@ -86,6 +86,17 @@ cutter).
   or empty `head`/`path`, duplicate `path` (after backslash normalisation),
   more than 2,000 files, more than 1,000,000 lines in total across all files
   and both sides (memory: 64 MiB of newlines is 67 million line objects).
+- `path`, `old_path`, `head` and `repo` may not contain any character that
+  `str.splitlines()` treats as a line boundary: the control rule below plus
+  U+0085, U+2028 and U+2029. The packager splits the diff with `splitlines()`,
+  so such a character in a path forges a `+++` header (reproduced in review:
+  a source file's findings were routed to a test path and held back). Paths
+  are limited to 1,024 characters (`INPUT_MAX_PATH_CHARS`).
+- `old_path` is kept only for a real rename (both sides non-null and different
+  from `path`); for an added or deleted file it is normalised to null (the
+  packager would otherwise name the hunk after `old_path` while the images are
+  keyed by `path`). A `head` that is not a 40-hex SHA is accepted as a label
+  and a warning is printed on stderr.
 - `head`, `repo`, `path`, `old_path`, `before` and `after` must round-trip
   `.encode("utf-8")`: `json.loads` accepts lone surrogates (`"\ud800"`), which
   later raise `UnicodeEncodeError` in `print(render(...))` after the model
@@ -111,10 +122,16 @@ cutter).
 Skip records have the shape the renderer and coverage code already read:
 `{"file": <path>, "reason": <reason>, "line_start": 1, "line_end": 1}`.
 
+- Path triage first, by `triage()`'s own predicates (lockfiles, docs,
+  generated, data/snapshot), with its reason strings, however large the file:
+  these are deliberate triage and never unjudged code.
 - `input-binary`: a NUL character in `before` or `after`. Deliberate triage,
   like a lockfile.
-- `hunk>input-oversize`: more than 2 MiB of text or 20,000 raw lines on either
-  side. The `hunk>` prefix is deliberate: coverage code counts only skip
+- `hunk>input-oversize`: more than 2 MiB of text, 20,000 raw lines, or any
+  single line over 100,000 characters (`INPUT_MAX_LINE_CHARS`; minified code
+  makes tree-sitter parse the file several times) on either side. An oversize
+  DELETION is `whole-file-deleted>cap` with `change_type: "whole-file-deleted"`,
+  as in the git modes, so it stays triage. The `hunk>` prefix is deliberate: coverage code counts only skip
   reasons with that prefix as unjudged code (`size_skipped_code`,
   `n_size_skipped_code`), so an oversize CODE file makes the run read
   "incomplete review" and never "ok" (INTENT rule 7).
@@ -155,18 +172,23 @@ pure rename, emit headers only and yield no cluster.
   marker `\ No newline at end of file` follows immediately, once per side,
   after that side's last `-`, `+` or context line, as git does.
 - **Matching.** Common leading and trailing lines are stripped first (git does
-  this; difflib does not). The remaining core is matched with
-  `difflib.SequenceMatcher(None, a, b, autojunk=False).get_grouped_opcodes(3)`
-  when both cores are at most 3,000 lines, formatted by this module. Above
-  that, `autojunk=True` is used: hunk boundaries are poorer but the diff is
-  still correct, and the count of such files is recorded in
-  `meta.n_input_autojunk`. Measured (the review): `autojunk=False` on 20,000
-  all-blank lines with one change takes about 65 s, on 3,000 lines under a
-  second, and `autojunk=True` about 10 ms, so the cap is what keeps a run in
-  the seconds envelope (INTENT rule 1). The stock `difflib.unified_diff` is
-  not used (it always builds `autojunk=True`). Three lines of context matches
-  git's default; the `@@` header omits `,1` counts and uses `,0` for empty
-  sides as git does.
+  this; difflib does not). If both cores are at most `INPUT_MATCH_LINES` (400)
+  lines and the per-run `INPUT_MATCH_BUDGET` (400,000, summed `len(core_a) *
+  len(core_b)`) is not spent, the core is matched with
+  `difflib.SequenceMatcher(None, a, b, autojunk=False)`, grouped with 3 lines
+  of context. Otherwise a bounded fallback is used and the file is counted in
+  `meta.n_input_autojunk`: the core is split at lines unique to both sides
+  (keeping the longest increasing chain of such anchors), common ends are
+  stripped in each stretch, a stretch within the size limits is matched with
+  `SequenceMatcher(autojunk=True)`, and any other stretch becomes one coarse
+  replace, delete or insert. Why: `autojunk=False` is cubic-ish (alternating
+  blank lines took 1.4 s at 500 lines, 93 s at 2,000), and `autojunk=True` is
+  NOT bounded either (3,000 to 20,000 lines with lines repeated 300 to 10,000
+  times took 25 s to 301 s). The fallback's measured worst cases are under
+  0.2 s per file, and the budget keeps a 2,000-file document of the worst
+  exact-matching shape near 2 s. The stock `difflib.unified_diff` is not used.
+  Three lines of context matches git's default; the `@@` header omits `,1`
+  counts and uses `,0` for empty sides as git does.
 - Equivalence with `git diff` holds for the set of changed lines when the
   minimal diff is unique; where several minimal diffs exist difflib and git's
   Myers algorithm may pick different ones.
@@ -267,9 +289,13 @@ Pre-release smoke tests (CI, model-off):
    reports an empty diff.
 6. No git needed: tests 2 and 5 run with `git` absent from `PATH`; nothing in
    input mode may shell out.
-7. Timing: a 20,000-line all-blank file with one change is diffed in under one
-   second (the fallback path); a 3,000-line repetitive file in a few seconds at
-   most.
+7. Timing: a 20,000-line all-blank file with one change is diffed in
+   milliseconds; the alternating-blank worst case at the exact-matching limit
+   (400 lines) is fast and a 40-file document of that shape stays inside the
+   budget time; every adversarial shape measured in review (3 to 10,000
+   distinct repeated values, 20,000 lines) finishes in under 0.2 s per file.
+   A seeded round trip (2,000 cases in each of the exact, anchored and
+   budget-spent modes) proves the synthesized hunks reproduce the after-text.
 8. Mutation checks on every new test, as in the earlier PRs.
 
 Post-release evaluation (does not block the release): the aws-cloud-agent
@@ -280,8 +306,14 @@ issue #26's per-class sustained rate. No new gate is introduced here.
 
 - difflib versus git's diff algorithm: ambiguous diffs can differ in hunk
   boundaries; anchors are comparable within a mode, not guaranteed identical
-  across modes. Files above 3,000 lines use the poorer `autojunk=True`
-  matching.
+  across modes. Cores above 400 lines, and every file once the budget is
+  spent, use the bounded fallback: always correct, sometimes coarser (a region
+  with no unique lines becomes one replace). The budget is spent first-come.
+  On 39 realistic large-file edits (300 to 3,000 lines) the output equalled
+  `git diff` exactly.
+- When every changed file is skipped the report says `Nothing to review: all N
+  changed file(s) were skipped (see below).` (this banner applies in every
+  mode); a PR whose only files are binary reads `status ok`, as in git mode.
 - No rename detection: the host supplies `old_path`. `--input` enriches renamed
   files better than `--range`: `package_hunks` never emits `old_file`, so in the
   git modes a rename's pre-image is `None` today, while input mode carries

@@ -30,6 +30,7 @@ Usage:
 
 import argparse
 import ast
+import bisect
 import difflib
 import fnmatch
 import importlib
@@ -99,7 +100,9 @@ INPUT_MAX_FILES = 2000
 INPUT_MAX_TOTAL_LINES = 1_000_000     # across all files and both sides
 INPUT_MAX_FILE_CHARS = 2 * 1024 * 1024  # per side; over -> hunk>input-oversize
 INPUT_MAX_FILE_LINES = 20_000           # per side; over -> hunk>input-oversize
-INPUT_MATCH_LINES = 3000                # above this core size: difflib autojunk=True
+INPUT_MATCH_LINES = 400                 # above this core size: anchored fallback
+INPUT_MATCH_BUDGET = 400_000            # per run: sum of len(a) * len(b) matched exactly
+INPUT_MAX_LINE_CHARS = 100_000          # any single line longer: hunk>input-oversize
 INPUT_MAX_LABEL_CHARS = 200             # head / repo labels
 INPUT_MAX_PATH_CHARS = 1024             # path / old_path
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
@@ -634,10 +637,40 @@ def split_lines(text):
     return lines
 
 
-def _full_opcodes(a, b):
-    """Opcodes for the whole of a and b: the common leading/trailing lines are
-    stripped (git does this, difflib does not), the core is matched, and the
-    indices are shifted back. Returns (opcodes, used_autojunk)."""
+def _unique_anchors(a, b):
+    """Longest increasing run of lines that occur exactly once on each side, as
+    (i, j) pairs (patience diff's anchors)."""
+    ca, cb = {}, {}
+    for i, ln in enumerate(a):
+        ca[ln] = -1 if ln in ca else i
+    for j, ln in enumerate(b):
+        cb[ln] = -1 if ln in cb else j
+    pairs = [(i, cb[ln]) for ln, i in ca.items() if i >= 0 and cb.get(ln, -1) >= 0]
+    pairs.sort()
+    tails: list[int] = []
+    tail_at: list[int] = []
+    prev = [-1] * len(pairs)
+    for k, (_, j) in enumerate(pairs):
+        pos = bisect.bisect_left(tails, j)
+        if pos:
+            prev[k] = tail_at[pos - 1]
+        if pos == len(tails):
+            tails.append(j)
+            tail_at.append(k)
+        else:
+            tails[pos] = j
+            tail_at[pos] = k
+    chain, k = [], tail_at[-1] if tail_at else -1
+    while k >= 0:
+        chain.append(pairs[k])
+        k = prev[k]
+    return chain[::-1]
+
+
+def _section_opcodes(a, b, i0, j0, budget):
+    """Opcodes for one stretch between anchors (indices shifted by i0, j0): the
+    common ends are stripped, a small remainder is matched with autojunk=True
+    while the budget lasts, anything else becomes one replacement."""
     lo = 0
     n = min(len(a), len(b))
     while lo < n and a[lo] == b[lo]:
@@ -646,10 +679,76 @@ def _full_opcodes(a, b):
     while hi < n - lo and a[len(a) - 1 - hi] == b[len(b) - 1 - hi]:
         hi += 1
     ca, cb = a[lo:len(a) - hi], b[lo:len(b) - hi]
-    junk = len(ca) > INPUT_MATCH_LINES or len(cb) > INPUT_MATCH_LINES
-    sm = difflib.SequenceMatcher(None, ca, cb, autojunk=junk)
+    ops = [("equal", i0, i0 + lo, j0, j0 + lo)] if lo else []
+    cost = len(ca) * len(cb)
+    if cost and cost <= INPUT_MATCH_LINES ** 2 and cost <= budget[0]:
+        budget[0] -= cost
+        sm = difflib.SequenceMatcher(None, ca, cb, autojunk=True)
+        ops += [(t, i1 + i0 + lo, i2 + i0 + lo, j1 + j0 + lo, j2 + j0 + lo)
+                for t, i1, i2, j1, j2 in sm.get_opcodes()]
+    elif ca or cb:
+        t = "replace" if ca and cb else "delete" if ca else "insert"
+        ops.append((t, i0 + lo, i0 + lo + len(ca), j0 + lo, j0 + lo + len(cb)))
+    if hi:
+        ops.append(("equal", i0 + len(a) - hi, i0 + len(a), j0 + len(b) - hi, j0 + len(b)))
+    return ops
+
+
+def _coalesce(ops):
+    """Merge neighbouring equal ops, and neighbouring changed ops into one."""
+    out: list[tuple] = []
+    for t, i1, i2, j1, j2 in ops:
+        if i1 == i2 and j1 == j2:
+            continue
+        if out and (out[-1][0] == "equal") == (t == "equal"):
+            _, pi1, _, pj1, _ = out.pop()
+            i1, j1 = pi1, pj1
+            if t != "equal":
+                t = "replace" if i2 > i1 and j2 > j1 else "delete" if i2 > i1 else "insert"
+        out.append((t, i1, i2, j1, j2))
+    return out
+
+
+def _anchored_opcodes(a, b, budget):
+    """Fallback for a core too big (or a budget too spent) for exact matching:
+    split at the lines unique to both sides, then handle each stretch alone, so
+    the work is bounded by the budget however the lines repeat. Poorer hunk
+    boundaries than exact matching; the diff is still correct."""
+    ops, i, j = [], 0, 0
+    for ai, bj in [*_unique_anchors(a, b), (len(a), len(b))]:
+        ops += _section_opcodes(a[i:ai], b[j:bj], i, j, budget)
+        if ai < len(a):
+            ops.append(("equal", ai, ai + 1, bj, bj + 1))
+        i, j = ai + 1, bj + 1
+    return _coalesce(ops)
+
+
+def _full_opcodes(a, b, budget=None):
+    """Opcodes for the whole of a and b: the common leading/trailing lines are
+    stripped (git does this, difflib does not), the core is matched, and the
+    indices are shifted back. `budget` is a one-element list holding the match
+    work left (len(core_a) * len(core_b) is spent per exactly matched file);
+    None means unlimited. Returns (opcodes, degraded): degraded when the core
+    was too big or the budget spent, so the anchored fallback ran."""
+    lo = 0
+    n = min(len(a), len(b))
+    while lo < n and a[lo] == b[lo]:
+        lo += 1
+    hi = 0
+    while hi < n - lo and a[len(a) - 1 - hi] == b[len(b) - 1 - hi]:
+        hi += 1
+    ca, cb = a[lo:len(a) - hi], b[lo:len(b) - hi]
+    cost = len(ca) * len(cb)
+    junk = (len(ca) > INPUT_MATCH_LINES or len(cb) > INPUT_MATCH_LINES
+            or (budget is not None and cost > budget[0]))
+    if junk:
+        core = _anchored_opcodes(ca, cb, budget if budget is not None else [cost])
+    else:
+        if budget is not None:
+            budget[0] -= cost
+        core = difflib.SequenceMatcher(None, ca, cb, autojunk=False).get_opcodes()
     ops = [("equal", 0, lo, 0, lo)] if lo else []
-    ops += [(t, i1 + lo, i2 + lo, j1 + lo, j2 + lo) for t, i1, i2, j1, j2 in sm.get_opcodes()]
+    ops += [(t, i1 + lo, i2 + lo, j1 + lo, j2 + lo) for t, i1, i2, j1, j2 in core]
     if hi:
         ops.append(("equal", len(a) - hi, len(a), len(b) - hi, len(b)))
     return ops, junk
@@ -696,10 +795,10 @@ def _emit(prefix, lines, out):
             out.append("\\ No newline at end of file")
 
 
-def synthesize_file_diff(entry):
+def synthesize_file_diff(entry, budget=None):
     """The git-shaped diff block for one validated file entry, and whether the
-    autojunk=True fallback was used. An added/deleted EMPTY file and a pure
-    rename emit headers only."""
+    anchored fallback was used (see _full_opcodes for `budget`). An
+    added/deleted EMPTY file and a pure rename emit headers only."""
     path, before, after = entry["path"], entry["before"], entry["after"]
     old = entry.get("old_path") or path
     a, b = split_lines(before or ""), split_lines(after or "")
@@ -714,7 +813,7 @@ def synthesize_file_diff(entry):
         return "\n".join(out) + "\n", False
     out.append("--- /dev/null" if before is None else f"--- a/{old}")
     out.append("+++ /dev/null" if after is None else f"+++ b/{path}")
-    ops, junk = _full_opcodes(a, b)
+    ops, junk = _full_opcodes(a, b, budget)
     for group in _group_opcodes(ops):
         i1, i2, j1, j2 = group[0][1], group[-1][2], group[0][3], group[-1][4]
         out.append(f"@@ -{_hunk_range(i1, i2 - i1)} +{_hunk_range(j1, j2 - j1)} @@")
@@ -729,23 +828,45 @@ def synthesize_file_diff(entry):
     return "\n".join(out) + "\n", junk
 
 
+def _input_oversize(text):
+    """True when a side is over the char, line-count or single-line caps."""
+    if len(text) > INPUT_MAX_FILE_CHARS:
+        return True
+    lines = split_lines(text)
+    return (len(lines) > INPUT_MAX_FILE_LINES
+            or any(len(ln.rstrip("\n")) > INPUT_MAX_LINE_CHARS for ln in lines))
+
+
 def build_input(doc):
-    """Triage and diff a validated --input document. Binary (NUL) and oversize
-    files are recorded in `skipped`, not diffed and not in `images`; the rest
-    are synthesized in input order."""
+    """Triage and diff a validated --input document. Per file, in order: the
+    path rules triage() applies (lockfiles, docs, generated dirs, data), binary
+    (NUL) and oversize. A file hitting any of them is recorded in `skipped`,
+    not diffed and not in `images`; the rest are synthesized in input order
+    under one per-call match budget (INPUT_MATCH_BUDGET)."""
     diffs, skipped, images, n_autojunk = [], [], {}, 0
+    budget = [INPUT_MATCH_BUDGET]
     for f in doc["files"]:
         sides = [s for s in (f["before"], f["after"]) if s is not None]
-        reason = None
+        path_reason = path_triage_reason(f["path"])
+        extra = {}
         if any("\0" in s for s in sides):
-            reason = "input-binary"
-        elif any(len(s) > INPUT_MAX_FILE_CHARS or len(split_lines(s)) > INPUT_MAX_FILE_LINES
-                 for s in sides):
-            reason = "hunk>input-oversize"
+            reason = path_reason or "input-binary"
+        elif any(_input_oversize(s) for s in sides):
+            if path_reason:
+                reason = path_reason
+            elif f["after"] is None:
+                # like triage(): an over-cap whole-file deletion is deliberate triage
+                reason = "whole-file-deleted>cap"
+                extra = {"change_type": "whole-file-deleted"}
+            else:
+                reason = "hunk>input-oversize"
+        else:
+            reason = None
         if reason:
-            skipped.append({"file": f["path"], "reason": reason, "line_start": 1, "line_end": 1})
+            skipped.append({"file": f["path"], "reason": reason, "line_start": 1,
+                            "line_end": 1, **extra})
             continue
-        text, junk = synthesize_file_diff(f)
+        text, junk = synthesize_file_diff(f, budget)
         diffs.append(text)
         n_autojunk += junk
         images[f["path"]] = (f["before"], f["after"])
@@ -3012,6 +3133,16 @@ def _span(h):
             "line_end": h.get("line_end", h["line"])}
 
 
+def path_triage_reason(path):
+    """triage()'s path rules: the skip reason for a lockfile, doc, generated-dir
+    or data/snapshot path, else None. Shared with build_input (--input)."""
+    if SKIP_PATTERNS.search(path) or DOC_EXT.search(path):
+        return "docs/generated/lockfile"
+    if DATA_EXT.search(path):
+        return "data/snapshot"
+    return None
+
+
 def triage(hunks, provider="jev"):
     """Deterministic skip: lockfiles, generated dirs, docs-only runs.
 
@@ -3034,11 +3165,9 @@ def triage(hunks, provider="jev"):
     kept, skipped = [], []
     for h in hunks:
         f = h["file"] or ""
-        if SKIP_PATTERNS.search(f) or DOC_EXT.search(f):
-            skipped.append({"file": f, "reason": "docs/generated/lockfile",
-                            **_span(h)})
-        elif DATA_EXT.search(f):
-            skipped.append({"file": f, "reason": "data/snapshot", **_span(h)})
+        path_reason = path_triage_reason(f)
+        if path_reason:
+            skipped.append({"file": f, "reason": path_reason, **_span(h)})
         elif provider == "laya" and h["too_large"]:
             skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines",
                             "change_type": h.get("change_type", "code-change"),
@@ -4236,7 +4365,11 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
         if meta.get("fail_reason"):
             out.append(f"!! last error: {meta['fail_reason']}")
     out.append("")
-    if meta.get("n_hunks") == 0:
+    if meta.get("n_hunks") == 0 and skipped:
+        n_files = len({s["file"] for s in skipped})
+        out.append(f"Nothing to review: all {n_files} changed file(s) were skipped "
+                   "(see below).")
+    elif meta.get("n_hunks") == 0:
         out.append("Empty diff — nothing to review (check the range/mode).")
     elif not reported:
         held = meta.get("n_test_held")
@@ -4713,6 +4846,7 @@ def main():
              "base_verdict": base_verdict,
              "n_dropped": n_dropped, "n_unjudged": n_unjudged,
              "n_size_skipped_code": n_size_skipped_code,
+             "n_input_autojunk": meta["n_input_autojunk"],
              "fail_open": fail_open, "fail_reason": fail_reason,
              "total_latency_ms": round(total, 1),
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,

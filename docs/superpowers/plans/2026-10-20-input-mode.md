@@ -123,6 +123,20 @@
 - [ ] One Sonnet review at high depth of the combined diff; fix findings.
 - [ ] Commit per task; PR title `feat: --input mode, review before/after file images without git` (squash-merge cuts a minor release); the body states what is unmeasured, links the spec and `Closes #23`.
 
+## Follow-up fixes after the second review (done)
+
+Applied after a Sonnet high-depth review of the implementation: reject every
+`splitlines()` boundary character (U+0085, U+2028, U+2029) in path, old_path,
+head and repo; path length cap 1,024; closed stdin and `--range ""` handled;
+`old_path` normalised for added/deleted files; head warning; exact matching
+limited to 400 lines with a per-run budget (`INPUT_MATCH_BUDGET`) and a bounded
+anchored fallback (`autojunk=True` was found to be unbounded); path triage
+before the oversize check; `INPUT_MAX_LINE_CHARS`; the all-skipped banner;
+`n_input_autojunk` in the ledger; boundary, round-trip and header-format tests.
+The constants in Global Constraints above are the original plan values;
+`INPUT_MATCH_LINES` is now 400 and `INPUT_MATCH_BUDGET`, `INPUT_MAX_PATH_CHARS`
+and `INPUT_MAX_LINE_CHARS` were added.
+
 ## Self-Review
 
 - **Spec coverage:** contract and validation (T1), line model, diff form, matching, caps and triage (T2), images, mode, ledger, meta, flags, no-git, equivalence, skips, empty input (T3), deployment and AGENTS.md correction (T4). Timing, mutation and no-git tests are in T2/T3. Post-release evaluation is out of the plan, as in the spec.

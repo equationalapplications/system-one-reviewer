@@ -307,7 +307,7 @@ def test_cap_applies_to_the_core_not_the_file(jr, monkeypatch):
     assert junk is False
 
 
-def test_matcher_autojunk_flag_follows_the_cap(jr, monkeypatch):
+def test_matcher_flag_follows_the_cap(jr, monkeypatch):
     seen = []
     real = jr.difflib.SequenceMatcher
 
@@ -316,10 +316,16 @@ def test_matcher_autojunk_flag_follows_the_cap(jr, monkeypatch):
         return real(*args, **kw)
 
     monkeypatch.setattr(jr.difflib, "SequenceMatcher", spy)
-    monkeypatch.setattr(jr, "INPUT_MATCH_LINES", 10)
-    jr.synthesize_file_diff(f("a.py", lines(10), lines(10, "o")))
-    jr.synthesize_file_diff(f("a.py", lines(11), lines(11, "o")))
-    assert seen == [False, True]
+    monkeypatch.setattr(jr, "INPUT_MATCH_LINES", 5)
+    jr.synthesize_file_diff(f("a.py", lines(5), lines(5, "o")))
+    assert seen == [False]
+    # over the cap: split at the unique lines K and L, each stretch matched alone
+    seen.clear()
+    before = "p\nK\nq\nL\nr\ns\n"
+    after = "P\nK\nQ\nL\nR\nS\n"
+    text, junk = jr.synthesize_file_diff(f("a.py", before, after))
+    assert junk is True and seen == [True, True, True]
+    assert "-p\n+P\n K\n-q\n+Q\n L\n-r\n-s\n+R\n+S\n" in text
 
 
 def test_autojunk_fallback_diff_is_still_correct(jr, monkeypatch):
@@ -367,5 +373,224 @@ def test_timing_3000_repetitive_lines_mid_shift(jr):
     text, junk = jr.synthesize_file_diff(f("a.txt", before, after))
     elapsed = time.perf_counter() - t
     assert elapsed < 10.0, elapsed
-    assert junk is False  # the core is within INPUT_MATCH_LINES: exact matching
+    assert junk is True  # the core is over INPUT_MATCH_LINES: anchored fallback
     assert text.startswith("diff --git") and "+z\n" in text
+
+
+# ---------- matching cost: per-file cap and the per-run budget ----------
+
+def alternating(n):
+    """The cubic shape for difflib: n identical blank lines vs every other one changed."""
+    return "\n" * n, "".join("x\n" if i % 2 else "\n" for i in range(n))
+
+
+def test_alternating_blank_at_the_cap_is_quick(jr):
+    before, after = alternating(jr.INPUT_MATCH_LINES)
+    t = time.perf_counter()
+    text, junk = jr.synthesize_file_diff(f("a.txt", before, after))
+    assert time.perf_counter() - t < 5.0  # ~1 s; it was 12 s at 1000 lines, 93 s at 2000
+    assert junk is False and "+x" in text
+
+
+def test_forty_alternating_files_stay_within_the_budget(jr):
+    before, after = alternating(jr.INPUT_MATCH_LINES)
+    files = [f(f"f{i}.txt", before, after) for i in range(40)]
+    t = time.perf_counter()
+    out = jr.build_input(mkdoc(*files))
+    elapsed = time.perf_counter() - t
+    assert elapsed < 10.0, elapsed  # ~2 s; unbudgeted this is ~30 s
+    assert out["n_autojunk"] >= 36  # at most the first few are matched exactly
+    assert out["diff"].count("diff --git") == 40
+
+
+def test_budget_exhaustion_degrades_the_rest_and_counts_them(jr, monkeypatch):
+    seen = []
+    real = jr.difflib.SequenceMatcher
+
+    def spy(*args, **kw):
+        seen.append(kw.get("autojunk"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(jr.difflib, "SequenceMatcher", spy)
+    monkeypatch.setattr(jr, "INPUT_MATCH_BUDGET", 100)
+    one = f("a.py", lines(8), lines(8, "o"))  # core 8 x 8 = 64 of the 100
+    two = f("b.py", lines(8), lines(8, "o"))
+    out = jr.build_input(mkdoc(one, two))
+    assert seen == [False]  # the second file found 36 left: no exact matching
+    assert out["n_autojunk"] == 1
+    assert "-line0\n" in out["diff"] and "+o0\n" in out["diff"]  # still a correct diff
+
+
+def test_budget_is_per_build_input_call(jr, monkeypatch):
+    monkeypatch.setattr(jr, "INPUT_MATCH_BUDGET", 100)
+    doc = mkdoc(f("a.py", lines(8), lines(8, "o")))
+    assert jr.build_input(doc)["n_autojunk"] == 0
+    assert jr.build_input(doc)["n_autojunk"] == 0  # not carried over from the first call
+    assert jr.build_input(mkdoc(*[f(f"{i}.py", lines(8), lines(8, "o")) for i in range(3)]
+                               ))["n_autojunk"] == 2
+
+
+def test_normal_edit_is_matched_exactly_within_the_default_budget(jr):
+    code = "".join(f"def fn{i}():\n    return {i}\n\n" for i in range(100))  # 300 lines
+    changed = code.replace("return 40\n", "return 41\n").replace("fn70", "renamed70")
+    entry = f("a.py", code, changed)
+    out = jr.build_input(mkdoc(entry))
+    assert out["n_autojunk"] == 0
+    assert out["diff"] == jr.synthesize_file_diff(entry)[0]
+
+
+def test_degraded_diff_of_huge_repetitive_file_is_bounded(jr):
+    # 8000 lines, 100 values, half changed: autojunk=True alone took ~50 s here
+    base = [f"k{i % 100}\n" for i in range(8000)]
+    new = ["x\n" if i % 2 else ln for i, ln in enumerate(base)]
+    t = time.perf_counter()
+    text, junk = jr.synthesize_file_diff(f("a.txt", "".join(base), "".join(new)),
+                                         [jr.INPUT_MATCH_BUDGET])
+    assert time.perf_counter() - t < 5.0
+    assert junk is True
+    assert apply_hunks("".join(base), text) == "".join(new)
+
+
+# ---------- header format, boundaries and a patch round trip ----------
+
+HEADER = re.compile(r"^@@ -\d+(,\d+)? \+\d+(,\d+)? @@$")
+
+
+def headers(text):
+    return [ln for ln in text.split("\n") if ln.startswith("@@")]
+
+
+def test_every_header_is_exactly_git_shaped(jr):
+    for name, (before, after) in CASES.items():
+        for h in headers(mine(jr, before, after)):
+            assert HEADER.match(h), (name, h)
+    assert HEADER.match("@@ -0,0 +1 @@") and not HEADER.match("@@ -1 +1 @@ ")
+
+
+def parse_hunks(text):
+    """[(old_start, old_count, new_start, new_count, [(kind, line_with_newline)])]"""
+    hunks, cur = [], None
+    for ln in text.split("\n")[:-1]:
+        if ln.startswith("@@"):
+            m = re.fullmatch(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", ln)
+            assert m, ln
+            c = [int(x) if x is not None else 1 for x in m.groups()]
+            cur = (c[0], c[1], c[2], c[3], [])
+            hunks.append(cur)
+        elif ln.startswith("\\"):
+            kind, body = cur[4][-1]
+            assert body.endswith("\n")
+            cur[4][-1] = (kind, body[:-1])
+        elif cur is not None:
+            assert ln[:1] in " +-", ln
+            cur[4].append((ln[0], ln[1:] + "\n"))
+    return hunks
+
+
+def apply_hunks(before, text):
+    """Rebuild the after-text from the before-text and the synthesized hunks,
+    checking every entry against both texts and the header counts on the way."""
+    old = before.splitlines(keepends=True)
+    out, p = [], 0
+    for os_, oc, ns, nc, entries in parse_hunks(text):
+        start = os_ if oc == 0 else os_ - 1
+        assert start >= p
+        out += old[p:start]
+        p = start
+        n_old = sum(k in " -" for k, _ in entries)
+        n_new = sum(k in " +" for k, _ in entries)
+        assert (n_old, n_new) == (oc, nc)
+        assert len(out) == (ns if nc == 0 else ns - 1)  # new-side start agrees
+        for kind, body in entries:
+            if kind in " -":
+                assert old[p] == body
+                p += 1
+            if kind in " +":
+                out.append(body)
+    return "".join(out + old[p:])
+
+
+@pytest.mark.parametrize("before,after", [
+    ("x\nx\n", "x\n"),              # one of two identical adjacent lines deleted
+    ("x\n", "x\nx\n"),              # repeated line inserted at the end
+    ("x\nx\n", "x\nx\nx\n"),
+    ("x\ny\n", "y\n"),              # repeated line removed at the start
+    ("x\nx\ny\n", "x\ny\n"),
+    ("\n\n\n", "\n\n"),             # blank line deleted between blanks
+    ("a\n\n\nb\n", "a\n\nb\n"),
+    ("a\n\nb\n", "a\n\n\nb\n"),
+    ("a\nb\n", "a\nb\nb\n"),
+])
+def test_duplicate_boundary_edits_show_the_real_change(jr, tmp_path, before, after):
+    got = mine(jr, before, after)
+    assert any(ln[:1] in "+-" and ln[:3] not in ("+++", "---") for ln in got.split("\n")), got
+    assert apply_hunks(before, got) == after
+    assert normalise(got) == normalise(real_diff(tmp_path, before, after))
+
+
+def test_deleting_one_of_two_identical_lines_is_a_minus_line(jr):
+    got = mine(jr, "x\nx\n", "x\n")
+    assert "@@ -1,2 +1 @@\n x\n-x\n" in got
+
+
+def random_text(rnd, alphabet):
+    ls = [rnd.choice(alphabet) for _ in range(rnd.randrange(0, 13))]
+    text = "".join(ln + "\n" for ln in ls)
+    if ls and rnd.random() < 0.3:
+        text = text[:-1]
+    return text
+
+
+@pytest.mark.parametrize("mode", ["exact", "anchored", "spent"])
+def test_random_round_trip(jr, monkeypatch, mode):
+    """2,000 seeded cases over a tiny alphabet (heavy repetition, blank lines,
+    with and without a final newline): applying the hunks to before gives after."""
+    if mode == "anchored":
+        monkeypatch.setattr(jr, "INPUT_MATCH_LINES", 3)
+    rnd = random.Random({"exact": 11, "anchored": 12, "spent": 13}[mode])
+    for case in range(2000):
+        alphabet = rnd.choice([["a", ""], ["a", "b", ""], ["a", "b", "c"], [""], ["a"]])
+        before, after = random_text(rnd, alphabet), random_text(rnd, alphabet)
+        entry = {"path": "f.txt", "old_path": None, "before": before, "after": after}
+        budget = [0] if mode == "spent" else None
+        text, _ = jr.synthesize_file_diff(entry, budget)
+        for h in headers(text):
+            assert HEADER.match(h), (case, h)
+        assert apply_hunks(before, text) == after, (case, before, after, text)
+        # context and '+' entries equal the after line at their number, '-' the before line
+        new_lines = after.splitlines(keepends=True)
+        for _, _, ns, nc, entries in parse_hunks(text):
+            at = ns if nc == 0 else ns - 1
+            for kind, body in entries:
+                if kind in " +":
+                    assert new_lines[at].rstrip("\n") == body.rstrip("\n"), (case, text)
+                    at += 1
+
+
+def test_coalesce_merges_neighbours(jr):
+    ops = [("equal", 0, 1, 0, 1), ("equal", 1, 2, 1, 2), ("delete", 2, 3, 2, 2),
+           ("insert", 3, 3, 2, 4), ("equal", 3, 4, 4, 5)]
+    assert jr._coalesce(ops) == [("equal", 0, 2, 0, 2), ("replace", 2, 3, 2, 4),
+                                 ("equal", 3, 4, 4, 5)]
+
+
+def test_sections_spend_the_budget_and_respect_the_section_cap(jr, monkeypatch):
+    seen = []
+    real = jr.difflib.SequenceMatcher
+
+    def spy(*args, **kw):
+        seen.append(kw.get("autojunk"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(jr.difflib, "SequenceMatcher", spy)
+    monkeypatch.setattr(jr, "INPUT_MATCH_LINES", 5)
+    # five one-line stretches between unique anchors; only 3 units of budget
+    before = "".join(f"p{i}\nK{i}\n" for i in range(5))
+    after = "".join(f"P{i}\nK{i}\n" for i in range(5))
+    text, junk = jr.synthesize_file_diff(f("a.py", before, after), [3])
+    assert junk is True and seen == [True] * 3
+    assert apply_hunks(before, text) == after  # the other two stretches were replaced
+    # a stretch of 6 x 6 lines (36 > 5 * 5) is never matched, however much budget is left
+    seen.clear()
+    text, junk = jr.synthesize_file_diff(f("b.py", lines(6), lines(6, "o")), [10**9])
+    assert junk is True and seen == [] and apply_hunks(lines(6), text) == lines(6, "o")
