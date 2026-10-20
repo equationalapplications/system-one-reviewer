@@ -64,6 +64,12 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: python -m pip install -r requirements-dev.txt
+      - name: Install tree-sitter wheels (one leg; the others cover the no-wheels fallback)
+        if: matrix.python-version == '3.12'
+        run: python -m pip install tree-sitter==0.26.0 tree-sitter-typescript==0.23.2 tree-sitter-javascript==0.25.0
+      - name: Assert the wheels import (so skipped importorskip tests cannot hide a failed install)
+        if: matrix.python-version == '3.12'
+        run: python -c "import tree_sitter, tree_sitter_typescript, tree_sitter_javascript"
       - name: Run test suite (offline)
         run: python -m pytest tests/ -q
         env:

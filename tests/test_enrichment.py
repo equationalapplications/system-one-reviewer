@@ -210,18 +210,18 @@ def test_judged_entry_carries_enrichment_flag(jr, monkeypatch, tmp_path,
     unit: judged entries carry per-entry enrichment values that differ
     correctly; the run-level stamp is ast when ANY unit enriched."""
     diff = _add_file_diff("m.py", ["def f():", "    return 1"])
-    diff += _add_file_diff("m.js", ["function g() {", "  return 2;", "}"])
+    diff += _add_file_diff("m.rb", ["def g", "  2", "end"])
 
     def images(repo_, mode_, head_, path_, old_file=None):
         if path_ == "m.py":
             return None, "def f():\n    return 1\n"
-        return None, "function g() {\n  return 2;\n}\n"
+        return None, "def g\n  2\nend\n"
 
     out, judged_units, records = _run_main(jr, monkeypatch, tmp_path,
                                            capsys, diff, images)
     by_file = {e["file"]: e for e in records[0]["judged"]}
     assert by_file["m.py"]["enrichment"] == "ast"
-    assert by_file["m.js"]["enrichment"] == "none"
+    assert by_file["m.rb"]["enrichment"] == "none"
     assert out["meta"]["enrichment"] == "ast"
 
 

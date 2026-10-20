@@ -2,12 +2,23 @@
 
 ## Read INTENT.md first
 
-`INTENT.md` (repo root) is this repo's charter. **Every spec must align with
-it**: the INTENT file wins on *intent* (what SOR is for, what it must never
-try to cover), specs win on *detail*. If a spec's goal contradicts an INTENT
-rule, the spec is wrong until the INTENT is amended through PR review — do not
-design around the rule silently. Judgment-affecting changes need before/after
-numbers (fixture golden + Stage A golden + negative heads) in the PR.
+`INTENT.md` (repo root) is this repo's charter. It wins on *intent*; specs
+win on *detail*. It owns the rules and how changes are made, so they are not
+restated here.
+
+## How a pull request starts
+
+1. **Spec.** Every PR starts with a spec in `docs/superpowers/specs/`, written
+   in the superpowers format (use the `superpowers:brainstorming` skill), and
+   it must align with INTENT.md. If a spec's goal contradicts an INTENT rule,
+   the spec is wrong until INTENT is amended through PR review; do not design
+   around the rule silently.
+2. **Plan.** Write the implementation plan from the spec into
+   `docs/superpowers/plans/` (`superpowers:writing-plans`).
+3. **Implement the plan** (`superpowers:executing-plans` or
+   `superpowers:subagent-driven-development`).
+
+Spec, plan and implementation travel in one PR.
 
 ## The interpreter gotcha (read before any tree-sitter work)
 

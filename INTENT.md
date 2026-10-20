@@ -79,7 +79,7 @@ envelope moves and by how much.
 *Why:* the cheap tier is only worth having if using it always is cheaper
 than thinking about whether to use it.
 
-**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.)
+**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.) TS/JS enrichment adds no model calls but adds input tokens per unit: model-off, a median of about 139 tokens (max about 247) per enriched unit on the small TS fixtures (`docs/benchmarks/2026-10-20-ts-enrichment-envelope.json`), and the TS symbol table is bounded in characters so a module with many long signatures cannot blow that up. Its latency is not yet measured; it is watched after release, and leaving the seconds/cents envelope would by itself turn the default off (`docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`, Cost envelope).
 
 ### 2. Deterministic code prepares; the model only judges
 
@@ -92,7 +92,7 @@ try harder?".
 *Why:* the judgment is only as good as the evidence shown, and
 deterministic preparation is testable, cheap, and ours to invent.
 
-**Status: Partly built (v0.9).** Packaging, splitting, enrichment, golden harness, E1 wire_format stamping, and E2 decision-site cutting (object-literal property assignments, call-argument expressions, conditionals, sibling-constant declarations; TS/JS via tree-sitter, Python via `ast`) exist and are wired into every code-change cluster. E5 wheels self-check added (per-cutter availability + version pinning, parses a known snippet per language). Known gap, MEASURED not assumed: the V7 model-off census on the real golden range (`docs/benchmarks/2026-10-19-v7-site-census-golden-range.json`) shows median site expansion at 9.63× even after both allowed floor tightenings — above the adopted 5× envelope — so E2 does not yet clear its own release gate on this range; the envelope decision is open, not resolved.
+**Status: Partly built (v0.9).** Packaging, splitting, enrichment, golden harness, E1 wire_format stamping, and E2 decision-site cutting (object-literal property assignments, call-argument expressions, conditionals, sibling-constant declarations; TS/JS via tree-sitter, Python via `ast`) exist and are wired into every code-change cluster. E5 wheels self-check added (per-cutter availability + version pinning, parses a known snippet per language). Enclosing-symbol enrichment (`ast_context`) covers Python and, behind the same default-on `--no-enrichment` switch, TS/JS; its effect on judgment has never been validly measured (the 2026-10-02 enrichment-off A/B ran with the Python path unengaged), and the gate that will measure it is `docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`. Known gap, MEASURED not assumed: the V7 model-off census on the real golden range (`docs/benchmarks/2026-10-19-v7-site-census-golden-range.json`) shows median site expansion at 9.63× even after both allowed floor tightenings — above the adopted 5× envelope. E2 ships anyway (item 4 under "How changes are made": metrics refine, they do not gate shipping); the envelope decision is open, not resolved, and the expansion is watched in use.
 
 ### 3. SOR emits no verdict; it is input to adjudication
 
@@ -188,8 +188,9 @@ without re-deriving it.
 
 All runs append to one metrics ledger. Recall claims need a golden;
 precision claims need adjudicated outcomes; threshold changes need a
-sweep. A change that moves judgments must ship with before/after numbers
-on the same receipts.
+sweep. A change that moves judgments should say what it moved and, where the
+author has them, ship before/after numbers on the same receipts (item 4 under
+"How changes are made" sets what is required before release).
 
 *Why:* SOR is experimental — measurement is how an experiment stays
 honest.
@@ -220,9 +221,27 @@ honest.
    separate from this repo.
 3. **Review, then merge.** The review ladder per the dual-review-cycle
    skill; unresolved questions hold the pull request.
-4. **Benchmarks gate judgment changes.** Judgment-affecting changes must
-   pass: the fixture golden, the Stage A 8-defect golden with the negative
-   heads (precision arm), and the stamp/coverage tests. Before/after
-   numbers go in the PR description.
+4. **Metrics refine; they do not gate shipping.** SOR is built by using
+   it. The loop is: small smoke tests locally during development (the
+   fixture golden, the Stage A 8-defect golden with the negative heads, and
+   the stamp/coverage tests, whenever they are quick to run), then release,
+   then use it on real coding tasks and pull requests, then evaluate from
+   adjudicated outcomes and improve. Numbers we have not yet collected in
+   the wild are not a precondition for releasing a judgment-affecting
+   change. What a change does need:
+   - a smoke test that proves the mechanism engaged (a treatment that
+     silently did nothing teaches nothing);
+   - a way to turn it off (a flag, as with `--no-enrichment`), so the off
+     arm stays available for comparison;
+   - ledger labels and stamps (`exp:`, `reproof:`, the `enrichment` and
+     `wire_format` stamps) so its runs can be told apart later;
+   - a plain statement in the PR of what is unmeasured and how it will be
+     evaluated, plus before/after numbers if the author has them.
+
+   This relaxes the release gate, not the claim standard: a claim of
+   recall or precision still needs `--golden` or adjudicated outcomes
+   (AGENTS.md, Measurement discipline). The hard rules above (no verdict
+   output, no posting, the cost envelope, false positives as defects) are
+   not relaxed by this item.
 5. **The metrics ledger is append-only.** Re-runs for evidence use
    distinct labels (`reproof:`, `exp:`) so audits can tell them apart.

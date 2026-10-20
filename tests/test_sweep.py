@@ -299,6 +299,28 @@ def test_mixed_providers_are_a_hard_error(sw):
         sw.check_single_provider_group(recs)
 
 
+def test_mixed_enrichment_is_a_hard_error(sw):
+    recs = _pos_runs([_judged(10, 0.9)]) + _neg_runs([])
+    recs[0]["enrichment"] = "ts-ast"
+    with pytest.raises(SystemExit, match="enrichment='none'.*enrichment='ts-ast'"):
+        sw.check_single_provider_group(recs)
+    recs[0]["enrichment"] = "none"
+    for r in recs:
+        r["enrichment"] = "ast"
+    assert sw.check_single_provider_group(recs) == ("jev", None)
+
+
+def test_missing_enrichment_key_counts_as_none(sw):
+    recs = _pos_runs([_judged(10, 0.9)]) + _neg_runs([])
+    for r in recs:
+        r["enrichment"] = "none"
+    recs[0].pop("enrichment")
+    assert sw.check_single_provider_group(recs) == ("jev", None)
+    recs[1]["enrichment"] = "ast"
+    with pytest.raises(SystemExit, match="enrichment"):
+        sw.check_single_provider_group(recs)
+
+
 def test_same_provider_group_passes(sw):
     recs = _pos_runs([_judged(10, 0.9)]) + _neg_runs([])
     assert sw.check_single_provider_group(recs) == ("jev", None)

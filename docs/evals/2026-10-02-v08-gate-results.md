@@ -97,6 +97,8 @@ ceiling-drops on both arms (237 vs 218).
 | #46 | 0.67 | 1/3 (**the G-C #46 regression**) |
 | #47 | 1.00 | 3/3 |
 
+> **Stale, 2026-10-20:** this A/B is vacuous. Both arms were unenriched (the Python path never engaged on a TS/JS/Rust set), so "isolated effect ≈ 0" is not evidence about enrichment. See `docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`.
+
 Enrichment-off arm (`--no-enrichment`, 15 runs): verdicts/findings match the
 enriched v08 arm on every sample (#43 10-11 bm 6-8; #44-47 identical shapes;
 wr/cl same incomplete-verdict shapes) — **enrichment's isolated effect ≈ 0
