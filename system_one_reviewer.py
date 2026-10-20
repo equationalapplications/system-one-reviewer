@@ -1186,7 +1186,8 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
         in_order = [e for e in entries if id(e) in selected]
         subs.append(_subcluster(parent, in_order,
                                 change_type=change_type,
-                                hunk_start=parent["hunk_start"]))
+                                hunk_start=parent["hunk_start"],
+                                cut="ast-units"))
     # unmatched pre-image symbols: own sub-clusters cut on PRE-image
     # boundaries, anchored via e[4], parent change_type kept (r6-M2);
     # r16-M3: keep diff order (no per-image re-sort).
@@ -1230,7 +1231,8 @@ def ast_units(path, before_text, after_text, entries, change_type="code-change",
             runs.append([e])
         for run in runs:
             subs.append(_subcluster(parent, run, change_type=change_type,
-                                    hunk_start=parent["hunk_start"]))
+                                    hunk_start=parent["hunk_start"],
+                                    cut="ast-units"))
             fb = next((e[4] for e in run
                        if len(e) > 4 and e[4] is not None), run[0][1])
             subs[-1]["line"] = fb
@@ -1366,7 +1368,8 @@ def ts_units(path, before_text, after_text, entries,
         # r16-M3: keep diff order (no per-image re-sort).
         subs.append(_subcluster(parent, by_post[i],
                                 change_type=change_type,
-                                hunk_start=parent["hunk_start"]))
+                                hunk_start=parent["hunk_start"],
+                                cut="ts-units"))
     if len(subs) == 1:
         return None  # no boundary gain -> let the caller fall through
     if rest:
@@ -1890,8 +1893,14 @@ def line_window_subclusters(path, entries, change_type="code-change",
     subs = []
     for g in groups:
         if g:
+            # E1: stamp cut="line-window" explicitly — without it,
+            # _subcluster's generic inference (parent_cluster presence)
+            # would mislabel this as "ast-units", collapsing the V5
+            # stamp-distinguishability contract between the window-only
+            # leg and a real AST/site cut of the same range.
             subs.append(_subcluster(parent, g, change_type=change_type,
-                                    hunk_start=parent["hunk_start"]))
+                                    hunk_start=parent["hunk_start"],
+                                    cut="line-window"))
     return subs or None
 
 
@@ -1965,16 +1974,22 @@ def _split_once(unit, images):
     change_type = unit.get("change_type", "code-change")
     parent = unit.get("parent_cluster") or unit
     pre, post = images(path, parent)
-    # 1. top-level AST (stdlib) — python files with a parseable post-image
-    subs = ast_units(path, pre, post, entries, change_type=change_type,
-                     parent_cluster=parent)
-    if subs:
-        return subs, None
-    # 2. tree-sitter units (lazy; returns None without the package)
-    subs = ts_units(path, pre, post, entries, change_type=change_type,
-                    parent_cluster=parent)
-    if subs:
-        return subs, None
+    # V5: --force-window-cut skips AST/tree-sitter entirely (window-only
+    # leg) — the caller (main) also skips _apply_site_cutting, so this
+    # is the single seam that forces every oversize/band unit through
+    # line_window_subclusters (then halving) only, for the SAME range a
+    # normal run would cut with AST/TS/sites.
+    if not _FORCE_WINDOW_CUT:
+        # 1. top-level AST (stdlib) — python files with a parseable post-image
+        subs = ast_units(path, pre, post, entries, change_type=change_type,
+                         parent_cluster=parent)
+        if subs:
+            return subs, None
+        # 2. tree-sitter units (lazy; returns None without the package)
+        subs = ts_units(path, pre, post, entries, change_type=change_type,
+                        parent_cluster=parent)
+        if subs:
+            return subs, None
     # 3. line windows — the always-works fallback
     subs = line_window_subclusters(path, entries, change_type=change_type,
                                    parent_cluster=parent)
@@ -2023,17 +2038,24 @@ def _split_once(unit, images):
         left_ch = _changed_entries(left)
         right_ch = _changed_entries(right)
         if left_ch and right_ch and left and right:
+            # E1: halving is a window-style split (by entry count, not
+            # line count) — "line-window" is the honest enum fit; it is
+            # NOT ast-units/ts-units/sites (no symbol boundary involved)
+            # and not "hunk" (it WAS split).
             return ([_subcluster(parent, left, change_type=change_type,
-                                 hunk_start=parent["hunk_start"]),
+                                 hunk_start=parent["hunk_start"],
+                                 cut="line-window"),
                      _subcluster(parent, right,
                                  change_type=change_type,
-                                 hunk_start=parent["hunk_start"])],
+                                 hunk_start=parent["hunk_start"],
+                                 cut="line-window")],
                     None)
         if (left_ch or right_ch) and left and right:
             kept_entries = left if left_ch else right
             return ([_subcluster(parent, kept_entries,
                                  change_type=change_type,
-                                 hunk_start=parent["hunk_start"])],
+                                 hunk_start=parent["hunk_start"],
+                                 cut="line-window")],
                     None)
     # unsplittable: a single changed line still over cap (or no cutter
     # helped and halving has nothing to cut) — the leaf case
@@ -3513,7 +3535,18 @@ def main():
                     action="store_true",
                     help="disable AST enclosing-symbol enrichment "
                          "(measurement arm; states stay v03b-shaped)")
+    # E1/V5: the window-only leg — skips site cutting AND AST/tree-sitter
+    # cutting, forcing every oversize/band unit through line windows only.
+    # Compared against a normal (site-cut) run of the SAME range, the two
+    # runs' wire_format values must differ (V5's stamp test).
+    ap.add_argument("--force-window-cut", dest="force_window_cut",
+                    action="store_true",
+                    help="measurement arm (V5): force line-window cutting "
+                         "only, skipping site/AST/tree-sitter cutting")
     args = ap.parse_args()
+
+    global _FORCE_WINDOW_CUT
+    _FORCE_WINDOW_CUT = args.force_window_cut
 
     # E5: check cutter availability early (per-cutter self-check per spec)
     for lang in ("python", "ts", "js"):
@@ -3568,7 +3601,9 @@ def main():
         # E2 step (2): site cutting for ALL admitted code-change clusters
         # (not only oversize/band units) — oversize/band rules below keep
         # governing the legacy top-level cutters exactly as today.
-        kept = _apply_site_cutting(kept, images)
+        # V5: --force-window-cut skips this step too (window-only leg).
+        if not _FORCE_WINDOW_CUT:
+            kept = _apply_site_cutting(kept, images)
         kept, leaves = expand_oversize_units(kept, images)
         # Task 6 step (2) (r5-m3): attach ast_context AFTER the
         # pre-judge expansion, jev only and never under
