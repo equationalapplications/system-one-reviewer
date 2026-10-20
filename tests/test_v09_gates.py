@@ -1,8 +1,6 @@
-import pytest
-import system_one_reviewer as sor
-
 # Import the constants we need to test
 from system_one_reviewer import REFLEX_GATE, SITE_SIZE_FLOOR_LINES, V7_MEDIAN_EXPANSION_ENVELOPE
+
 
 def test_v09_surfacing_threshold():
     """Test that production uses 0.80 surfacing threshold, not 0.50"""

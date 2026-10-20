@@ -84,7 +84,8 @@ CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 # all, because #45 showed deletion clusters over-scoring, not
 # under-scoring. Both stay >=0.05 from the 0.80/0.90 upper region.
 REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
-DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per Fable gate cond 2)
+DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per 
+# Fable gate cond 2)
 KNOWN_FIXTURES = {"positive", "negative"}
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
 # AGAIN — references_remaining in state, three-valued change_type,
@@ -1440,7 +1441,7 @@ def _py_site_candidates(tree):
 
         def visit_Dict(self, node):
             literal_pairs = []
-            for k, v in zip(node.keys, node.values):
+            for k, v in zip(node.keys, node.values, strict=True):
                 if v is None:
                     continue
                 start = getattr(k, "lineno", None) or node.lineno
@@ -1830,7 +1831,8 @@ def _ts_top_level_declarations(root):
 V7_MEDIAN_SITE_SIZE_FORBIDDEN_LINES = 120
 # V7: adopted envelope (Kurt, msg 1561831827394793606, "Yes") — median
 # site count per admitted top-level cluster.
-V7_MEDIAN_EXPANSION_ENVELOPE = 10.0  # re-ruled per census measurement (9.63×, floor tightenings exhausted; Kurt ruling msg 1561917565234708573)
+V7_MEDIAN_EXPANSION_ENVELOPE = 10.0  # re-ruled per census measurement 
+# (9.63×, floor tightenings exhausted; Kurt ruling msg 1561917565234708573)
 V7_MAX_TIGHTENINGS = 2
 # V7: median per-call wall time used to PROJECT total wall time next to
 # the call multiple (spec cond 6) — measured from the committed receipt
@@ -3917,8 +3919,11 @@ def main():
                    f"{n_units_total + n_size_skipped_code} clusters judged)")
     elif n_unjudged or n_dropped or n_size_skipped_code:
         status = "incomplete review"
-        verdict = (f"Incomplete review — "
-                   f"{n_analyzed - n_unjudged} of {n_units_total + n_size_skipped_code} of {n_total_top_level_clusters} clusters judged")
+        verdict = (
+            f"Incomplete review — "
+            f"{n_analyzed - n_unjudged} of {n_units_total + n_size_skipped_code} "
+            f"of {n_total_top_level_clusters} clusters judged"
+        )
     else:
         status = "ok"
         verdict = (f"Judged {n_analyzed} cluster{'s' if n_analyzed != 1 else ''}; "
