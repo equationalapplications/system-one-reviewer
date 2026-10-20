@@ -101,6 +101,7 @@ INPUT_MAX_FILE_CHARS = 2 * 1024 * 1024  # per side; over -> hunk>input-oversize
 INPUT_MAX_FILE_LINES = 20_000           # per side; over -> hunk>input-oversize
 INPUT_MATCH_LINES = 3000                # above this core size: difflib autojunk=True
 INPUT_MAX_LABEL_CHARS = 200             # head / repo labels
+INPUT_MAX_PATH_CHARS = 1024             # path / old_path
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
 # AGAIN — references_remaining in state, three-valued change_type,
 # rewritten deletion rubric, per-rubric thresholds, corroboration gate in
@@ -478,6 +479,21 @@ def _input_repr(s):
     return r if len(r) <= 120 else r[:117] + "..."
 
 
+def _input_has_control(v):
+    """True for a control character or any str.splitlines() line boundary
+    (U+0085, U+2028, U+2029): package_hunks splits the synthesized diff with
+    splitlines(), so such a character in a path could forge a diff header."""
+    return any(ord(c) < 0x20 or ord(c) in (0x7F, 0x85, 0x2028, 0x2029) for c in v)
+
+
+def input_head_warning(head):
+    """The stderr warning for a head that is not a 40-hex SHA, else None."""
+    if re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
+    return ("system-one-reviewer: warning: --input head is not a 40-hex commit SHA; "
+            "runs cannot be mapped to PRs")
+
+
 def _input_nonfinite(name):
     raise InputError(f"not JSON (non-finite number {name})")
 
@@ -489,6 +505,8 @@ def load_input(source):
     cap = INPUT_MAX_BYTES
     try:
         if source == "-":
+            if sys.stdin is None:
+                raise InputError("stdin is closed")
             raw = getattr(sys.stdin, "buffer", None)
             raw = raw.read(cap + 1) if raw is not None else sys.stdin.read(cap + 1)
         else:
@@ -528,7 +546,9 @@ def _input_path(v, where, nullable=False):
         return None
     if not v:
         raise InputError("must not be empty", where)
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+    if len(v) > INPUT_MAX_PATH_CHARS:
+        raise InputError(f"longer than {INPUT_MAX_PATH_CHARS} characters", where)
+    if _input_has_control(v):
         raise InputError("path contains a control character", where)
     v = v.replace("\\", "/")
     if v == "/dev/null":
@@ -546,7 +566,7 @@ def _input_label(doc, key, default):
         raise InputError("must not be empty", key)
     if len(v) > INPUT_MAX_LABEL_CHARS:
         raise InputError(f"longer than {INPUT_MAX_LABEL_CHARS} characters", key)
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+    if _input_has_control(v):
         raise InputError("contains a control character", key)
     return v
 
@@ -586,10 +606,12 @@ def validate_input(doc):
         if before is None and after is None:
             raise InputError("before and after are both null", at)
         for t in sides:
-            total += t.count("\n") + 1 if t else 0
+            total += len(split_lines(t)) if t else 0
         if total > INPUT_MAX_TOTAL_LINES:
             raise InputError(f"more than {INPUT_MAX_TOTAL_LINES} lines in total", at)
-        renamed = old_path is not None and old_path != path
+        # old_path only means something for a real rename of an existing file
+        renamed = (old_path is not None and old_path != path
+                   and before is not None and after is not None)
         if before == after and not renamed:
             continue
         out.append({"path": path, "old_path": old_path if renamed else None,
@@ -4324,7 +4346,8 @@ def main():
                          "only, skipping site/AST/tree-sitter cutting")
     args = ap.parse_args()
 
-    git_mode = bool(args.range or args.pr is not None or args.staged or args.uncommitted)
+    git_mode = (args.range is not None or args.pr is not None
+                or args.staged or args.uncommitted)
     if args.input is not None:
         if args.repo is not None or git_mode:
             ap.error("--input cannot be combined with --repo, --range, --pr, "
@@ -4340,6 +4363,9 @@ def main():
             where = f" ({e.where})" if e.where else ""
             print(f"system-one-reviewer: --input: {e}{where}", file=sys.stderr)
             sys.exit(2)
+        warning = input_head_warning(input_doc["head"])
+        if warning:
+            print(warning, file=sys.stderr)
         input_bundle = build_input(input_doc)
 
     global _FORCE_WINDOW_CUT
