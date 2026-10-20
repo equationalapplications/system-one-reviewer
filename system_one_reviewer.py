@@ -971,9 +971,175 @@ def _symbol_context_window(src, lineno):
         [:ENRICHMENT_MAX_CONTEXT_LINES]
 
 
-def build_ast_context(path, pre, post, unit):
+# TS/JS enrichment (tree-sitter, via the same lazy `loader` seam as
+# ts_units). Same ast_context shape and caps as the Python path so the
+# model-facing payload is like-for-like; only the parser differs. Unlike
+# the top-level-only declaration list, the enclosing walk visits the WHOLE
+# tree so non-exported arrows, nested functions and object-literal methods
+# still resolve to a symbol.
+TS_ENRICHMENT_MAX_CHARS = 256 * 1024   # larger files get no enrichment
+_TS_VALUE_KINDS = ("arrow_function", "function_expression", "function",
+                   "generator_function", "class")
+_TS_DECL_KINDS = ("function_declaration", "generator_function_declaration",
+                  "class_declaration", "abstract_class_declaration",
+                  "interface_declaration", "type_alias_declaration",
+                  "enum_declaration", "internal_module", "module",
+                  "method_definition")
+_TS_PARSE_CACHE: dict = {}
+
+
+def _ts_parse(src, ext, loader=None):
+    """(symbol_table, spans) for `src` parsed as TS/JS, or None (missing
+    tree-sitter, oversize, parse error, any failure). Both are derived
+    once per image and cached per run: ~10 sites per cluster share one
+    image, and neither the parse nor the full-tree walk should repeat. The
+    tree itself is not kept."""
+    lang = TS_LANGUAGE_BY_EXT.get(ext)
+    if lang is None or not src or len(src) > TS_ENRICHMENT_MAX_CHARS:
+        return None
+    key = (lang, id(loader), src)
+    if key in _TS_PARSE_CACHE:
+        return _TS_PARSE_CACHE[key]
+    derived = None
+    try:
+        tree_sitter = (loader or importlib.import_module)("tree_sitter")
+        grammar_mod = (loader or importlib.import_module)(
+            "tree_sitter_typescript" if lang in ("typescript", "tsx")
+            else "tree_sitter_javascript")
+        get_lang = (grammar_mod.language_typescript if lang == "typescript"
+                    else grammar_mod.language_tsx if lang == "tsx"
+                    else getattr(grammar_mod, "language", None))
+        if get_lang is not None:
+            parser = tree_sitter.Parser(tree_sitter.Language(get_lang()))
+            tree = parser.parse(src.encode("utf-8", "replace"))
+            if not tree.root_node.has_error:
+                derived = (_ts_symbol_table(tree.root_node, src),
+                           _ts_symbol_spans(tree.root_node))
+    except Exception:
+        derived = None
+    _TS_PARSE_CACHE[key] = derived
+    return derived
+
+
+def _ts_lines(src):
+    """Source lines the way tree-sitter rows and diff line numbers count
+    them: by "\n" only. str.splitlines() also splits on U+2028, form feed
+    and friends, which would shift every later line."""
+    return [ln.rstrip("\r") for ln in src.split("\n")]
+
+
+def _ts_symbol_table(root, src):
+    """{name: signature line} for the file's top-level function/class/const
+    declarations (head of ENRICHMENT_MAX_SYMBOLS, source order)."""
+    src_lines = _ts_lines(src)
+    table: dict[str, str] = {}
+    for ident, st, _en in _ts_top_level_declarations(root):
+        name = ident.split(":", 1)[1].rsplit(":", 1)[0]
+        if name[:1] in ("{", "["):  # destructuring is not a symbol name
+            continue
+        table[name] = (src_lines[st - 1].rstrip()
+                       if 1 <= st <= len(src_lines) else "")
+        if len(table) >= ENRICHMENT_MAX_SYMBOLS:
+            break
+    return table
+
+
+def _ts_symbol_label(node):
+    """The symbol name `node` introduces, or None when it is not a named
+    symbol (anonymous callbacks, destructuring, overload signatures)."""
+    t = node.type
+    if t in _TS_DECL_KINDS:
+        name_node = node.child_by_field_name("name")
+    elif t in ("variable_declarator", "public_field_definition",
+               "field_definition", "pair"):
+        value = node.child_by_field_name("value")
+        if value is None or value.type not in _TS_VALUE_KINDS:
+            return None
+        name_node = node.child_by_field_name(
+            "key" if t == "pair"
+            else "property" if t == "field_definition" else "name")
+    else:
+        return None
+    if name_node is None or name_node.type.endswith("_pattern") \
+            or name_node.type == "computed_property_name":
+        return None
+    return name_node.text.decode("utf-8", "replace").strip("\"'`")
+
+
+def _ts_symbol_spans(root):
+    """[(start_line, end_line, chain)] for every named symbol node in the
+    tree (1-based lines, chain outermost first). Iterative, so deep trees
+    cannot hit the recursion limit."""
+    out: list = []
+    stack: list = [(root, [], "")]
+    while stack:
+        node, chain, parent_type = stack.pop()
+        name = _ts_symbol_label(node)
+        if name is None and parent_type == "export_statement" \
+                and node.type in ("function_expression", "class"):
+            name = "<default>"  # `export default function () {}`
+        here = chain + [name] if name else chain
+        if name:
+            out.append((node.start_point[0] + 1, node.end_point[0] + 1,
+                        here))
+        for child in reversed(node.children):
+            stack.append((child, here, node.type))
+    return out
+
+
+def _ts_enclosing_span(spans, lineno):
+    """(start, end, chain) of the innermost symbol containing `lineno`
+    (narrowest span; ties go to the deeper node), or None."""
+    best = None
+    for st, en, chain in spans:
+        if st <= lineno <= en:
+            key = (en - st, -st, -len(chain))
+            if best is None or key < best[0]:
+                best = (key, st, en, chain)
+    return None if best is None else best[1:]
+
+
+def _ts_ast_context(src, ext, lineno, loader=None):
+    """TS/JS twin of the Python ast_context: top-level symbol table,
+    dotted enclosing chain at `lineno`, and the innermost enclosing
+    symbol's own source (head-first, clamped like the Python window)."""
+    derived = _ts_parse(src, ext, loader)
+    if derived is None:
+        return None
+    table, spans = derived
+    best = _ts_enclosing_span(spans, lineno)
+    if not table and best is None:
+        return None
+    window: list = []
+    if best is not None:
+        src_lines = _ts_lines(src)
+        lo = max(1, min(best[0], len(src_lines)))
+        hi = min(len(src_lines), best[1])
+        window = [src_lines[i - 1].rstrip()
+                  for i in range(lo, hi + 1)][:ENRICHMENT_MAX_CONTEXT_LINES]
+    return {"symbols": dict(table),
+            "enclosing": ".".join(best[2]) if best else None,
+            "context": window}
+
+
+def _enrichment_stamp(unit):
+    """Per-unit ledger stamp: "none", "ast" (Python, the original value,
+    so existing receipts stay comparable) or "ts-ast" (tree-sitter)."""
+    if "ast_context" not in unit:
+        return "none"
+    ext = os.path.splitext(unit.get("file") or "")[1].lower().lstrip(".")
+    return "ts-ast" if ext in TS_LANGUAGE_BY_EXT else "ast"
+
+
+def _run_enrichment_stamp(units):
+    """Run-level stamp: "none", "ast", "ts-ast" or "ast+ts-ast"."""
+    kinds = sorted({_enrichment_stamp(u) for u in units} - {"none"})
+    return "+".join(kinds) or "none"
+
+
+def build_ast_context(path, pre, post, unit, loader=None):
     """The ast_context value for ONE unit, or None when the unit has no
-    usable symbol context (non-Python text, no parseable images, no
+    usable symbol context (non-Python/TS text, no parseable images, no
     enclosing symbols). `pre` is preferred for deletion-only units
     (r2-m4: the removed code lives only in the old file); everything
     else maps by POST-image lines. WHOLE-FILE-DELETED units always get
@@ -990,6 +1156,9 @@ def build_ast_context(path, pre, post, unit):
         lineno = unit["line"]
     if not src:
         return None
+    ext = os.path.splitext(path or "")[1].lower().lstrip(".")
+    if ext in TS_LANGUAGE_BY_EXT:
+        return _ts_ast_context(src, ext, lineno, loader)
     symbols = _file_symbol_table(src)
     enclosing = _enclosing_chain(src, lineno)
     if symbols is None and enclosing is None:
@@ -999,19 +1168,21 @@ def build_ast_context(path, pre, post, unit):
             "context": _symbol_context_window(src, lineno)}
 
 
-def attach_ast_context(units, images):
+def attach_ast_context(units, images, loader=None):
     """Bounded (r2-m3) attachment of `ast_context` to each unit — called
     by main() for jev only, after the pre-judge expansion and only when
     --no-enrichment is absent (r5-m3: the mechanism lives here, so
     `hunk_state` stays provider-agnostic and a laya state NEVER carries
     the key). `images(path, unit)` mirrors the cutter's injection
     contract (mode_file_images). Units without a usable symbol context
-    (non-Python text, missing images, whole-file-deleted) simply do not
+    (text that is neither Python nor TS/JS, missing images,
+    whole-file-deleted) simply do not
     get the key — it is ABSENT, never None-valued."""
     out: list = []
     for unit in units:
         pre, post = images(unit.get("file") or "", unit)
-        ctx = build_ast_context(unit.get("file") or "", pre, post, unit)
+        ctx = build_ast_context(unit.get("file") or "", pre, post, unit,
+                                loader=loader)
         if ctx is not None:
             unit = dict(unit, ast_context=ctx)
         out.append(unit)
@@ -2340,6 +2511,7 @@ def clear_runtime_caches():
     global _FORCE_WINDOW_CUT
     _IMAGE_CACHE.clear()
     _MERGE_BASE_CACHE.clear()
+    _TS_PARSE_CACHE.clear()
     _FORCE_WINDOW_CUT = False
 
 
@@ -3950,7 +4122,7 @@ def main():
          # Task 6 (r1-M1): per-unit enrichment presence in the JUDGED
          # state (r12-M1: a dropped unit logs "none" — the flag records
          # presence in the judged state, never the attempt).
-         "enrichment": ("ast" if "ast_context" in f["hunk"] else "none"),
+         "enrichment": _enrichment_stamp(f["hunk"]),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
     meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
@@ -3959,11 +4131,11 @@ def main():
             "n_hunks": len(hunks),
             # Task 6: the run-level enrichment stamp (r1-M1: the D7
             # run-level stamp stays; judged entries also carry their own
-            # per-unit value). "ast" iff ANY unit state carries
-            # ast_context; "none" under --no-enrichment / laya / when no
+            # per-unit value). Names the parser(s) behind any unit state
+            # carrying ast_context ("ast" Python, "ts-ast" tree-sitter,
+            # "ast+ts-ast" both); "none" under --no-enrichment / laya / when no
             # unit's file yielded a symbol table.
-            "enrichment": ("ast" if any("ast_context" in u
-                                        for u in kept) else "none"),
+            "enrichment": _run_enrichment_stamp(kept),
             # Task 7 (D7): the record-version rides in meta too, so the
             # JSON output and the ledger agree on what produced the run.
             "record_version": PACKAGING_VERSION,
@@ -3986,6 +4158,10 @@ def main():
                    **_span(f["hunk"]),
                    "severity": f.get("severity"), "is_real": f.get("is_real"),
                    "category": f.get("category"), "header": f["hunk"]["header"],
+                   # the judged unit's rendered lines, so a --out receipt is
+                   # self-contained for REAL/FP adjudication (stdout shows
+                   # only the first few)
+                   "lines": list(f["hunk"].get("lines", [])),
                    "cut": f.get("cut")}  # E1: per-unit cutting path
                   for f in reported],
               "skipped": skipped, "jitter": jitter, "verdict": verdict,

@@ -207,8 +207,12 @@ default `jev` provider, the pre-judge pipeline is:
    dropped.
 3. **Enrich** — each unit can carry an `ast_context`: the enclosing
    symbol chain and a bounded source window from the file images,
-   deduplicated per call. Disable with `--no-enrichment` (measurement
-   only; the default is on).
+   deduplicated per call. Python uses stdlib `ast`; TypeScript/JavaScript
+   use tree-sitter when the optional wheels are installed (no wheels, no
+   context). The ledger stamps `enrichment` as `none`, `ast` (Python),
+   `ts-ast`, or `ast+ts-ast`. Disable with `--no-enrichment` (measurement
+   only; the default is on). The effect of enrichment is not yet measured;
+   see `docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`.
 4. **Re-estimate and re-expand** — enrichment can push a unit over the
    cap; in that case the context is dropped and the unit is re-checked
    (no split is ever caused by enrichment).

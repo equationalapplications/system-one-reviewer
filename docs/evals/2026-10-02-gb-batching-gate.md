@@ -20,6 +20,8 @@ never ships; raw data `/tmp/gb_results/gb_run.json`, arm-A ledger JSONs in
   (`import.tsx` 14, `chunkedImportDump.ts` 9, `useNightShiftGates.ts` 3)
   AND split clusters (`dev-model.js` 112–220, `importMachine.ts` bands)
   both present, per the fixture spec.
+> **Stale note, 2026-10-20:** arm B's "AST enrichment" ran on TS heads where the Python path never engaged, so it was effectively unenriched, and enrichment alone is not isolated here. See `docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`.
+
 - **Arms:** A = per-cluster baseline (product path, `--no-enrichment`,
   subprocess via the real CLI); B = per-cluster + AST enrichment (isolation
   arm, same 64 clusters, in-process `hunk_state` incl. `ast_context`);
