@@ -81,7 +81,7 @@ umask 077
 chmod 600 ~/.config/jev-review/.env
 ```
 
-Requires: Python 3.10+, git, a TypeSafe API key (for the hosted provider).
+Requires: Python 3.10+, git (not needed with `--input`), a TypeSafe API key (for the hosted provider).
 No third-party packages.
 
 macOS with the python.org installer: run its one-time
@@ -96,6 +96,7 @@ system-one-reviewer --repo PATH --range A..B     # commit range (reviews the mer
 system-one-reviewer --repo PATH --pr N           # GitHub PR (needs local refs: git fetch origin pull/N/head:pr/N; base is origin/main)
 system-one-reviewer --repo PATH --staged         # staged changes
 system-one-reviewer --repo PATH --uncommitted    # working tree
+system-one-reviewer --input FILE                 # before/after file texts as JSON, no git (FILE or - for stdin); see Input mode
 
 # scored run against planted issues (TSV: file, line, description)
 system-one-reviewer --repo PATH --range A..B --golden golden.tsv --label run1
@@ -141,6 +142,72 @@ attributable).
 old name — the metrics path (`jev-review/metrics.jsonl`), the
 `JEV_REVIEW_METRICS` env var, and `~/.config/jev-review/.env`. This
 preserves existing metrics logs and API-key setups across the rename.
+
+### Input mode (`--input`, no git)
+
+For hosts that hold the before and after texts but no checkout, such as a
+Lambda reading PRs through the API. `--input FILE|-` reads one JSON document
+from a file or stdin:
+
+```json
+{
+  "head":  "<40-hex commit SHA>",
+  "repo":  "<name>",
+  "files": [
+    {"path": "src/a.ts", "old_path": null, "before": "...", "after": "..."}
+  ]
+}
+```
+
+- `head` (required, at most 200 characters) MUST be the 40-hex head commit
+  when the host has it: the run records it as the head, and run-to-PR
+  mapping depends on it.
+- `repo` (optional, at most 200 characters, no control characters) is the
+  `meta.repo` label; default `input`.
+- `files` (required; may be empty) entries take `path` (string), `old_path`
+  (string or null), `before` and `after` (string or null). `before: null` is
+  an added file, `after: null` a deleted file, and `old_path` different from
+  `path` a rename. Status is derived from the contents, never stated.
+  `before` equal to `after` with no rename is ignored. Both null is invalid.
+  Unknown keys are ignored.
+- Send full file texts. An empty string is a real empty file: omit a file
+  you could not fetch rather than sending `""`.
+
+`--input` cannot be combined with `--repo`, `--range`, `--pr`, `--staged` or
+`--uncommitted`. A document that fails validation exits 2 before any model
+call, with `system-one-reviewer: --input: <reason>` on stderr and the
+offending `files[i].key` in parentheses. Paths are echoed truncated to 120
+characters; file contents are never echoed.
+
+Limits: 64 MiB of input, 2,000 files, 1,000,000 lines across all files and
+both sides (rejected when exceeded). Per file side, text over 2 MiB or more
+than 20,000 lines is skipped, not rejected. Skips are listed in `skipped`:
+`input-binary` (a NUL character in either side) and `hunk>input-oversize`.
+An oversize code file counts as unjudged code, so the run reads `status ==
+"incomplete review"`, never ok.
+
+Input runs stamp `mode: input`, and the ledger label defaults to
+`auto:input`. `meta.n_input_autojunk` counts files matched with the fallback
+described below.
+
+Known limits: hunk boundaries can differ from git's where several minimal
+diffs exist (difflib, not git's Myers algorithm). Files whose changed core
+(after common leading and trailing lines are stripped) exceeds 3,000 lines on
+either side use poorer matching (`autojunk`): the diff is still correct, but
+the hunks are coarser.
+
+**Running on AWS Lambda or another git-less host.** Set `TYPESAFE_API_KEY` in
+the environment, as usual. Also set `JEV_REVIEW_METRICS` to a writable path
+such as `/tmp/metrics.jsonl`: the ledger write runs before the report is
+printed, and on a read-only HOME it raises after the model calls have been
+paid for, so the run prints nothing (issue #25 tracks making that write
+non-fatal). tree-sitter wheels are optional and their absence is silent:
+without them TS/JS fall back to line windows, get no TS enrichment, and
+report `where.symbol: null`. Check `meta.wheels` (`{ts: {available: false}}`
+when missing). Python uses stdlib `ast` and is unaffected. To run with the
+wheels, package the pinned versions `tree-sitter==0.26.0`,
+`tree-sitter-typescript==0.23.2` and `tree-sitter-javascript==0.25.0` for the
+Lambda's architecture.
 
 ## Providers: hosted Jev or local Laya
 

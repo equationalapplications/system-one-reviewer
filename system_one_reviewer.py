@@ -23,6 +23,7 @@ Fail-open: repeated provider failures -> report ships with an
 
 Usage:
   system-one-reviewer --repo <path> (--range A..B | --pr N | --staged | --uncommitted)
+  system-one-reviewer --input FILE|-   (before/after texts as JSON, no git)
              [--out f.json] [--max-hunks N] [--golden f] [--label s] [--json]
              [--negative-golden f] [--fixture NAME]
 """
@@ -90,6 +91,15 @@ REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
 DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per
 # Fable gate cond 2)
 KNOWN_FIXTURES = {"positive", "negative"}
+# --input mode (docs/superpowers/specs/2026-10-20-input-mode.md): caps that keep a
+# caller-supplied document inside the seconds envelope and bounded memory.
+INPUT_MAX_BYTES = 64 * 1024 * 1024    # the JSON document itself
+INPUT_MAX_FILES = 2000
+INPUT_MAX_TOTAL_LINES = 1_000_000     # across all files and both sides
+INPUT_MAX_FILE_CHARS = 2 * 1024 * 1024  # per side; over -> hunk>input-oversize
+INPUT_MAX_FILE_LINES = 20_000           # per side; over -> hunk>input-oversize
+INPUT_MATCH_LINES = 3000                # above this core size: difflib autojunk=True
+INPUT_MAX_LABEL_CHARS = 200             # head / repo labels
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
 # AGAIN — references_remaining in state, three-valued change_type,
 # rewritten deletion rubric, per-rubric thresholds, corroboration gate in
@@ -450,6 +460,140 @@ def run_git(repo, *args):
     if r.returncode != 0:
         sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{r.stderr}")
     return r.stdout
+
+
+class InputError(Exception):
+    """A rejected --input document: str(e) is the reason, `where` (optional) says
+    which key, for example files[3].path. Never carries file contents."""
+
+    def __init__(self, reason, where=None):
+        super().__init__(reason)
+        self.where = where
+
+
+def _input_repr(s):
+    """A path for an error message: repr(), truncated, never the contents."""
+    r = repr(s)
+    return r if len(r) <= 120 else r[:117] + "..."
+
+
+def _input_nonfinite(name):
+    raise InputError(f"not JSON (non-finite number {name})")
+
+
+def load_input(source):
+    """Read and parse the --input document: a file path, or "-" for stdin.
+    Reads at most INPUT_MAX_BYTES + 1 bytes (more is rejected) and strips a
+    leading BOM. Shape is validate_input's job."""
+    cap = INPUT_MAX_BYTES
+    try:
+        if source == "-":
+            raw = getattr(sys.stdin, "buffer", None)
+            raw = raw.read(cap + 1) if raw is not None else sys.stdin.read(cap + 1)
+        else:
+            with open(source, "rb") as f:
+                raw = f.read(cap + 1)
+    except OSError as e:
+        raise InputError(f"cannot read {_input_repr(source)}: "
+                         f"{e.strerror or type(e).__name__}") from None
+    if len(raw) > cap:
+        raise InputError(f"input exceeds {cap} bytes")
+    try:
+        text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw.lstrip("\ufeff")
+        return json.loads(text, parse_constant=_input_nonfinite)
+    except json.JSONDecodeError as e:
+        raise InputError(f"not JSON ({e.msg})", f"line {e.lineno} column {e.colno}") from None
+    except (RecursionError, ValueError):
+        raise InputError("not JSON") from None
+
+
+def _input_text(v, where, nullable=False):
+    """A string key that must round-trip UTF-8 (json.loads accepts lone
+    surrogates, which later crash print() after the model calls are paid for)."""
+    if v is None and nullable:
+        return None
+    if not isinstance(v, str):
+        raise InputError("must be a string" + (" or null" if nullable else ""), where)
+    try:
+        v.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InputError("contains a lone surrogate", where) from None
+    return v
+
+
+def _input_path(v, where, nullable=False):
+    v = _input_text(v, where, nullable)
+    if v is None:
+        return None
+    if not v:
+        raise InputError("must not be empty", where)
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+        raise InputError("path contains a control character", where)
+    v = v.replace("\\", "/")
+    if v == "/dev/null":
+        raise InputError("path must not be /dev/null", where)
+    return v
+
+
+def _input_label(doc, key, default):
+    if key not in doc:
+        if default is None:
+            raise InputError("missing", key)
+        return default
+    v = _input_text(doc[key], key)
+    if default is None and not v:
+        raise InputError("must not be empty", key)
+    if len(v) > INPUT_MAX_LABEL_CHARS:
+        raise InputError(f"longer than {INPUT_MAX_LABEL_CHARS} characters", key)
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+        raise InputError("contains a control character", key)
+    return v
+
+
+def validate_input(doc):
+    """Validate a parsed --input document and return
+    {"head", "repo", "files": [{"path", "old_path", "before", "after"}]} with
+    normalised paths. Files with before == after and no rename are dropped.
+    Raises InputError for every rejection; unknown keys are ignored."""
+    if not isinstance(doc, dict):
+        raise InputError("top level must be a JSON object")
+    head = _input_label(doc, "head", None)
+    repo = _input_label(doc, "repo", "input")
+    files = doc.get("files")
+    if not isinstance(files, list):
+        raise InputError("must be an array", "files")
+    if len(files) > INPUT_MAX_FILES:
+        raise InputError(f"more than {INPUT_MAX_FILES} files", "files")
+    out, seen, total = [], set(), 0
+    for i, f in enumerate(files):
+        at = f"files[{i}]"
+        if not isinstance(f, dict):
+            raise InputError("must be an object", at)
+        if "path" not in f:
+            raise InputError("missing", f"{at}.path")
+        path = _input_path(f["path"], f"{at}.path")
+        old_path = _input_path(f.get("old_path"), f"{at}.old_path", nullable=True)
+        if path in seen:
+            raise InputError(f"duplicate path {_input_repr(path)}", f"{at}.path")
+        seen.add(path)
+        sides = []
+        for key in ("before", "after"):
+            if key not in f:
+                raise InputError("missing", f"{at}.{key}")
+            sides.append(_input_text(f[key], f"{at}.{key}", nullable=True))
+        before, after = sides
+        if before is None and after is None:
+            raise InputError("before and after are both null", at)
+        for t in sides:
+            total += t.count("\n") + 1 if t else 0
+        if total > INPUT_MAX_TOTAL_LINES:
+            raise InputError(f"more than {INPUT_MAX_TOTAL_LINES} lines in total", at)
+        renamed = old_path is not None and old_path != path
+        if before == after and not renamed:
+            continue
+        out.append({"path": path, "old_path": old_path if renamed else None,
+                    "before": before, "after": after})
+    return {"head": head, "repo": repo, "files": out}
 
 
 GIT_PROBE_TIMEOUT = 30  # seconds; rev-parse is instant unless git is stuck
@@ -3979,7 +4123,10 @@ def main():
     ap = argparse.ArgumentParser(prog="system-one-reviewer")
     ap.add_argument("--version", action="version",
                     version=f"%(prog)s {__version__}")
-    ap.add_argument("--repo", required=True)
+    ap.add_argument("--repo")
+    ap.add_argument("--input", metavar="FILE|-",
+                    help="review before/after file texts from a JSON document "
+                         "(file or - for stdin) instead of git")
     ap.add_argument("--range", dest="range")
     ap.add_argument("--pr", type=int)
     ap.add_argument("--staged", action="store_true")
@@ -4019,6 +4166,24 @@ def main():
                     help="measurement arm (V5): force line-window cutting "
                          "only, skipping site/AST/tree-sitter cutting")
     args = ap.parse_args()
+
+    git_mode = bool(args.range or args.pr is not None or args.staged or args.uncommitted)
+    if args.input is not None:
+        if args.repo is not None or git_mode:
+            ap.error("--input cannot be combined with --repo, --range, --pr, "
+                     "--staged or --uncommitted")
+    elif args.repo is None:
+        ap.error("one of --repo or --input is required")
+    if args.input is not None:
+        # Read and validate BEFORE load_api_key() and any model call; a rejected
+        # document is a caller error (exit 2, unlike the exit-1 git failures).
+        try:
+            validate_input(load_input(args.input))
+        except InputError as e:
+            where = f" ({e.where})" if e.where else ""
+            print(f"system-one-reviewer: --input: {e}{where}", file=sys.stderr)
+            sys.exit(2)
+        raise NotImplementedError("--input: diff synthesis is wired in a later task")
 
     global _FORCE_WINDOW_CUT
     _FORCE_WINDOW_CUT = args.force_window_cut
@@ -4266,7 +4431,7 @@ def main():
          "reflex_class": f.get("reflex_class", "code"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
-    meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
+    meta = {"repo": os.path.basename(os.path.realpath(args.repo or "")),  # input mode: Task 3
             "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks),

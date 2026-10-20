@@ -29,8 +29,11 @@ installed into THAT interpreter (`$(which python3) -m pip` from a login shell)
 or the TS cutter silently falls back to line windows — same commit, different
 results. Verify before any measurement run:
 `python3 -c "import tree_sitter; print('ok')"` from the same shell that will
-run the binary. The E5 per-cutter self-check (spec rev 4) makes measurement
-runs abort on this; do not bypass it.
+run the binary. The tool will NOT stop you: it never aborts on missing
+tree-sitter wheels, in any mode including `--golden`. `check_cutter_availability()`
+returns `(False, None)`, the TS/JS cutter falls back to line windows, and the
+run records it in `meta.wheels`, so check that field. The aborts exist only in
+`scripts/enrichment_ab.py` and `scripts/enrichment_census.py`.
 
 ## Metrics ledger etiquette
 
