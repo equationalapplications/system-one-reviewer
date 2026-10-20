@@ -1,3 +1,9 @@
+## [0.9.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.8.0...v0.9.0) (2026-10-20)
+
+### Features
+
+* SOR v0.9 — structural facts, decision-site cutting, triage output ([#21](https://github.com/equationalapplications/system-one-reviewer/issues/21)) ([a838844](https://github.com/equationalapplications/system-one-reviewer/commit/a8388442bee5af029d6a73b599b5c374f3afb837))
+
 ## [0.8.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.7.0...v0.8.0) (2026-10-04)
 
 ### Features
