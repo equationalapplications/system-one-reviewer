@@ -2,7 +2,7 @@
 
 > Provenance. v0.1 DRAFT, 2026-10-19. Authority: Kurt VanDusen; directives in
 > Discord thread 1561717581461848067 (msg 1561767191085453413). Derived from
-> [INTENT.md](INTENT.md) and the Tier-4 Fable run-3 memo (vault:
+> [INTENT.md](../../INTENT.md) and the Tier-4 Fable run-3 memo (vault:
 > `records/investigations/2026-10-19-sor-quality-fable-step0-guidance/memo-run3.md`).
 > The vault wins on disagreement. Changes by PR with a dated changelog line.
 
