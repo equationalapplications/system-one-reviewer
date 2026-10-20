@@ -258,7 +258,9 @@ def rewrap(j, run_version=None):
             "is_real": j["is_real"], "severity": j["severity"],
             "category": j.get("category"), "parse_error": None,
             "rubric": j.get("rubric", "code-change"),
-            "references_remaining": j.get("references_remaining")}
+            "references_remaining": j.get("references_remaining"),
+            # entries without the key (older ledgers) replay as code
+            "reflex_class": j.get("reflex_class", "code")}
 
 
 def replay(jr, run, t, deletion_threshold=None):

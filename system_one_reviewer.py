@@ -1214,6 +1214,34 @@ def build_ast_context(path, pre, post, unit, loader=None):
             "context": _symbol_context_window(src, lineno)}
 
 
+def locate(path, pre, post, unit):
+    """Where to look for a surfaced finding: the dotted enclosing symbol at the
+    anchor line (None if none resolves) and the anchor line. Deterministic, no
+    claim, no source text, and independent of ast_context so --no-enrichment,
+    missing wheels or a context dropped at re-expansion do not change it.
+    Deletion-only units use the pre-image; whole-file-deleted has no symbol.
+    Fails open."""
+    line = unit["line"]
+    src, lineno = post, line
+    if unit.get("change_type") == "whole-file-deleted":
+        src = None
+    elif unit.get("change_type") == "deletion-only" and pre:
+        first = next((e for e in unit.get("entries", []) if e[0] == "-"), None)
+        src, lineno = pre, (first[1] if first is not None else line)
+    symbol = None
+    if src:
+        ext = os.path.splitext(path or "")[1].lower().lstrip(".")
+        try:
+            if ext in TS_LANGUAGE_BY_EXT:
+                ctx = _ts_ast_context(src, ext, lineno)
+                symbol = ctx["enclosing"] if ctx else None
+            elif ext == "py":
+                symbol = _enclosing_chain(src, lineno)
+        except Exception:
+            symbol = None
+    return {"symbol": symbol, "line": line}
+
+
 def attach_ast_context(units, images, loader=None):
     """Bounded (r2-m3) attachment of `ast_context` to each unit — called
     by main() for jev only, after the pre-judge expansion and only when
@@ -3894,6 +3922,8 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
         sev = SEV_NAME.get(sev_level(f.get("severity")), "?")
         out.append(f"[{sev}] {f['hunk']['file']}:{f['hunk']['line']} "
                    f"({f.get('category')}, is_real={f.get('is_real')})")
+        if (f.get("where") or {}).get("symbol"):
+            out.append(f"  in {f['where']['symbol']}")
         out.append(f"  hunk: {f['hunk']['header']}")
         for line in f["hunk"]["lines"][:6]:
             out.append("    " + line)
@@ -4161,6 +4191,15 @@ def main():
     # truncated away while a weaker early one survives.
     reported = sorted(reported, key=lambda f: (
         -(f.get("severity") or 0), -(f.get("is_real") or 0)))[:5]
+    # Locator for the (at most five) surfaced findings, from the file image
+    # (not ast_context), so it also works for laya and under --no-enrichment.
+    for f in reported:
+        try:
+            pre, post = mode_file_images(args.repo, mode, head, f["hunk"]["file"],
+                                         old_file=f["hunk"].get("old_file"))
+        except Exception:
+            pre = post = None
+        f["where"] = locate(f["hunk"]["file"], pre, post, f["hunk"])
     # r15-M1: leaves now join BEFORE judge_pr_level/compose (see the
     # amended insertion window above); the old post-compose insert is
     # gone. n_unjudged counts them unchanged.
@@ -4262,7 +4301,8 @@ def main():
                    # only the first few)
                    "lines": list(f["hunk"].get("lines", [])),
                    "cut": f.get("cut"),  # E1: per-unit cutting path
-                   "reflex_class": f.get("reflex_class", "code")}
+                   "reflex_class": f.get("reflex_class", "code"),
+                   "where": f.get("where")}
                   for f in reported],
               "skipped": skipped, "jitter": jitter, "verdict": verdict,
               # Step 0′: structured verdict for downstream consumers —

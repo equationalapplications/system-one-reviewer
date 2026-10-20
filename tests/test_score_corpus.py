@@ -163,3 +163,12 @@ def test_render_markdown_mentions_primary_metrics(tmp_path, jr, sw, split):
     md = sc.render_markdown(sc.score(root, "base", split=split, jr=jr, sw=sw))
     for key in ("recall (strict)", "FPs per clean PR", "verdict accuracy", "misses"):
         assert key in md
+
+
+def test_replay_indices_holds_test_class_entries(jr, sw):
+    # replay_indices goes through sw.rewrap, so the stamp decides what surfaces
+    held = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    kept = _j("a.py", 20, 16, 24, 2.6, 0.9)  # no key: an older ledger entry
+    rec = {"judged": [held, kept], "packaging_version": "v03b"}
+    idx, reported, _ = sc.replay_indices(jr, sw, rec, 0.5, 0.7)
+    assert idx == [1] and [f["hunk"]["file"] for f in reported] == ["a.py"]

@@ -150,7 +150,8 @@ def test_combine_cli(tmp_path, capsys):
 
 def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
                      n_findings=0, tp_out=0, severity=2, rubric="code-change",
-                     off_surface=8, golden_lines=(10,), status="ok"):
+                     off_surface=8, golden_lines=(10,), status="ok",
+                     reflex_class=None, cmds=None):
     """Stand in for the reviewer CLI: write the --out file and append a
     ledger record for the requested label, like the real tool does. Eight
     units at lines 0, 10, ..., 70; the off-arm puts `off_surface` of them at
@@ -159,6 +160,8 @@ def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
     import types
 
     def fake_run(cmd, env=None, capture_output=None, text=None):
+        if cmds is not None:
+            cmds.append(list(cmd))
         label = cmd[cmd.index("--label") + 1]
         out = cmd[cmd.index("--out") + 1]
         arm = "off" if "--no-enrichment" in cmd else "on"
@@ -173,6 +176,9 @@ def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
                    "is_real": on_is_real if arm == "on"
                    else (0.9 if i < off_surface else 0.1)}
                   for i in range(8)]
+        if reflex_class is not None:
+            for j in judged:
+                j["reflex_class"] = reflex_class
         with open(env["JEV_REVIEW_METRICS"], "a") as f:
             f.write(_json.dumps({"label": label, "judged": judged}) + "\n")
         return types.SimpleNamespace(returncode=0, stderr="")
@@ -666,7 +672,8 @@ def test_run_one_never_returns_a_stale_out_file(monkeypatch, tmp_path):
     monkeypatch.setattr(ab.subprocess, "run", lambda *a, **k: types.SimpleNamespace(
         returncode=1, stderr="boom"))
     args = types.SimpleNamespace(sample="s", outdir=str(outdir), repo=".",
-                                 range="a..b", golden=None, negative_golden=None)
+                                 range="a..b", golden=None, negative_golden=None,
+                                 include_test_findings=False)
     with pytest.raises(SystemExit, match="produced no --out"):
         ab.run_one(args, "on", 1)
     assert not stale.exists()
@@ -691,3 +698,48 @@ def test_combine_cli_expect_samples(tmp_path, capsys):
     assert ab.main(["--combine", str(p), "--expect-samples", "a"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["combined_verdict"] == "SIGNAL" and out["missing"] == []
+
+
+# ---------- test-file class: held by default, --include-test-findings ----------
+
+def _entry(cls=None, real=0.9):
+    j = {"file": "g.ts", "line": 10, "severity": 2, "rubric": "code-change",
+         "is_real": real}
+    if cls is not None:
+        j["reflex_class"] = cls
+    return j
+
+
+def test_surfaced_holds_test_entries_unless_included():
+    assert ab.surfaced([_entry("test")]) == []
+    assert len(ab.surfaced([_entry("test")], include_test=True)) == 1
+    # code, and old-style entries with no key, surface either way
+    assert len(ab.surfaced([_entry("code")])) == 1
+    assert len(ab.surfaced([_entry()])) == 1
+    assert len(ab.surfaced([_entry()], include_test=True)) == 1
+
+
+def test_main_forwards_include_test_findings_to_both_arms(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    cmds: list = []
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9,
+                              reflex_class="test", cmds=cmds)
+    assert _run_main(tmp_path, golden, "--include-test-findings") == 0
+    assert len(cmds) == 2
+    assert all("--include-test-findings" in c for c in cmds)
+    row = _json.loads(capsys.readouterr().out)["repeats"][0]
+    assert (row["on_reported"], row["off_reported"]) == (8, 8)
+
+
+def test_main_without_the_flag_holds_test_entries_and_omits_it(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    cmds: list = []
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9,
+                              reflex_class="test", cmds=cmds)
+    assert _run_main(tmp_path, golden) == 0
+    assert len(cmds) == 2
+    assert not any("--include-test-findings" in c for c in cmds)
+    row = _json.loads(capsys.readouterr().out)["repeats"][0]
+    assert (row["on_reported"], row["off_reported"]) == (0, 0)

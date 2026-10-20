@@ -95,3 +95,34 @@ def test_report_says_when_findings_were_held(jr):
     assert "--include-test-findings" in text
     meta["n_test_held"] = 0
     assert "held back" not in jr.render([], [], "OK", None, [], meta)
+
+
+def test_cap_applies_after_the_hold(jr, monkeypatch, tmp_path, capsys):
+    """Six code units (sev 2.0) and two higher-severity test units (sev 3.0):
+    ranking alone would put the test files first; the hold keeps them out so
+    the 5-cap is filled by code only."""
+    code = [f"src/m{i}.py" for i in range(6)]
+    tests = ["tests/test_a.py", "tests/test_b.py"]
+    diff = "".join(_add_file_diff(p, ["def f():", "    return 1"]) for p in code + tests)
+    monkeypatch.setattr(jr, "judge", lambda kept, ask, errors=None, split_unit=None: (
+        [{"hunk": h, "severity": 3.0 if h["file"].startswith("tests/") else 2.0,
+          "is_real": 0.95, "category": "bug-risk", "rubric": "code-change",
+          "references_remaining": None,
+          "change_type": h.get("change_type", "code-change"), "latency_ms": 1.0}
+         for h in kept], [1.0] * len(kept),
+        {"added_units": 0, "avg_input_tokens": None}))
+    monkeypatch.setattr(jr, "judge_pr_level", lambda f, a, size_skipped_code=None:
+                        {"overall_risk": 1.0, "needs_human_review": 0.5,
+                         "latency_ms": 1.0})
+    monkeypatch.setattr(jr, "resolve_diff", lambda repo, args: (diff, "0" * 40, "staged"))
+    monkeypatch.setattr(jr, "mode_file_images", lambda *a, **k: (None, "def f():\n    return 1\n"))
+    monkeypatch.setattr(jr, "log_run", lambda rec: None)
+    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
+    monkeypatch.setattr(jr, "load_api_key", lambda: "k")
+    monkeypatch.setattr(jr.sys, "argv", ["system-one-reviewer", "--repo", str(tmp_path),
+                                         "--staged", "--provider", "jev", "--json"])
+    jr.main()
+    out = json.loads(capsys.readouterr().out)
+    assert len(out["findings"]) == 5
+    assert all(f["file"].startswith("src/") for f in out["findings"])
+    assert out["meta"]["n_test_held"] == 2

@@ -192,6 +192,18 @@ def test_replay_reuses_compose_threshold(jr, sw):
     assert sw.replay(jr, run, 0.95) == []
 
 
+def test_rewrap_carries_reflex_class_and_defaults_to_code(sw):
+    assert sw.rewrap({**_judged(10, 0.9), "reflex_class": "test"})["reflex_class"] == "test"
+    assert sw.rewrap(_judged(10, 0.9))["reflex_class"] == "code"
+
+
+def test_replay_holds_test_entries_but_not_old_style_ones(jr, sw):
+    held = _run("r", "positive", [{**_judged(10, 0.90), "reflex_class": "test"}])
+    assert sw.replay(jr, held, 0.50) == []
+    old = _run("r", "positive", [_judged(10, 0.90)])  # no reflex_class key
+    assert len(sw.replay(jr, old, 0.50)) == 1
+
+
 # ---------- negative FP census on replayed data ----------
 
 def test_negative_fp_counts_blocker_major(jr, sw):
