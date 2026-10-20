@@ -1,7 +1,7 @@
 # `--input`: review before/after file images without git
 
 Status: design approved in chat 2026-10-20 (approach A, contract confirmed by
-the aws-cloud-agent). Implementation follows
+the aws-cloud-agent), revised after a Fable review of this spec. Plan:
 `docs/superpowers/plans/2026-10-20-input-mode.md`. Closes issue #23.
 
 ## Scope
@@ -9,7 +9,7 @@ the aws-cloud-agent). Implementation follows
 In: a new `--input FILE|-` mode that takes the changed files' before and after
 texts as JSON, synthesizes a git-style unified diff in memory, and feeds the
 existing pipeline (triage, packaging, cutting, enrichment, judging, the
-test-file hold, the locator) with no git and no filesystem. Out: see the end.
+test-file hold, the locator) with no git and no subprocess. Out: see the end.
 
 ## Problem
 
@@ -21,8 +21,9 @@ this mode before building a log-only shadow (issue #26's integration trigger
 depends on that shadow's data). A host that holds the images would otherwise
 have to synthesize a two-commit temporary repo.
 
-Git touches the pipeline at only three edges, which is why a bounded change is
-possible:
+Git touches the pipeline at only three edges (verified against the code by
+the review: every other use of `repo` and every `subprocess` call routes
+through them), which is why a bounded change is possible:
 
 1. `resolve_diff(repo, args)` runs `git diff` / `rev-parse` and returns
    `(diff_text, head, mode)`.
@@ -36,12 +37,12 @@ Everything downstream is plain text.
 ## Decision
 
 Approach A: an in-memory source. `--input` is parsed and validated up front;
-a git-shaped diff is synthesized per file with `difflib`; the before/after
-texts are registered in a module-level map; `mode_file_images` gains a mode
-`input` that answers from the map. No downstream caller changes. Rejected:
-building a temporary git repo (needs git on the host, which is the problem),
-and a new pipeline entry that bypasses diff text (touches the packager and
-every cutter).
+a git-shaped diff is synthesized per file; the before/after texts are
+registered in a module-level map; `mode_file_images` gains a mode `input` that
+answers from the map. No downstream caller changes. Rejected: building a
+temporary git repo (needs git on the host, which is the problem), and a new
+pipeline entry that bypasses diff text (touches the packager and every
+cutter).
 
 ## Design
 
@@ -49,7 +50,7 @@ every cutter).
 
 ```json
 {
-  "head":  "<sha or label>",
+  "head":  "<40-hex commit SHA>",
   "repo":  "<name>",
   "files": [
     {"path": "src/a.ts", "old_path": null, "before": "...", "after": "..."}
@@ -57,38 +58,66 @@ every cutter).
 }
 ```
 
-- `head` (required): non-empty string, at most 200 characters; recorded as the
-  run's head.
-- `repo` (optional): label for `meta.repo`; default `"input"`.
+- `head` (required): non-empty string, at most 200 characters, recorded as
+  the run's head. It MUST be the 40-hex head commit when the host has it: the
+  field sweeps map runs to PRs through the recorded head (`fixture_head`), so
+  a free label breaks run-to-PR mapping.
+- `repo` (optional): label for `meta.repo`; a string of at most 200
+  characters with no control characters; default `"input"`.
 - `files` (required): array; each entry has `path` (required string),
   `old_path` (optional string or null), `before` and `after` (string or
   null). Status is derived from the contents, never stated: `before: null` is
   an added file, `after: null` is a deleted file, `old_path` set and different
-  from `path` is a rename (with or without edits). `before == after` (and no
-  rename) is ignored. Both null is invalid.
-- Unknown top-level or file keys are ignored (forward compatible).
+  from `path` is a rename (with or without edits). `before == after` with no
+  rename is ignored. Both null is invalid. An empty string is a real empty
+  file: a host that failed to fetch one side must omit the file, not send `""`.
+- Unknown top-level or file keys are ignored (forward compatible). An empty
+  `files` array is valid: an empty diff, the report says "Empty diff — nothing
+  to review", and the ledger record is still appended.
 
-### Validation (before any model call; exit code 2, message on stderr)
+### Reading and validating (all before `load_api_key()` and any model call)
 
-- Not JSON, not an object, `files` not an array, wrong types, missing or empty
-  `head` or `path`.
-- `path` / `old_path` containing a NUL or any control character (including
-  `\n` and `\r`): a newline in a path would inject lines into the synthesized
-  diff header. Paths are labels (there is no filesystem access), so absolute
-  paths and `..` segments are allowed but backslashes are normalised to `/`.
-- Duplicate `path`.
-- Total input over 64 MiB, or more than 2,000 files.
+- Input is read from the file or stdin with a hard cap of 64 MiB (read at most
+  64 MiB + 1 byte and reject). A leading BOM is stripped (UTF-8 with BOM).
+  JSON is parsed with `parse_constant` rejecting `NaN`/`Infinity`;
+  `RecursionError` (deep nesting) and any decode error are reported as "not
+  JSON".
+- Reject: top level not an object, `files` not an array, wrong types, missing
+  or empty `head`/`path`, duplicate `path` (after backslash normalisation),
+  more than 2,000 files, more than 1,000,000 lines in total across all files
+  and both sides (memory: 64 MiB of newlines is 67 million line objects).
+- `head`, `repo`, `path`, `old_path`, `before` and `after` must round-trip
+  `.encode("utf-8")`: `json.loads` accepts lone surrogates (`"\ud800"`), which
+  later raise `UnicodeEncodeError` in `print(render(...))` after the model
+  calls are paid for.
+- `path` / `old_path`: no control characters, defined as `ord(c) < 0x20` or
+  `ord(c) == 0x7F` (a newline would inject diff lines, a TAB truncates the
+  packager's path parse); not `/dev/null` (the packager reads it as an
+  addition or deletion); backslashes are normalised to `/`. Paths are labels
+  (there is no read of the reviewed code), so absolute paths and `..` segments
+  are allowed.
 - `--input` together with `--repo`, `--range`, `--pr`, `--staged` or
-  `--uncommitted`; neither `--input` nor `--repo` given. (`--repo` is required
-  only when `--input` is absent.)
+  `--uncommitted`, or neither `--input` nor `--repo`, is an argument error via
+  `ap.error()` (exit 2, usage format). `--repo` is required only when `--input`
+  is absent.
+- Document rejections print
+  `system-one-reviewer: --input: <reason> (files[<i>].<key>)` to stderr and
+  exit 2 (the existing `sys.exit("...")` calls exit 1; input rejection is a
+  caller error and is distinguished). Paths are echoed only through `repr()`
+  truncated to 120 characters, and file contents never.
 
-### Per-file triage (the run continues; the file is skipped, listed in
-`skipped` with a reason, like other deterministic skips)
+### Per-file triage (the run continues; the file is skipped)
 
-- `input-binary`: a NUL character in `before` or `after`.
-- `input-oversize`: more than 2 MiB of text or 20,000 lines on either side
-  (difflib is quadratic in the worst case; a single generated file must not
-  fail or stall the run).
+Skip records have the shape the renderer and coverage code already read:
+`{"file": <path>, "reason": <reason>, "line_start": 1, "line_end": 1}`.
+
+- `input-binary`: a NUL character in `before` or `after`. Deliberate triage,
+  like a lockfile.
+- `hunk>input-oversize`: more than 2 MiB of text or 20,000 raw lines on either
+  side. The `hunk>` prefix is deliberate: coverage code counts only skip
+  reasons with that prefix as unjudged code (`size_skipped_code`,
+  `n_size_skipped_code`), so an oversize CODE file makes the run read
+  "incomplete review" and never "ok" (INTENT rule 7).
 - Existing triage still applies by path afterwards (lockfiles, generated
   directories, docs-only).
 
@@ -106,28 +135,50 @@ diff --git a/<old_or_path> b/<path>
 \ No newline at end of file     (when a side lacks a final newline)
 ```
 
-- Lines are split on `"\n"` only, never `str.splitlines()` (which also splits
-  on U+2028, form feed and friends and would shift every line number after
-  them); a trailing `\r` stays part of the line, as in git.
-- Hunks come from `difflib.SequenceMatcher(None, a, b, autojunk=False)
-  .get_grouped_opcodes(3)` formatted by this module. The stock
-  `difflib.unified_diff` is not used because it builds its matcher with
-  `autojunk=True`, which treats frequent lines in files of 200 or more lines
-  as junk and produces poor diffs. Three lines of context matches git's
-  default. The `@@` header omits `,1` counts and uses `,0` for empty sides,
-  as git does.
-- Equivalence with `git diff` is guaranteed for the set of changed lines when
-  the minimal diff is unique; where several minimal diffs exist, difflib and
-  git's Myers algorithm may pick different ones, so hunk boundaries and
-  anchors can differ. This is a known limit, covered in Validation.
+What the packager actually requires: only the `--- ` / `+++ ` lines and the
+`@@` headers matter. `new file mode`, `deleted file mode`, `rename from/to`
+and `similarity index` are ignored, and `index` lines are not emitted. The `@@`
+counts must be exact, because the packager's remaining-line counters decide
+when a `--- ` line is a header again. An added or deleted EMPTY file, and a
+pure rename, emit headers only and yield no cluster.
+
+- **Line model.** A side's text is split so that each element keeps its
+  terminator: `parts = text.split("\n"); last = parts.pop(); lines = [p +
+  "\n" for p in parts]; if last: lines.append(last)`. A final element without
+  `"\n"` is the no-newline line. Empty text is `[]` with no marker. This is
+  required for a change that only adds or removes the final newline, which git
+  shows as `-b` / `\ No newline at end of file` / `+b`; with the terminator
+  outside the lines the two sides compare equal and a real change would be
+  invisible. The split is on `"\n"` only, never `str.splitlines()`, which also
+  splits on U+2028 and form feed. A trailing `\r` stays part of the line.
+- **Emission.** `prefix + line` for each line; when `line` lacks `"\n"`, the
+  marker `\ No newline at end of file` follows immediately, once per side,
+  after that side's last `-`, `+` or context line, as git does.
+- **Matching.** Common leading and trailing lines are stripped first (git does
+  this; difflib does not). The remaining core is matched with
+  `difflib.SequenceMatcher(None, a, b, autojunk=False).get_grouped_opcodes(3)`
+  when both cores are at most 3,000 lines, formatted by this module. Above
+  that, `autojunk=True` is used: hunk boundaries are poorer but the diff is
+  still correct, and the count of such files is recorded in
+  `meta.n_input_autojunk`. Measured (the review): `autojunk=False` on 20,000
+  all-blank lines with one change takes about 65 s, on 3,000 lines under a
+  second, and `autojunk=True` about 10 ms, so the cap is what keeps a run in
+  the seconds envelope (INTENT rule 1). The stock `difflib.unified_diff` is
+  not used (it always builds `autojunk=True`). Three lines of context matches
+  git's default; the `@@` header omits `,1` counts and uses `,0` for empty
+  sides as git does.
+- Equivalence with `git diff` holds for the set of changed lines when the
+  minimal diff is unique; where several minimal diffs exist difflib and git's
+  Myers algorithm may pick different ones.
 
 ### Images
 
 `mode_file_images(repo, mode, head, path, old_file=None, ...)` with
-`mode == "input"` returns `(before, after)` for `path` from the module-level
-map (`None` for a null side) and ignores `repo`. The map is set once per run
-and cleared with the other runtime caches (`clear_runtime_caches`). Renames
-need no `old_file` lookup because the before text is carried directly.
+`mode == "input"` returns `(before, after)` for `path` from a module-level map
+(`None` for a null side) and ignores `repo`. It does not use `_IMAGE_CACHE`.
+The map is a module global set once per run and cleared by
+`clear_runtime_caches()`, so two input documents in one process cannot collide.
+A rename needs no `old_file` lookup because the before text is carried.
 
 ### Mode, head, ledger and output
 
@@ -135,46 +186,56 @@ need no `old_file` lookup because the before text is carried directly.
   instead of `resolve_diff` when `--input` is given. `args.repo` is `None` and
   nothing dereferences it in input mode.
 - `meta.mode` and the ledger `mode` are `"input"`; `meta.repo` is the input's
-  `repo` label (default `"input"`); the default ledger label is `auto:input`.
+  `repo` label; the default ledger label is `auto:input`.
 - The input's contents are never stored: the ledger still never receives
-  finding source lines, and nothing in the input is persisted beyond what the
-  existing record already holds (file paths, scores, spans).
-- Output (`--json`, `--out`, stdout report) is unchanged in shape.
+  finding source lines.
+- `--max-hunks`, `--golden`, `--negative-golden`, `--label`, `--fixture`,
+  `--out`, `--json` and `--include-test-findings` work unchanged.
+- Output shape is unchanged, plus `meta.n_input_autojunk` (0 when none).
 
 ### What does not change
 
 The judge and its three questions, scoring, the 0.80 gate, the test-file hold,
 the locator, the 5-cap, the cutters, enrichment, and the stamps. A reviewer
 should see the same units and findings from `--input` as from `--range` on the
-same change, apart from `mode`, `head` and the diff-algorithm limit above.
+same change, apart from `mode`, `head`, the diff-algorithm limit above, and
+renames (below).
 
 ### Deployment notes for hosts (the Lambda)
 
 - **API key:** `TYPESAFE_API_KEY` in the environment, as today.
-- **Ledger:** HOME is read-only on Lambda, so a ledger write fails after the
-  model calls are paid for (issue #25, a separate follow-up). Until it lands,
-  set `JEV_REVIEW_METRICS=/tmp/...`.
+- **Ledger:** `log_run` runs BEFORE the report is printed and `--out` is
+  written, and its `os.makedirs` on a read-only HOME raises uncaught. Without
+  `JEV_REVIEW_METRICS` pointing at a writable path (for example
+  `/tmp/metrics.jsonl`) the run crashes after the model calls are paid for and
+  prints nothing at all. Issue #25 (a separate follow-up) will make the write
+  non-fatal; until then this variable is required on Lambda.
 - **tree-sitter wheels are optional and absence is silent.** Verified in the
   code: `check_cutter_availability()` returns `(False, None)` and the tool
   falls back to line windows; it never aborts on missing wheels, in any mode
-  including `--golden`. (The aborts that exist are in
-  `scripts/enrichment_ab.py` and `scripts/enrichment_census.py`, which are
-  measurement scripts, not the tool. The AGENTS.md sentence that says
-  measurement runs abort is corrected in this change.) Without the wheels the
-  host gets line-window cutting for TS/JS, no TS enrichment, and
-  `where.symbol: null` for TS/JS findings. Python files use stdlib `ast` and
-  are unaffected. The degradation is visible in `meta.wheels`
-  (`{ts: {available: false}, ...}`); a host that cares should check it, or
-  package the pinned wheels (`tree-sitter==0.26.0`,
+  including `--golden`. The aborts that exist are in `scripts/enrichment_ab.py`
+  and `scripts/enrichment_census.py`, which are measurement scripts, not the
+  tool; the AGENTS.md sentence saying measurement runs abort is corrected in
+  this change. Without the wheels the host gets line-window cutting for TS/JS,
+  no TS enrichment, and `where.symbol: null` for TS/JS findings. Python files
+  use stdlib `ast` and are unaffected. The degradation is visible in
+  `meta.wheels` (`{ts: {available: false}, ...}`); a host that cares should
+  check it, or package the pinned wheels (`tree-sitter==0.26.0`,
   `tree-sitter-typescript==0.23.2`, `tree-sitter-javascript==0.25.0`) into a
   layer built for the Lambda's architecture.
+- Other environment facts (read, not run on Lambda): TLS uses the system CA
+  store (`ssl.create_default_context()`); the HTTP timeout is 15 s with two
+  attempts, then the run fails open; no tempfile, signal or multiprocessing is
+  used; a failed `__pycache__` write is silent.
 
 ## INTENT alignment
 
-- Rule 1: no added model calls; synthesis is in-memory and capped.
+- Rule 1: no added model calls; synthesis is in-memory, with caps chosen so a
+  run stays in the seconds envelope.
 - Rule 2: input handling, diff synthesis and triage are deterministic code.
 - Rule 3 and 4: no verdict output; the hold and the 0.80 gate are untouched.
 - Rule 5/6: no new question or stimulus for the judge.
+- Rule 7: an oversize code file reads as an incomplete review, not "ok".
 - Out of scope in INTENT: SOR posts nothing; this mode reads JSON and prints a
   report, delivery stays the caller's job.
 
@@ -183,25 +244,33 @@ same change, apart from `mode`, `head` and the diff-algorithm limit above.
 Pre-release smoke tests (CI, model-off):
 
 1. Synthesized diff versus real `git diff` on throwaway repos: add, delete,
-   modify, rename (with and without edits), empty file, file without a
-   trailing newline, CRLF content, a file over 200 lines with repeated lines
-   (the `autojunk` case), U+2028 and form feed inside a line. Exact text
-   equality where the minimal diff is unique; for ambiguous cases, equality of
-   the changed-line set and of the packager's clusters.
+   modify, empty file, file without a trailing newline, a change that ONLY adds
+   or removes the final newline, CRLF content, a file over 200 lines with
+   repeated lines (the autojunk case), U+2028 and form feed inside a line.
+   Comparison normalises what git adds and difflib does not: `index` lines and
+   anything after the second `@@` (git appends a function-name context). Exact
+   text equality where the minimal diff is unique; for ambiguous cases,
+   equality of the changed-line set and of the packager's clusters.
 2. End to end: `--input` and `--range` over the same change, with a stub
    judge, give the same units, anchors, spans and rendered report apart from
-   `mode`/`head`; the test-file hold, the locator and enrichment engage under
-   `--input`.
+   `mode`/`head`/`repo`; the test-file hold, the locator and enrichment engage
+   under `--input`. Renames are excluded from the equivalence test (below).
 3. Validation matrix: every rejection above exits 2 with the documented
-   message and makes no model call (the provider is stubbed to fail the test
-   if called).
-4. `--input -` reads stdin; `--input FILE` reads a file; the `--repo`
-   conflicts.
-5. Per-file triage: binary and oversize files are listed in `skipped` and the
-   run still reviews the rest.
-6. No git needed: the tests for 2 and 5 run with `git` absent from `PATH`
-   (the pipeline must not shell out in input mode).
-7. Mutation checks on every new test, as in the earlier PRs.
+   message and makes no model call (the provider and `load_api_key` are stubbed
+   to fail the test if called): not JSON, BOM accepted, NaN, deep nesting, lone
+   surrogate, control characters in a path, `/dev/null`, duplicate path, caps,
+   wrong types, flag conflicts.
+4. `--input -` reads stdin; `--input FILE` reads a file.
+5. Per-file triage: binary and oversize files appear in `skipped` with the
+   documented shape; an oversize CODE file yields `status == "incomplete
+   review"`; the rest of the input is still reviewed; an empty `files` array
+   reports an empty diff.
+6. No git needed: tests 2 and 5 run with `git` absent from `PATH`; nothing in
+   input mode may shell out.
+7. Timing: a 20,000-line all-blank file with one change is diffed in under one
+   second (the fallback path); a 3,000-line repetitive file in a few seconds at
+   most.
+8. Mutation checks on every new test, as in the earlier PRs.
 
 Post-release evaluation (does not block the release): the aws-cloud-agent
 shadow records `meta.mode == "input"` runs log-only and its adjudications feed
@@ -211,12 +280,17 @@ issue #26's per-class sustained rate. No new gate is introduced here.
 
 - difflib versus git's diff algorithm: ambiguous diffs can differ in hunk
   boundaries; anchors are comparable within a mode, not guaranteed identical
-  across modes.
-- No rename detection: the host supplies `old_path`.
+  across modes. Files above 3,000 lines use the poorer `autojunk=True`
+  matching.
+- No rename detection: the host supplies `old_path`. `--input` enriches renamed
+  files better than `--range`: `package_hunks` never emits `old_file`, so in the
+  git modes a rename's pre-image is `None` today, while input mode carries
+  `before`.
 - Binary and very large files are skipped, not partially reviewed.
-- The host must supply full file texts; a fetch failure on one side should be
-  omitted from `files`, not sent as an empty string (an empty `before` reads
-  as "the file was emptied", and an empty `after` as "emptied", not deleted).
+- The packager splits the diff text with `str.splitlines()`, so U+2028, form
+  feed or a lone CR inside CONTENT shifts line numbers in every mode, input
+  included. This is a pre-existing limit shared with the git modes.
+- The host must supply full file texts; see the contract on empty strings.
 
 ## Open questions
 
