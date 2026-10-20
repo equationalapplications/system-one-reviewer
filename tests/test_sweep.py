@@ -35,10 +35,21 @@ def _judged(line, real, sev=2.2, cat="bug-risk", file="a.py"):
             "rubric": "code-change", "references_remaining": None}
 
 
-def _run(label, fixture, judged, pv="v03b", provider="jev", model=None):
+# v0.9 E1: each packaging era stamps its own wire_format vocabulary (see
+# sweep-thresholds.py's WIRE_FORMAT_BY_VERSION); synthetic ledger records
+# need a value from the RIGHT era's vocabulary or the new wire_format gate
+# rejects them regardless of packaging_version.
+_DEFAULT_WIRE_FORMAT = {"v03b": None, "v08-ast": "hunk_state-v1",
+                        "v09": "hunk"}
+
+
+def _run(label, fixture, judged, pv="v03b", provider="jev", model=None,
+        wire_format=None):
     head = EXPECTED[fixture]
     return {"label": label, "fixture": fixture, "fixture_head": head,
             "head": head[:10], "packaging_version": pv,
+            "wire_format": wire_format if wire_format is not None
+            else _DEFAULT_WIRE_FORMAT.get(pv),
             "provider": provider, "model": model, "judged": judged}
 
 
@@ -313,6 +324,8 @@ def test_main_end_to_end_on_synthetic_metrics(jr, sw, tmp_path, capsys):
 
 
 # ---------- Task 7 (D7): v08-ast packaging-version cutover ----------
+# ---------- v0.9 E1: v09 packaging-version cutover (supersedes v08-ast
+# as the DEFAULT; v08-ast now needs the explicit flag, same as v03b) ----
 
 # synthetic full-40 SHAs for the v08 field-mode tests (the test_field_sweep
 # PR43/44/45 constants live in another module's namespace)
@@ -335,59 +348,102 @@ def _v08_neg_runs(judged, n=3, **kw):
             for i in range(1, n + 1)]
 
 
+def _v09_run(label, fixture, judged, pv="v09", **kw):
+    return _run(label, fixture, judged, pv=pv, **kw)
+
+
+def _v09_pos_runs(judged, n=3, **kw):
+    return [_v09_run(f"v09-test-baseline-{i}", "positive", judged, **kw)
+            for i in range(1, n + 1)]
+
+
+def _v09_neg_runs(judged, n=3, **kw):
+    return [_v09_run(f"v09-test-negative-{i}", "negative", judged, **kw)
+            for i in range(1, n + 1)]
+
+
 def test_sweep_admits_v08_ast_runs(jr, sw, tmp_path):
     """Plan Task 7: the sweep recognizes v08-ast — gated runs enter the
-    curve through the (post-flip) default gates, exactly like v03b did."""
+    curve through an EXPLICIT --packaging-version v08-ast gate now that
+    v09 is the default (the v0.9 cutover), exactly like v03b before it."""
     golden = _golden(tmp_path, [("a.py", 10, "x")])
     judged = [_judged(10, 0.90)]
-    res = sw.sweep(jr, _v08_pos_runs(judged), _v08_neg_runs([]), golden)
+    pos = _v08_pos_runs(judged)
+    neg = _v08_neg_runs([])
+    res = sw.sweep(jr, pos, neg, golden)
     assert res["rows"] and res["candidate"] in sw.GRID
 
 
-def test_select_runs_default_admits_v08_ast(sw):
-    """r8-m2 default-site 2 of 4: select_runs' packaging_version default
-    reads v08-ast, so a bare sweep call admits v08 runs (no straggler can
-    silently gate them out)."""
-    recs = _v08_pos_runs([_judged(10, 0.9)]) + _v08_neg_runs([])
-    pos, neg = sw.select_runs(recs, EXPECTED, "v08-test-")[:2]
+def test_sweep_admits_v09_runs_by_default(jr, sw, tmp_path):
+    """v0.9 E1: the sweep recognizes v09 — gated runs enter the curve
+    through the (post-cutover) default gates, exactly like v08-ast did
+    before this release."""
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    judged = [_judged(10, 0.90)]
+    res = sw.sweep(jr, _v09_pos_runs(judged), _v09_neg_runs([]), golden)
+    assert res["rows"] and res["candidate"] in sw.GRID
+
+
+def test_select_runs_default_admits_v09(sw):
+    """r8-m2 default-site 2 of 4 (v0.9 cutover): select_runs'
+    packaging_version default reads v09, so a bare sweep call admits v09
+    runs (no straggler can silently gate them out)."""
+    recs = _v09_pos_runs([_judged(10, 0.9)]) + _v09_neg_runs([])
+    pos, neg = sw.select_runs(recs, EXPECTED, "v09-test-")[:2]
     assert len(pos) == 3 and len(neg) == 3
 
 
-def test_gate_run_default_admits_v08_ast(sw):
-    """r8-m2 default-site 1 of 4: gate_run's packaging_version default
-    reads v08-ast — a v08 record passes without an explicit argument."""
-    sw.gate_run(_v08_run("x", "positive", [_judged(10, 0.9)]),
+def test_gate_run_default_admits_v09(sw):
+    """r8-m2 default-site 1 of 4 (v0.9 cutover): gate_run's
+    packaging_version default reads v09 — a v09 record passes without an
+    explicit argument."""
+    sw.gate_run(_v09_run("x", "positive", [_judged(10, 0.9)]),
                 EXPECTED["positive"])
 
 
-def test_select_field_runs_default_admits_v08_ast(sw):
-    """r8-m2 default-site 3 of 4: select_field_runs' default reads
-    v08-ast (field-run record shape: fixture=None, head is the key)."""
+def test_select_field_runs_default_admits_v09(sw):
+    """r8-m2 default-site 3 of 4 (v0.9 cutover): select_field_runs'
+    default reads v09 (field-run record shape: fixture=None, head is the
+    key)."""
     def _f_run(label, head):
         return {"label": label, "fixture": None, "fixture_head": head,
-                "head": head[:10], "packaging_version": "v08-ast",
+                "head": head[:10], "packaging_version": "v09",
+                "wire_format": "hunk",
                 "provider": "jev", "model": None, "judged": [],
                 "verdict": "Approved", "fail_open": False, "n_analyzed": 0}
-    runs = sw.select_field_runs([_f_run("v08cj-pr43-x", PR43_08)],
-                                {43: PR43_08}, "v08cj-")
+    runs = sw.select_field_runs([_f_run("v09cj-pr43-x", PR43_08)],
+                                {43: PR43_08}, "v09cj-")
     assert set(runs) == {43}
 
 
-def test_argparse_default_reads_v08_ast(sw):
-    """r8-m2 default-site 4 of 4: the CLI --packaging-version default is
-    v08-ast (asserted against the parser's own default, not a run)."""
+def test_argparse_default_reads_v09(sw):
+    """r8-m2 default-site 4 of 4 (v0.9 cutover): the CLI
+    --packaging-version default is v09 (asserted against the parser's
+    own default, not a run)."""
     import argparse
     ap = argparse.ArgumentParser()
     sw._add_packaging_version_arg(ap)
     args = ap.parse_args([])
-    assert args.packaging_version == "v08-ast"
+    assert args.packaging_version == "v09"
 
 
 def test_rubric_versions_extended_not_overwritten(sw):
-    """r5-m5: RUBRIC_VERSIONS EQUALS {"v03b", "v08-ast"} — v08-ast is
-    ADDED because v08 judged entries carry rubric/reference fields, and
-    v03b STAYS so rewrap() keeps dying on malformed v03b entries."""
-    assert sw.RUBRIC_VERSIONS == {"v03b", "v08-ast"}
+    """r5-m5/v0.9: RUBRIC_VERSIONS EQUALS {"v03b", "v08-ast", "v09"} —
+    v09 is ADDED (E1 kept the rubric/reference fields unchanged) and
+    v03b/v08-ast STAY so rewrap() keeps dying on malformed older-era
+    entries."""
+    assert sw.RUBRIC_VERSIONS == {"v03b", "v08-ast", "v09"}
+
+
+def test_wire_format_gate_rejects_mismatched_era(sw):
+    """E1: a record whose packaging_version matches v09 but whose
+    wire_format is stale (the v08-ast-era string) is rejected — the
+    wire_format check is defense-in-depth, independent of the
+    packaging_version check passing."""
+    bad = _v09_run("x", "positive", [_judged(10, 0.9)],
+                   wire_format="ast-units-v1")
+    with pytest.raises(SystemExit, match="wire_format"):
+        sw.gate_run(bad, EXPECTED["positive"])
 
 
 def test_rewrap_still_rejects_malformed_v03b_entries(sw):
@@ -427,21 +483,22 @@ def test_v08_run_rejected_when_gating_for_v03b(sw):
                     packaging_version="v03b")
 
 
-def test_field_select_default_admits_v08_field_runs(sw):
-    """Field mode shares the cutover: v08-tagged CJ-style runs select via
-    the default packaging version, mirroring the v03b flow (field runs
-    carry fixture=None; fixture_head is the identity — the field-run
-    record shape from tests/test_field_sweep.py)."""
+def test_field_select_default_admits_v09_field_runs(sw):
+    """Field mode shares the cutover: v09-tagged CJ-style runs select via
+    the default packaging version, mirroring the v08-ast/v03b flow
+    (field runs carry fixture=None; fixture_head is the identity — the
+    field-run record shape from tests/test_field_sweep.py)."""
     def _f_run(label, head, judged):
         return {"label": label, "fixture": None, "fixture_head": head,
-                "head": head[:10], "packaging_version": "v08-ast",
+                "head": head[:10], "packaging_version": "v09",
+                "wire_format": "hunk",
                 "provider": "jev", "model": None, "judged": judged,
                 "verdict": "Approved", "fail_open": False,
                 "n_analyzed": len(judged)}
     judged = [_judged(1, True, sev=2.0, file="gone.ts")]
-    recs = [_f_run("v08cj-pr43-x", PR43_08, judged),
-            _f_run("v08cj-pr44-x", PR44_08, []),
-            _f_run("v08cj-pr45-x", PR45_08, [])]
+    recs = [_f_run("v09cj-pr43-x", PR43_08, judged),
+            _f_run("v09cj-pr44-x", PR44_08, []),
+            _f_run("v09cj-pr45-x", PR45_08, [])]
     runs = sw.select_field_runs(recs, {43: PR43_08, 44: PR44_08,
-                                       45: PR45_08}, "v08cj-")
+                                       45: PR45_08}, "v09cj-")
     assert set(runs) == {43, 44, 45}

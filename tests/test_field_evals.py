@@ -134,42 +134,50 @@ def test_deletion_question_set_same_shape(jr):
 def test_deletion_verdict_requires_corroboration(jr):
     """v0.3b corroboration rule (the F1 proposal, now implemented): the
     #45 failure shape — a lone, uncorroborated deletion BLOCKER — is
-    REPORTED but cannot unilaterally flip the verdict."""
+    REPORTED but cannot unilaterally flip the verdict.
+
+    v0.9 fork resolution (A+C): compose() itself no longer computes a
+    verdict (its 3rd return value is always ""); the retired rule moved
+    to majors_verdict_for_measurement (measurement only, V3(c)), which
+    this test now exercises directly."""
     findings = [{"hunk": {"file": "a.ts", "line": 1, "header": "h",
                           "lines": []},
                  "severity": 2.8, "is_real": 0.75, "category": "other",
                  "rubric": "deletion", "references_remaining": False}]
     reported, _jitter, verdict = jr.compose(findings, [], None)
-    assert verdict == "Approved"          # no unilateral flip
+    assert verdict == ""
     assert len(reported) == 1             # but the human still sees it
+    assert jr.majors_verdict_for_measurement(reported) == "Approved"
 
 
 def test_deletion_verdict_flips_when_corroborated(jr):
     """Corroboration paths: references_remaining=True (deterministic grep
     hit) or a reported CODE-CHANGE finding. Deletion findings do NOT
-    corroborate each other (v0.3b M2 fix: #45 had six wrong together)."""
+    corroborate each other (v0.3b M2 fix: #45 had six wrong together).
+    v0.9: exercised via majors_verdict_for_measurement (see above)."""
     def _finding(refs, rubric="deletion", file="a.ts"):
         return {"hunk": {"file": file, "line": 1, "header": "h", "lines": []},
                 "severity": 2.8, "is_real": 0.75, "category": "other",
                 "rubric": rubric, "references_remaining": refs}
-    _, _j, v1 = jr.compose([_finding(True)], [], None)
-    assert v1 == "Changes requested"      # grep says code still references it
+    r1, _j, _v = jr.compose([_finding(True)], [], None)
+    assert jr.majors_verdict_for_measurement(r1) == "Changes requested"
     second = _finding(False, rubric="code-change", file="b.py")
-    _, _j, v2 = jr.compose([_finding(False), second], [], None)
-    assert v2 == "Changes requested"      # corroborated by a code-change finding
+    r2, _j, _v = jr.compose([_finding(False), second], [], None)
+    assert jr.majors_verdict_for_measurement(r2) == "Changes requested"
 
 
 def test_two_uncorroborated_deletions_do_not_flip(jr):
     """v0.3b M2 fix (Opus): the gate covers the 2-MAJOR path too — two
     uncorroborated deletion findings at MAJOR severity must NOT reach
-    'Changes requested' via len(majors) >= 2 (#45 had six clusters)."""
+    'Changes requested' via len(majors) >= 2 (#45 had six clusters).
+    v0.9: exercised via majors_verdict_for_measurement (see above)."""
     def _major(file):
         return {"hunk": {"file": file, "line": 1, "header": "h", "lines": []},
                 "severity": 2.0, "is_real": 0.75, "category": "bug-risk",
                 "rubric": "deletion", "references_remaining": False}
-    reported, _j, verdict = jr.compose([_major("a.ts"), _major("b.ts")],
-                                       [], None)
-    assert verdict == "Approved"
+    reported, _j, _verdict = jr.compose([_major("a.ts"), _major("b.ts")],
+                                        [], None)
+    assert jr.majors_verdict_for_measurement(reported) == "Approved"
     assert len(reported) == 2             # both still visible to the human
 
 
@@ -177,16 +185,17 @@ def test_deletion_major_verdict_eligible_when_corroborated(jr):
     """m5 (Opus): corroborated deletion findings are verdict-eligible —
     two corroborated deletion MAJORs DO reach 'Changes requested'. The
     gate is about corroboration, not severity. (A lone corroborated
-    MAJOR still doesn't flip — the 2-MAJOR majority rule is unchanged.)"""
+    MAJOR still doesn't flip — the 2-MAJOR majority rule is unchanged.)
+    v0.9: exercised via majors_verdict_for_measurement (see above)."""
     def _major(file):
         return {"hunk": {"file": file, "line": 1, "header": "h",
                          "lines": []},
                 "severity": 2.0, "is_real": 0.75, "category": "bug-risk",
                 "rubric": "deletion", "references_remaining": True}
-    _, _j, v_one = jr.compose([_major("a.ts")], [], None)
-    assert v_one == "Approved"            # lone MAJOR: majority rule unchanged
-    _, _j, v_two = jr.compose([_major("a.ts"), _major("b.ts")], [], None)
-    assert v_two == "Changes requested"   # corroborated, majority met
+    r_one, _j, _v = jr.compose([_major("a.ts")], [], None)
+    assert jr.majors_verdict_for_measurement(r_one) == "Approved"
+    r_two, _j, _v = jr.compose([_major("a.ts"), _major("b.ts")], [], None)
+    assert jr.majors_verdict_for_measurement(r_two) == "Changes requested"
 
 
 def test_deletion_rubric_uses_own_threshold(jr):
@@ -304,8 +313,8 @@ def test_main_wires_label_repo_and_version(jr, git_pair, monkeypatch):
     rec = json.loads(open(str(tmp_path / "metrics.jsonl")).readline())
     assert rec["label"] == "auto:range:main...feature"
     assert rec["repo"] == tmp_path.name
-    # Task 7: PACKAGING_VERSION is v08-ast since the AST-units cutover.
-    assert rec["packaging_version"] == "v08-ast"
+    # v0.9 E1: PACKAGING_VERSION bumped to v09 (distinct-source stamp).
+    assert rec["packaging_version"] == "v09"
 
 
 def test_infile_deletion_with_context_is_deletion_only(jr):
@@ -457,10 +466,13 @@ def test_sweep_rewrap_passes_rubric_fields(jr):
     w = sw.rewrap(rec, run_version="v03b")
     assert w["rubric"] == "deletion"
     assert w["references_remaining"] is False
-    # and compose() applies the deletion gate: 0.75 >= 0.70 → reported,
-    # but uncorroborated → verdict NOT flipped
+    # and compose() applies the deletion gate: 0.75 >= 0.70 → reported.
+    # v0.9: compose() itself returns no verdict (fork resolution A+C);
+    # the retired uncorroborated-gate rule is exercised via the
+    # measurement-only helper.
     reported, _, verdict = jr.compose([w], [], None)
-    assert len(reported) == 1 and verdict == "Approved"
+    assert len(reported) == 1 and verdict == ""
+    assert jr.majors_verdict_for_measurement(reported) == "Approved"
 
 
 def test_references_remaining_relative_imports(jr):

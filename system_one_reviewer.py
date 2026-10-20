@@ -1387,22 +1387,434 @@ def ts_units(path, before_text, after_text, entries,
     return subs
 
 
+# E2 (spec): sites below this many lines whose content is PURE DATA
+# (literal-only — no calls, no names) are merged into one combined site
+# rather than emitted one-per-entry (guard b: a 60-entry array literal
+# must not become 60 one-line sites).
+SITE_PURE_DATA_FLOOR = 1
+
+
+def _py_is_literal_expr(node):
+    """True if `node` is a compile-time literal with no calls/names —
+    the PURE-DATA test for E2's size-floor guard (b)."""
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_py_is_literal_expr(e) for e in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(v is not None and _py_is_literal_expr(v)
+                   for v in node.values)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op,
+                                                     (ast.USub, ast.UAdd)):
+        return _py_is_literal_expr(node.operand)
+    return False
+
+
+def _py_site_candidates(tree):
+    """E2 (Python leg, `ast` walk): collect (start_line, end_line, kind,
+    depth) site candidates — object-literal (dict) property assignments,
+    call-argument expressions, conditional expressions (ternary IfExp),
+    and sibling-constant declarations (>=2 consecutive module/class/
+    function-level NAME = LITERAL assigns in the same block).
+
+    `depth` is the node's nesting depth in the AST at the point of
+    collection — candidates NEST (a call argument inside a dict value
+    inside a conditional), and leaf-most selection (guard c) needs real
+    depth, not a span-size proxy, to pick the innermost node when two
+    nested candidates share the same single-line span. This pass only
+    COLLECTS; `_select_leafmost_sites` resolves the overlap.
+    """
+    candidates = []
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.depth = 0
+
+        def generic_visit(self, node):
+            self.depth += 1
+            super().generic_visit(node)
+            self.depth -= 1
+
+        def visit_Dict(self, node):
+            literal_pairs = []
+            for k, v in zip(node.keys, node.values):
+                if v is None:
+                    continue
+                start = getattr(k, "lineno", None) or node.lineno
+                end = getattr(v, "end_lineno", None) or \
+                    getattr(v, "lineno", start)
+                if _py_is_literal_expr(v):
+                    literal_pairs.append((start, end))
+                else:
+                    candidates.append((start, end, "property_assignment",
+                                       self.depth))
+            if literal_pairs:
+                # guard (b): merge the pure-literal pairs of ONE dict into
+                # a single site spanning them, instead of one-per-entry.
+                lo = min(s for s, _e in literal_pairs)
+                hi = max(e for _s, e in literal_pairs)
+                candidates.append((lo, hi, "property_assignment",
+                                   self.depth))
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                start = getattr(arg, "lineno", node.lineno)
+                end = getattr(arg, "end_lineno", None) or start
+                candidates.append((start, end, "call_argument",
+                                   self.depth + 1))
+            self.generic_visit(node)
+
+        def visit_IfExp(self, node):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            candidates.append((node.lineno, end, "conditional", self.depth))
+            self.generic_visit(node)
+
+        def _visit_block(self, body):
+            run = []
+
+            def flush():
+                if len(run) >= 2:
+                    for n in run:
+                        e = getattr(n, "end_lineno", None) or n.lineno
+                        candidates.append((n.lineno, e, "sibling_constant",
+                                          self.depth))
+                run.clear()
+            for stmt in body:
+                if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                        and isinstance(stmt.targets[0], ast.Name)
+                        and _py_is_literal_expr(stmt.value)):
+                    run.append(stmt)
+                else:
+                    flush()
+            flush()
+
+        def visit_Module(self, node):
+            self._visit_block(node.body)
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node):
+            self._visit_block(node.body)
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node):
+            self._visit_block(node.body)
+            self.generic_visit(node)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+    Visitor().visit(tree)
+    return candidates
+
+
+def _ts_is_literal_node(node):
+    """TS/JS pure-literal test (E2 guard b), mirrors `_py_is_literal_expr`."""
+    if node.type in ("string", "number", "true", "false", "null",
+                     "template_string", "undefined"):
+        return True
+    if node.type == "array":
+        kids = [c for c in node.children if c.type not in ("[", "]", ",")]
+        return all(_ts_is_literal_node(c) for c in kids)
+    if node.type == "object":
+        pairs = [c for c in node.children if c.type == "pair"]
+        return all(
+            (p.child_by_field_name("value") is not None and
+             _ts_is_literal_node(p.child_by_field_name("value")))
+            for p in pairs)
+    if node.type == "unary_expression":
+        kids = [c for c in node.children if c.type not in ("+", "-")]
+        return all(_ts_is_literal_node(c) for c in kids)
+    return False
+
+
+def _ts_site_candidates(root):
+    """E2 (TS/JS leg, tree-sitter walk): collect (start_line, end_line,
+    kind, depth) site candidates — object-literal `pair`s, call-expression
+    arguments, ternary (`conditional expression`) nodes, and sibling
+    `const` lexical declarations. `depth` is the real tree-sitter tree
+    depth at collection time (mirrors `_py_site_candidates`'s contract) —
+    needed so guard (c)'s leaf-most selection can pick the innermost node
+    when two nested candidates share the same single-line span."""
+    candidates = []
+
+    def span(n):
+        return n.start_point[0] + 1, n.end_point[0] + 1
+
+    def visit(node, depth):
+        if node.type == "object":
+            pairs = [c for c in node.children if c.type == "pair"]
+            literal_pairs = []
+            for p in pairs:
+                value = p.child_by_field_name("value")
+                if value is None:
+                    continue
+                if _ts_is_literal_node(value):
+                    literal_pairs.append(p)
+                else:
+                    s, e = span(p)
+                    candidates.append((s, e, "property_assignment", depth))
+            if literal_pairs:
+                spans = [span(p) for p in literal_pairs]
+                lo = min(s for s, _e in spans)
+                hi = max(e for _s, e in spans)
+                candidates.append((lo, hi, "property_assignment", depth))
+        elif node.type == "call_expression":
+            args_node = node.child_by_field_name("arguments")
+            if args_node is not None:
+                for c in args_node.children:
+                    if c.type not in ("(", ")", ","):
+                        s, e = span(c)
+                        candidates.append((s, e, "call_argument", depth + 1))
+        elif node.type in ("ternary_expression",):
+            s, e = span(node)
+            candidates.append((s, e, "conditional", depth))
+        if node.type in ("program", "statement_block", "class_body"):
+            run = []
+
+            def flush():
+                if len(run) >= 2:
+                    for n in run:
+                        s, e = span(n)
+                        candidates.append((s, e, "sibling_constant", depth))
+                run.clear()
+            for child in node.children:
+                is_const = (child.type == "lexical_declaration"
+                           and child.children
+                           and child.children[0].type == "const")
+                if is_const:
+                    run.append(child)
+                else:
+                    flush()
+            flush()
+        for c in node.children:
+            visit(c, depth + 1)
+
+    visit(root, 0)
+    return candidates
+
+
+def _select_leafmost_sites(candidates, changed_lines):
+    """E2 guard (c): leaf-most, non-overlapping site selection. Each
+    changed line is assigned to the DEEPEST candidate containing it (a
+    call argument inside a conditional inside an object literal wins
+    over its ancestors because it has the greater `depth`, not because
+    of span size — two nested candidates can share the identical
+    single-line span, where span size alone cannot discriminate).
+    Span size breaks ties between equal-depth candidates (smaller wins);
+    start line breaks any remaining tie, for determinism.
+    Returns {candidate_index: [changed_line, ...]}."""
+    assignment: dict[int, list] = {}
+    for line in changed_lines:
+        best = None
+        best_key = None  # (-depth, size, start) — lexicographically smallest wins
+        for idx, (s, e, _k, depth) in enumerate(candidates):
+            if s <= line <= e:
+                key = (-depth, e - s, s)
+                if best is None or key < best_key:
+                    best, best_key = idx, key
+        if best is not None:
+            assignment.setdefault(best, []).append(line)
+    return assignment
+
+
 def site_units(path, before_text, after_text, entries, change_type="code-change",
                parent_cluster=None):
     """E2: decision-site cutting for TS/JS/Python code-change clusters.
 
-    Sites: object-literal property assignments, call-argument expressions,
-    conditional expressions, sibling-constant declarations.
-    Leaf-most, non-overlapping selection per spec E2.
+    ENGAGEMENT (spec E2): called for every code-change cluster, not only
+    oversize/band units — the caller decides when to invoke this, same
+    seam as `ast_units`/`ts_units`.
 
-    Returns site sub-clusters with cut="sites", or None if sites cannot be
-    extracted (parse error, no sites, non-Python). Spec requires tree-sitter
-    for TS/JS; AST walk for Python. Placeholder v0.9 returns None (falls back
-    to line-window). Full site cutting deferred to measurement phase.
+    Sites: object-literal property assignments, call-argument
+    expressions, conditional expressions, sibling-constant declarations.
+    Leaf-most, non-overlapping selection (guard c); pure-data sites get a
+    size floor (guard b, merged at collection time); the no-op guard
+    (d) returns None when fewer than 2 distinct sites would result (no
+    subdivision gain) so the caller falls through to whole-unit judging.
+
+    Returns site sub-clusters (each `cut="sites"`), or None when sites
+    cannot be extracted (parse error, unsupported language, no changed
+    line falls inside any candidate, or the no-op guard fires).
     """
-    # E2 placeholder: Language-specific site detectors required.
-    # Structure in place; implementation deferred to v0.10 per budget.
-    return None
+    if change_type in ("deletion-only", "whole-file-deleted"):
+        return None
+    changed = _changed_entries(entries)
+    if not changed:
+        return None
+    ext = os.path.splitext(path or "")[1].lower().lstrip(".")
+    candidates = None
+    if ext == "py":
+        try:
+            tree = ast.parse(after_text or "")
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            return None
+        candidates = _py_site_candidates(tree)
+    elif ext in TS_LANGUAGE_BY_EXT:
+        lang = TS_LANGUAGE_BY_EXT[ext]
+        try:
+            tree_sitter = __import__("tree_sitter")
+            grammar_mod = __import__(
+                "tree_sitter_typescript" if lang in ("typescript", "tsx")
+                else "tree_sitter_javascript")
+        except Exception:
+            return None
+        try:
+            get_lang = (grammar_mod.language_typescript
+                       if lang == "typescript" else
+                       grammar_mod.language_tsx if lang == "tsx" else
+                       getattr(grammar_mod, "language", None))
+            if get_lang is None:
+                return None
+            parser = tree_sitter.Parser(tree_sitter.Language(get_lang()))
+            tree = parser.parse((after_text or "").encode("utf-8", "replace"))
+            candidates = _ts_site_candidates(tree.root_node)
+        except Exception:
+            return None
+    else:
+        return None
+    if not candidates:
+        return None
+    changed_lines = sorted({e[1] for e in changed})
+    assignment = _select_leafmost_sites(candidates, changed_lines)
+    if len(assignment) <= 1:
+        return None  # guard (d): no-op — no subdivision gain
+    parent = parent_cluster if parent_cluster is not None else {
+        "file": path, "hunk_start": next(
+            (e[3] for e in changed if len(e) > 3), 1),
+        "change_type": change_type}
+    line_to_cand = {ln: idx for idx, lines in assignment.items()
+                   for ln in lines}
+    by_cand: dict[int, list] = {}
+    unassigned: list = []
+    for e in entries:
+        idx = line_to_cand.get(e[1])
+        if idx is not None:
+            by_cand.setdefault(idx, []).append(e)
+        else:
+            unassigned.append(e)
+    # glue unassigned entries (context, or changed lines outside every
+    # candidate) to the nearest site group by line proximity — union ==
+    # original is preserved, same contract as ast_units'/ts_units' glue.
+    for e in unassigned:
+        if not by_cand:
+            break
+        nearest = min(by_cand, key=lambda i: min(
+            abs(candidates[i][0] - e[1]), abs(candidates[i][1] - e[1])))
+        by_cand[nearest].append(e)
+    # E2 guard (a): tag each site with the ENCLOSING TOP-LEVEL DECLARATION
+    # (function/class/const) it falls under, computed from the SAME parsed
+    # tree — so compose()'s per-declaration majors counting (measured by
+    # V3(c), never gates in v0.9 since the fork removed verdict output) can
+    # group two sites inside one function without double-counting, while
+    # genuinely separate declarations still count separately.
+    if ext == "py":
+        declarations = _py_top_level_declarations(tree)
+    else:
+        declarations = _ts_top_level_declarations(tree.root_node)
+    subs = []
+    for idx in sorted(by_cand):
+        selected = set(map(id, by_cand[idx]))
+        in_order = [e for e in entries if id(e) in selected]
+        s, e, _k, _d = candidates[idx]
+        decl_id = _find_enclosing_declaration(declarations, s, path)
+        sub = _subcluster(parent, in_order, change_type=change_type,
+                          hunk_start=parent["hunk_start"], cut="sites")
+        sub["parent_declaration"] = decl_id
+        subs.append(sub)
+    if len(subs) <= 1:
+        return None  # guard (d): no-op after grouping
+    return subs
+
+
+def _find_enclosing_declaration(declarations, line, path):
+    """E2 guard (a): the declaration whose span contains `line`, tightest
+    (smallest span) match wins when declarations nest. Falls back to a
+    per-file sentinel when no top-level declaration covers the line (e.g.
+    module-level statements outside any function/class/const)."""
+    best = None
+    best_size = None
+    for name, s, e in declarations:
+        if s <= line <= e:
+            size = e - s
+            if best is None or size < best_size:
+                best, best_size = name, size
+    return best if best is not None else f"{path}:<module>"
+
+
+def _py_top_level_declarations(tree):
+    """E2 guard (a): top-level (module-body) function/class/const
+    declarations, as (id, start_line, end_line) — the units compose()'s
+    per-declaration majors counting groups by."""
+    out = []
+    for stmt in tree.body:
+        end = getattr(stmt, "end_lineno", None) or stmt.lineno
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            out.append((f"def:{stmt.name}:{stmt.lineno}", stmt.lineno, end))
+        elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+              and isinstance(stmt.targets[0], ast.Name)):
+            out.append((f"const:{stmt.targets[0].id}:{stmt.lineno}",
+                       stmt.lineno, end))
+    return out
+
+
+def _ts_top_level_declarations(root):
+    """E2 guard (a): top-level (program-body) function/class/const
+    declarations, as (id, start_line, end_line). Mirrors
+    `_py_top_level_declarations`'s contract for the TS/JS leg."""
+    out = []
+    for child in root.children:
+        target = child
+        if child.type == "export_statement":
+            decl = (child.child_by_field_name("declaration")
+                   if hasattr(child, "child_by_field_name") else None)
+            if decl is None:
+                continue
+            target = decl
+        s = target.start_point[0] + 1
+        e = target.end_point[0] + 1
+        if target.type in ("function_declaration", "class_declaration"):
+            name_node = (target.child_by_field_name("name")
+                        if hasattr(target, "child_by_field_name") else None)
+            name = name_node.text.decode("utf-8", "replace") \
+                if name_node is not None else str(s)
+            out.append((f"def:{name}:{s}", s, e))
+        elif target.type in ("lexical_declaration", "variable_declaration"):
+            for gc in target.children:
+                if gc.type == "variable_declarator":
+                    name_node = (gc.child_by_field_name("name")
+                                if hasattr(gc, "child_by_field_name")
+                                else None)
+                    name = name_node.text.decode("utf-8", "replace") \
+                        if name_node is not None else str(s)
+                    out.append((f"const:{name}:{s}", s, e))
+    return out
+
+
+def _apply_site_cutting(units, images):
+    """E2 ENGAGEMENT: site cutting runs for ALL admitted code-change
+    clusters (TS/JS/Python) — not only oversize/band units. Called once,
+    on admitted top-level clusters, BEFORE `expand_oversize_units` (whose
+    oversize/band rules keep governing the legacy top-level cutters
+    exactly as today, now applied to whatever this pass produces).
+
+    A cluster whose `site_units` call returns None (no-op guard, parse
+    error, or unsupported language) is kept as-is, unchanged — this
+    function never drops or truncates; union over `units` is preserved.
+    """
+    out = []
+    for u in units:
+        ct = u.get("change_type", "code-change")
+        if ct in ("deletion-only", "whole-file-deleted"):
+            out.append(u)
+            continue
+        path = u.get("file") or ""
+        pre, post = images(path, u)
+        subs = site_units(path, pre, post, u.get("entries") or [],
+                          change_type=ct,
+                          parent_cluster=u.get("parent_cluster") or u)
+        out.extend(subs if subs else [u])
+    return out
 
 
 def line_window_subclusters(path, entries, change_type="code-change",
@@ -2705,12 +3117,26 @@ def judge_pr_level(findings, ask, size_skipped_code=None):
 _WHEELS_VERSIONS = {}  # Cached per-cutter versions
 
 
-def check_cutter_availability(lang):
-    """E5: check if tree_sitter wheels for `lang` are available in this
-    interpreter. Returns (available: bool, version: str|None).
+_CUTTER_SNIPPETS = {
+    "python": "def f(x):\n    return x + 1\n",
+    "ts": "function f(x: number): number { return x + 1; }\n",
+    "js": "function f(x) { return x + 1; }\n",
+}
 
-    Lazy import seam: if tree_sitter is unavailable, returns (False, None).
-    Raises no exception; fails closed (absent wheels → window fallback).
+
+def check_cutter_availability(lang):
+    """E5 per-cutter self-check (spec: "`--version` runs a per-cutter
+    self-check (parse a known snippet per language); the same check runs
+    inside EVERY run (before packaging)"). Returns (available: bool,
+    version: str|None) and PARSES `_CUTTER_SNIPPETS[lang]` — an import
+    that succeeds but a grammar that cannot parse is NOT "available"
+    (grammar/binding version skew is exactly the failure this guards
+    against). Pinned versions come from `importlib.metadata`, the
+    package's OWN declared version — not an attribute guess.
+
+    Lazy import seam: if tree_sitter/the grammar package is unavailable,
+    returns (False, None). Raises no exception; fails closed (absent
+    wheels -> window fallback, never a silent crash).
     """
     if lang not in ("ts", "js", "python"):
         return False, None
@@ -2719,18 +3145,34 @@ def check_cutter_availability(lang):
 
     try:
         if lang == "python":
-            import ast
-            # Python stdlib; always available
+            ast.parse(_CUTTER_SNIPPETS["python"])
             _WHEELS_VERSIONS[lang] = (True, "stdlib")
             return True, "stdlib"
-        else:  # ts, js
-            import tree_sitter
-            import tree_sitter_javascript  # noqa: F401
-            # Record pinned version (spec E5: exact pinned versions)
-            version = getattr(tree_sitter, '__version__', 'unknown')
-            _WHEELS_VERSIONS[lang] = (True, version)
-            return True, version
-    except (ImportError, AttributeError):
+        import tree_sitter
+        grammar_pkg = ("tree_sitter_typescript" if lang == "ts"
+                       else "tree_sitter_javascript")
+        grammar_mod = __import__(grammar_pkg)
+        get_lang = (grammar_mod.language_typescript if lang == "ts"
+                   else getattr(grammar_mod, "language", None))
+        if get_lang is None:
+            _WHEELS_VERSIONS[lang] = (False, None)
+            return False, None
+        parser = tree_sitter.Parser(tree_sitter.Language(get_lang()))
+        tree = parser.parse(_CUTTER_SNIPPETS[lang].encode("utf-8"))
+        if tree.root_node is None or tree.root_node.has_error:
+            _WHEELS_VERSIONS[lang] = (False, None)
+            return False, None
+        try:
+            import importlib.metadata as _ilm
+            ts_ver = _ilm.version("tree-sitter")
+            grammar_ver = _ilm.version(grammar_pkg.replace("_", "-"))
+        except Exception:
+            ts_ver = getattr(tree_sitter, "__version__", "unknown")
+            grammar_ver = "unknown"
+        version = f"tree-sitter=={ts_ver},{grammar_pkg}=={grammar_ver}"
+        _WHEELS_VERSIONS[lang] = (True, version)
+        return True, version
+    except Exception:
         _WHEELS_VERSIONS[lang] = (False, None)
         return False, None
 
@@ -2777,14 +3219,38 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
         if r is not None and r >= t and (f.get("severity") or 0) >= 1:
             reported.append(f)
-    # Corroboration pool (v0.3b M2 fix, Opus r2 M2, r3 m2/r4 m1): a
-    # reported CODE-CHANGE finding corroborates a deletion finding when
-    # it is itself sev>=2 (any category — a sev>=2 "style" flag is a
-    # serious claim, not a nit), OR same-file with a non-style category
-    # (a real issue in the deletion's own neighborhood, any severity).
-    # category=None is treated as style-like for the same-file path.
-    # A sev<2 style finding — anywhere — never unlocks the gate (#45
-    # shape: six wrong deletion findings must stay report-only).
+    # v0.9 FORK RESOLUTION (A+C): no verdict output. Findings are ranked
+    # triage pointers; the coverage banner provides honest status. The
+    # retired blocker/major/corroboration-pool verdict logic (v0.3b M2;
+    # Opus r2 M2, r3 m2/r4 m1) moved to `majors_verdict_for_measurement`
+    # (MEASUREMENT ONLY, V3(c)) — compose() itself never computes it, so
+    # `reported` is never filtered or reordered by severity here. Return
+    # an empty status string; main() sets the real status (ok / fail-open
+    # / incomplete review).
+    return reported, jitter, ""
+
+
+def majors_verdict_for_measurement(reported, per_declaration=False):
+    """E2 guard (a), MEASUREMENT ONLY (V3(c)): replicates the retired
+    verdict's blocker/major counting rule (corroboration pool included)
+    so the per-declaration change can be measured like-for-like against
+    the flat count — `per_declaration` is the ONLY thing that varies
+    between two calls on the same `reported`, so any difference in the
+    returned string is a flip "caused SOLELY by the per-declaration
+    rule" (spec V3(c)). NEVER called from compose()'s production path —
+    v0.9's fork resolution (A+C) removed verdict output entirely.
+
+    per_declaration=False: flat count (every qualifying major/blocker
+    counts once — the pre-E2 rule).
+    per_declaration=True: majors are counted per ENCLOSING TOP-LEVEL
+    DECLARATION (`finding["hunk"].get("parent_declaration")`, defaulting
+    to the unit's own (file, line) — "a unit is its own declaration when
+    uncut") — two sites inside one function cannot trip the two-major
+    rule twice; genuinely separate declarations still count separately.
+
+    Returns "Changes requested" / "Approved" (the retired verdict
+    strings, scoped to this measurement helper only — never rendered).
+    """
     def _corroborates(cf, df):
         same_file = cf["hunk"]["file"] == df["hunk"]["file"]
         if same_file:
@@ -2803,12 +3269,18 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
                     and not f.get("references_remaining")
                     and not any(_corroborates(c, f)
                                 for c in corroboration_pool)):
-                continue  # uncorroborated deletion finding: report, not verdict
+                continue
             (blockers if lvl == 3 else majors).append(f)
-    # v0.9 FORK RESOLUTION (A+C): no verdict output. Findings are ranked triage
-    # pointers; coverage banner provides honest status. Return empty string status
-    # field; main() will set specific status (ok / fail-open / incomplete review).
-    return reported, jitter, ""
+    if per_declaration:
+        decl_ids = set()
+        for f in majors:
+            hunk = f.get("hunk", {})
+            decl_ids.add(hunk.get("parent_declaration")
+                        or (hunk.get("file"), hunk.get("line")))
+        major_count = len(decl_ids)
+    else:
+        major_count = len(majors)
+    return "Changes requested" if (blockers or major_count >= 2) else "Approved"
 
 
 # ---------- measurement ----------
@@ -3054,12 +3526,20 @@ def main():
     kept, skipped = triage(hunks, provider=provider)
     n_triaged = len(hunks) - len(kept)  # deliberate skips, NOT drops (r10 M1)
 
-    # AST-units plan Task 4 — BINDING pre-judge pipeline (r11-M1/r12/r13):
-    #   (1) route + expand (token-gated, recursive r7-M2)
-    #   (2) attach ast_context (jev only, unless --no-enrichment; Task 6)
-    #   (3) re-estimate + RE-expand (step 0: DROP ast_context, r12-M1)
-    #   (4) set leaves aside — EXEMPT from --max-hunks, BEFORE truncation
-    #   (5) truncate to the ceiling in FIRST-COME-ACROSS-FILES order
+    # AST-units plan Task 4 — BINDING pre-judge pipeline, E2-REVISED
+    # (v0.9 spec E2 BEHAVIOR CHANGE: truncation moves AHEAD of expansion):
+    #   (1) truncate to the ceiling on TOP-LEVEL CLUSTERS, BEFORE any
+    #       cutting (counted by parent cluster; one skipped entry per
+    #       dropped cluster) — admitted clusters' sites/expansions are
+    #       NEVER truncated afterward (today's post-expansion truncation
+    #       would otherwise cap ~168 site units against the default 40,
+    #       exactly what OQ1 forbids)
+    #   (2) site cutting (E2) for ALL admitted code-change clusters
+    #   (3) route + expand still-oversize/band units (token-gated,
+    #       recursive r7-M2) — unchanged, now applied to (possibly
+    #       site-cut) units instead of raw top-level clusters
+    #   (4) attach ast_context (jev only, unless --no-enrichment; Task 6)
+    #   (5) re-estimate + RE-expand (step 0: DROP ast_context, r12-M1)
     #   (6) freeze n_units_pre / n_dropped
     if provider == "jev" and kept:
         # r2-M2: per-mode pre/post file images for the cutter; a missing
@@ -3067,6 +3547,20 @@ def main():
         images = lambda path, unit: mode_file_images(  # noqa: E731
             args.repo, mode, head, path,
             old_file=unit.get("old_file"))
+        # E2 step (1): ceiling on TOP-LEVEL CLUSTERS, before any cutting.
+        # r1-m8: first-come-across-files order — NO size sort (which
+        # could drop arbitrary sub-clusters of one parent).
+        n_ceiling_dropped = max(0, len(kept) - args.max_hunks)
+        if n_ceiling_dropped:
+            skipped = skipped + [
+                {"file": u["file"] or "", "reason": "max-hunks>ceiling",
+                 **_span(u)}
+                for u in kept[args.max_hunks:]]
+            kept = kept[:args.max_hunks]
+        # E2 step (2): site cutting for ALL admitted code-change clusters
+        # (not only oversize/band units) — oversize/band rules below keep
+        # governing the legacy top-level cutters exactly as today.
+        kept = _apply_site_cutting(kept, images)
         kept, leaves = expand_oversize_units(kept, images)
         # Task 6 step (2) (r5-m3): attach ast_context AFTER the
         # pre-judge expansion, jev only and never under
@@ -3092,31 +3586,26 @@ def main():
             if reexp_leaves:
                 leaves = leaves + reexp_leaves
         n_leaf_unjudged = len(leaves)
+        # E2: n_dropped is now CLUSTER-counted (top-level clusters dropped
+        # by the pre-cutting ceiling), not unit-counted — the spec's
+        # concern is specifically that a unit-counted drop count lies
+        # once sites/AST expansion inflate the judged-unit total (a
+        # banner reading 40/40 while 10 clusters were dropped violates
+        # INTENT rule 7).
+        n_dropped = n_ceiling_dropped
     else:
         leaves = []
         n_leaf_unjudged = 0
-    # r9-M1/r13-M1: n_units_pre is recorded BEFORE truncation and INCLUDES
-    # leaves (they were set aside in step 4, so the pre-truncation list
-    # alone would under-count the denominator).
+        if provider == "jev":
+            n_dropped = 0
+        else:
+            kept.sort(key=lambda h: -h["size"])
+            kept = kept[: args.max_hunks]
+            n_dropped = len(hunks) - n_triaged - len(kept)
+    # r9-M1/r13-M1: n_units_pre is recorded AFTER expansion and INCLUDES
+    # leaves (they were set aside pre-judge, so a list without them would
+    # under-count the denominator).
     n_units_pre = len(kept) + n_leaf_unjudged
-    # r1-m8: units-per-run ceiling in first-come-across-files order — NO
-    # size sort (which could drop arbitrary sub-clusters of one parent).
-    # LAYA KEEPS TODAY'S size sort + truncate (r6-m1); laya never emits
-    # ceiling entries — its truncation stays the legacy counter math.
-    if provider == "jev":
-        n_ceiling_dropped = max(0, len(kept) - args.max_hunks)
-        if n_ceiling_dropped:
-            skipped = skipped + [
-                {"file": u["file"] or "", "reason": "max-hunks>ceiling",
-                 **_span(u)}
-                for u in kept[args.max_hunks:]]
-            kept = kept[:args.max_hunks]
-        n_dropped = n_units_pre - n_leaf_unjudged - len(kept)
-    else:
-        kept.sort(key=lambda h: -h["size"])
-        kept = kept[: args.max_hunks]
-        n_ceiling_dropped = 0
-        n_dropped = len(hunks) - n_triaged - len(kept)
 
     call_errors: list[str] = []
     # Task 5 (r6-m3): main() owns the file images + Tasks 2/3 extractors,
