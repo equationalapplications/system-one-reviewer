@@ -731,6 +731,13 @@ def build_input(doc):
             "skipped": skipped, "images": images, "n_autojunk": n_autojunk}
 
 
+def resolve_input(bundle):
+    """--input counterpart of resolve_diff: (diff_text, head, "input"). Registers
+    the before/after texts that mode_file_images answers from."""
+    set_input_images(bundle["images"])
+    return bundle["diff"], bundle["head"], "input"
+
+
 GIT_PROBE_TIMEOUT = 30  # seconds; rev-parse is instant unless git is stuck
 
 
@@ -2847,6 +2854,9 @@ def git_show_or_none(repo, rev, path):
 
 
 _IMAGE_CACHE: dict = {}
+# --input mode: path -> (before, after), registered once per run by
+# resolve_input and cleared with the other per-run caches.
+_INPUT_IMAGES: dict = {}
 _MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable)
 # E1/V5: --force-window-cut run-level toggle (module state, same pattern as
 # the caches above — per-run, cleared by clear_runtime_caches). When True,
@@ -2854,6 +2864,12 @@ _MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable
 # _apply_site_cutting entirely. Provides the window-only leg V5 compares
 # against a site-cut run of the SAME range.
 _FORCE_WINDOW_CUT = False
+
+
+def set_input_images(images):
+    """Register the --input before/after texts (replaces any previous map)."""
+    _INPUT_IMAGES.clear()
+    _INPUT_IMAGES.update(images)
 
 
 def clear_runtime_caches():
@@ -2864,6 +2880,7 @@ def clear_runtime_caches():
     call this between runs too."""
     global _FORCE_WINDOW_CUT
     _IMAGE_CACHE.clear()
+    _INPUT_IMAGES.clear()
     _MERGE_BASE_CACHE.clear()
     _TS_PARSE_CACHE.clear()
     _FORCE_WINDOW_CUT = False
@@ -2881,11 +2898,16 @@ def mode_file_images(repo, mode, head, path, old_file=None,
                              pre  = git show HEAD:<path>
       uncommitted            post = worktree read
                              pre  = git show :<path>
+      input                  (before, after) from the --input map; no git,
+                             `repo` is None and never touched
     `old_file` (package_hunks' rename-from field) is used for the
     pre-image when the path itself has none (renames). Missing images are
     None — the caller degrades, never dies. Cache key is the MODE-AWARE
     (mode, rev, path) triple (r2-m2): an --uncommitted post-image can
     never serve a --staged request in one process."""
+    if mode == "input":
+        return _INPUT_IMAGES.get(path, (None, None))
+
     def _fetch(repo_, rev, path_):
         if fetch is not None:
             return fetch(repo_, rev, path_)
@@ -4313,12 +4335,12 @@ def main():
         # Read and validate BEFORE load_api_key() and any model call; a rejected
         # document is a caller error (exit 2, unlike the exit-1 git failures).
         try:
-            validate_input(load_input(args.input))
+            input_doc = validate_input(load_input(args.input))
         except InputError as e:
             where = f" ({e.where})" if e.where else ""
             print(f"system-one-reviewer: --input: {e}{where}", file=sys.stderr)
             sys.exit(2)
-        raise NotImplementedError("--input: diff synthesis is wired in a later task")
+        input_bundle = build_input(input_doc)
 
     global _FORCE_WINDOW_CUT
     _FORCE_WINDOW_CUT = args.force_window_cut
@@ -4334,13 +4356,20 @@ def main():
     else:
         api_key = load_api_key()
     ask = make_provider(provider, model, api_key)
-    diff, head, mode = resolve_diff(args.repo, args)
+    if args.input is not None:
+        diff, head, mode = resolve_input(input_bundle)
+    else:
+        diff, head, mode = resolve_diff(args.repo, args)
     hunks = package_hunks(diff)
     # r5-M4: the size gate is mechanical via the provider param. jev (the
     # default) never size-skips — oversize clusters route through the
     # Task 2/3 cutter below; laya keeps today's exact behavior.
     kept, skipped = triage(hunks, provider=provider)
     n_triaged = len(hunks) - len(kept)  # deliberate skips, NOT drops (r10 M1)
+    # --input per-file triage (binary / oversize) happened before packaging, so
+    # those files have no hunks; their records join the run's skipped list.
+    input_skipped = input_bundle["skipped"] if args.input is not None else []
+    skipped = skipped + input_skipped
 
     # AST-units plan Task 4 — BINDING pre-judge pipeline, E2-REVISED
     # (v0.9 spec E2 BEHAVIOR CHANGE: truncation moves AHEAD of expansion):
@@ -4358,7 +4387,9 @@ def main():
     #   (5) re-estimate + RE-expand (step 0: DROP ast_context, r12-M1)
     #   (6) freeze n_units_pre / n_dropped
     # Initialize n_total_top_level_clusters for banner denominator (INTENT rule 7)
-    n_total_top_level_clusters = len(hunks)
+    # An input-oversize CODE file never reached the packager but is unjudged
+    # coverage (size_skipped_code), so it belongs in the denominator too.
+    n_total_top_level_clusters = len(hunks) + len(size_skipped_code(input_skipped))
     if provider == "jev" and kept:
         # r2-M2: per-mode pre/post file images for the cutter; a missing
         # image degrades (mode_file_images returns None) — never exits.
@@ -4566,7 +4597,8 @@ def main():
          "reflex_class": f.get("reflex_class", "code"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
-    meta = {"repo": os.path.basename(os.path.realpath(args.repo or "")),  # input mode: Task 3
+    meta = {"repo": (input_bundle["repo"] if args.input is not None
+                     else os.path.basename(os.path.realpath(args.repo or ""))),
             "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks),
@@ -4592,6 +4624,7 @@ def main():
             "total_latency_ms": total, "jev_calls": len(latencies),
             "fail_open": fail_open, "fail_reason": fail_reason,
             "n_test_held": n_test_held,
+            "n_input_autojunk": input_bundle["n_autojunk"] if args.input is not None else 0,
             "status": status}  # v0.9: honest-status signal carrier (cond 10)
 
     result = {"meta": meta, "pr_level": pr_level if not fail_open else None,

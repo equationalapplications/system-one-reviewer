@@ -462,17 +462,33 @@ def test_cli_stdin(cli, monkeypatch, capsys):
     assert "/dev/null" in capsys.readouterr().err
 
 
-def test_cli_valid_input_stops_with_not_implemented(cli, tmp_path):
-    # Task 3 completes the wiring and replaces this expectation.
+def _stub_judge_run(jr, monkeypatch):
+    """Let a valid --input run to completion offline; returns the ledger records."""
+    records = []
+    monkeypatch.setattr(jr, "load_api_key", lambda: "k")
+    monkeypatch.setattr(jr, "make_provider", lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
+    monkeypatch.setattr(jr, "log_run", lambda rec: records.append(rec))
+    monkeypatch.setattr(jr, "judge", lambda kept, ask, errors=None, split_unit=None: (
+        [], [1.0] * len(kept), {"added_units": 0, "avg_input_tokens": None}))
+    monkeypatch.setattr(jr, "judge_pr_level", lambda f, a, size_skipped_code=None:
+                        {"overall_risk": 1.0, "needs_human_review": 0.5, "latency_ms": 1.0})
+    return records
+
+
+def test_cli_valid_input_runs_to_completion(cli, jr, monkeypatch, tmp_path, capsys):
+    records = _stub_judge_run(jr, monkeypatch)
     p = write(tmp_path, json.dumps(doc()))
-    with pytest.raises(NotImplementedError):
-        cli("--input", p)
+    cli("--input", p)
+    assert "mode=input" in capsys.readouterr().out
+    assert len(records) == 1 and records[0]["mode"] == "input"
 
 
-def test_cli_valid_stdin_reaches_wiring(cli, monkeypatch):
+def test_cli_valid_stdin_runs_to_completion(cli, jr, monkeypatch, capsys):
+    records = _stub_judge_run(jr, monkeypatch)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(doc())))
-    with pytest.raises(NotImplementedError):
-        cli("--input", "-")
+    cli("--input", "-")
+    assert "mode=input" in capsys.readouterr().out
+    assert len(records) == 1
 
 
 @pytest.mark.parametrize("extra", [["--repo", "."], ["--range", "A..B"], ["--pr", "3"],
