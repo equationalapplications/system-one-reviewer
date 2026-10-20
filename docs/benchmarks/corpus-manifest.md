@@ -13,24 +13,30 @@ the corresponding gate runs.
 ## Fixture (v0.2-era, saturated)
 
 - `examples/fixture-golden.tsv` (Python, 5 plants) — the V1 Python leg
-- TODO-PIN (m4): TS fixture with planted defects — created during implementation,
-  committed before V1 runs
+- TS fixture (v0.9, planted defects) — TBD: created during v0.9 measurement phase
+  before V1 TS runs
 
 ## Negative heads (V3 precision arm)
 
-- Fixture negative golden: `examples/` negative-golden TSV (v0.2 evaluation;
-  TODO-PIN exact filename)
-- TODO-PIN: the five defect-free heads cited in the v0.9 spec — SHAs to be
-  recorded here from the run-1 memo's ranges before V3 runs (candidates: the
-  doc-only and deps-only ranges from Oct 15–19 ledger)
+- Fixture negative golden: `examples/fixture-negative-golden.tsv` (v0.2 evaluation)
+- Five defect-free SHAs (v0.9 baseline for noise band, V3(a) measurement):
+  TBD from run-1 memo's Oct 15–19 ledger (doc-only and deps-only ranges).
+  Placeholder SHAs (to be confirmed):
+  - (SHA1) — doc-only range
+  - (SHA2) — deps-only range  
+  - (SHA3) — clean head 3
+  - (SHA4) — clean head 4
+  - (SHA5) — clean head 5
 
 ## Reproof ranges (V3)
 
-- `wf:SynapseTree:59:fix-delta` ×3: SynapseTree `2577539..cb98858`
-- `byok-task-A1`: SynapseTree-login `fb51dd6..342f04f`
-- `byok-task-A4`: SynapseTree-login `b533637..9c7918c`
-- `byok-task-A5`: SynapseTree-login `3764689..effa0c0`
-- `byok-task-A6fix`: SynapseTree-login `d70d225..9e70ec0`
+Pinned for v0.9 (per spec V3(a) noise-band measurement):
+- `reproof:wf59-fixdelta`: SynapseTree `2577539..cb98858` (3 repeats)
+- `reproof:byok-task-A1`: SynapseTree-login `fb51dd6..342f04f`
+- `reproof:byok-task-A4`: SynapseTree-login `b533637..9c7918c`
+- `reproof:byok-task-A5`: SynapseTree-login `3764689..effa0c0`
+- `reproof:ct-61cluster`: curated-thoughts `9806333f..d40d300` (V3 noise band)
+- `reproof:A6fix`: SynapseTree-login `d70d225..9e70ec0` (per-declaration majorscounting V3(c))
 
 ## 47-PR corpus
 
