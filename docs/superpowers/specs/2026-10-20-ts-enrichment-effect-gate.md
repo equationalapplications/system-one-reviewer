@@ -24,9 +24,11 @@ defines how it will be).
 ## Decision
 
 Ship TS/JS enrichment **default-on**, under the existing `--no-enrichment`
-off switch, so dogfooding exercises it on real PRs. This is a deliberate
-exception to "measure before shipping": it is an experiment with the off
-arm one flag away, and the gate below decides whether it stays.
+off switch, so dogfooding exercises it on real PRs. This follows INTENT's
+"How changes are made" item 4: metrics refine, they do not gate shipping.
+Local smoke tests (below) prove the mechanism engaged, the off arm is one
+flag away, runs are stamped and labelled, and the evaluation below decides
+afterwards whether it stays default-on.
 
 ## Design
 
@@ -63,7 +65,10 @@ arm one flag away, and the gate below decides whether it stays.
 
 ## Validation
 
-All of it is receipts under `docs/benchmarks/`, labels per AGENTS.md.
+Steps 1 and the guard in step 3 are the pre-release smoke tests. The census
+(2), the full A/B (3) and the dogfooding adjudication (4) run after release,
+on real work, and their receipts go under `docs/benchmarks/` (labels per
+AGENTS.md). None of them blocks the release.
 
 1. **Mechanics (CI, model-off)** `tests/test_ts_enrichment.py` pins the
    chain for every fixture line in `tests/data/ts-enrich/` (arrows, class
@@ -109,6 +114,16 @@ All of it is receipts under `docs/benchmarks/`, labels per AGENTS.md.
    sustained rate is at least the off-arm's with no new FP class; otherwise
    flip the default off in a `feat:`/`chore:` PR and file the receipt in
    `docs/evals/`.
+
+## Known limits of the harness
+
+- Paired `is_real` deltas key on `file:line:line_end`. Two sub-units with
+  the same span in one cluster would collapse; not seen in practice, and the
+  ledger carries no content key to disambiguate.
+- The softening kill needs at least 6 non-zero per-unit deltas to be able to
+  reach p < 0.05; the output flags `softening_test_underpowered` otherwise.
+  With goldens this small, treat the A/B as a smoke test and rely on the
+  dogfooding adjudication for the real call.
 
 ## Out of scope
 

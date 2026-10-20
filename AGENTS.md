@@ -6,8 +6,11 @@
 it**: the INTENT file wins on *intent* (what SOR is for, what it must never
 try to cover), specs win on *detail*. If a spec's goal contradicts an INTENT
 rule, the spec is wrong until the INTENT is amended through PR review — do not
-design around the rule silently. Judgment-affecting changes need before/after
-numbers (fixture golden + Stage A golden + negative heads) in the PR.
+design around the rule silently. Judgment-affecting changes do not wait for
+strict metrics: run the quick smoke tests (fixture golden, Stage A golden +
+negative heads, stamp/coverage tests), ship behind an off switch with
+labels/stamps, say in the PR what is unmeasured, then evaluate in the wild
+(INTENT.md, How changes are made, item 4).
 
 ## The interpreter gotcha (read before any tree-sitter work)
 

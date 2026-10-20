@@ -57,11 +57,34 @@ def test_missing_tree_sitter_yields_no_context(jr):
 
 
 def test_oversize_source_is_not_parsed(jr):
-    def loader(name):  # would fail the test if reached
-        raise AssertionError("parser must not be loaded for oversize files")
+    # _ts_parse fails open on ANY exception, so a loader that raised would
+    # be swallowed and this test would pass even without the size guard;
+    # record the calls instead
+    calls = []
+
+    def loader(name):
+        calls.append(name)
+        raise ImportError(name)
 
     src = "const a = 1;\n" * (jr.TS_ENRICHMENT_MAX_CHARS // 10)
     assert jr._ts_ast_context(src, "ts", 1, loader) is None
+    assert calls == []
+    # control: a small file does reach the loader
+    assert jr._ts_ast_context("const a = 1;\n", "ts", 1, loader) is None
+    assert calls == ["tree_sitter"]
+
+
+def test_injected_loaders_bypass_the_parse_cache(jr):
+    """A cache keyed on id(loader) could hand one test's fake loader the
+    result of another's after the id is reused; injected loaders skip it."""
+    src = "const a = () => 1;\n"
+
+    def failing(name):
+        raise ImportError(name)
+
+    jr.clear_runtime_caches()
+    jr._ts_ast_context(src, "ts", 1, failing)
+    assert jr._TS_PARSE_CACHE == {}
 
 
 def test_stamps(jr):
@@ -189,13 +212,16 @@ def test_run_main_stamps_ts_ast_and_no_enrichment_turns_it_off(
     out, judged, records = _run_main(jr, monkeypatch, tmp_path, capsys, diff,
                                      images)
     assert out["meta"]["enrichment"] == "ts-ast"
+    assert records[0]["judged"]
     assert all(e["enrichment"] == "ts-ast" for e in records[0]["judged"])
     assert any(u.get("ast_context", {}).get("enclosing") == "f" for u in judged)
 
     out, judged, records = _run_main(jr, monkeypatch, tmp_path, capsys, diff,
                                      images, extra_args=("--no-enrichment",))
     assert out["meta"]["enrichment"] == "none"
+    assert judged and records[0]["judged"]
     assert all("ast_context" not in u for u in judged)
+    assert all(e["enrichment"] == "none" for e in records[0]["judged"])
 
 
 def test_line_numbers_survive_unicode_line_separators(jr):

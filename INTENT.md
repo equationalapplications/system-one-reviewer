@@ -220,9 +220,27 @@ honest.
    separate from this repo.
 3. **Review, then merge.** The review ladder per the dual-review-cycle
    skill; unresolved questions hold the pull request.
-4. **Benchmarks gate judgment changes.** Judgment-affecting changes must
-   pass: the fixture golden, the Stage A 8-defect golden with the negative
-   heads (precision arm), and the stamp/coverage tests. Before/after
-   numbers go in the PR description.
+4. **Metrics refine; they do not gate shipping.** SOR is built by using
+   it. The loop is: small smoke tests locally during development (the
+   fixture golden, the Stage A 8-defect golden with the negative heads, and
+   the stamp/coverage tests, whenever they are quick to run), then release,
+   then use it on real coding tasks and pull requests, then evaluate from
+   adjudicated outcomes and improve. Numbers we have not yet collected in
+   the wild are not a precondition for releasing a judgment-affecting
+   change. What a change does need:
+   - a smoke test that proves the mechanism engaged (a treatment that
+     silently did nothing teaches nothing);
+   - a way to turn it off (a flag, as with `--no-enrichment`), so the off
+     arm stays available for comparison;
+   - ledger labels and stamps (`exp:`, `reproof:`, the `enrichment` and
+     `wire_format` stamps) so its runs can be told apart later;
+   - a plain statement in the PR of what is unmeasured and how it will be
+     evaluated, plus before/after numbers if the author has them.
+
+   This relaxes the release gate, not the claim standard: a claim of
+   recall or precision still needs `--golden` or adjudicated outcomes
+   (AGENTS.md, Measurement discipline). The hard rules above (no verdict
+   output, no posting, the cost envelope, false positives as defects) are
+   not relaxed by this item.
 5. **The metrics ledger is append-only.** Re-runs for evidence use
    distinct labels (`reproof:`, `exp:`) so audits can tell them apart.

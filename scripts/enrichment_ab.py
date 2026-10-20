@@ -34,8 +34,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = [sys.executable, os.path.join(REPO_ROOT, "system_one_reviewer.py")]
 
 
+def label_for(arm: str, sample: str, k: int) -> str:
+    return f"exp:enrich:{arm}:{sample}:r{k}"
+
+
 def run_one(args: argparse.Namespace, arm: str, k: int) -> dict:
-    label = f"exp:enrich:{arm}:{args.sample}:r{k}"
+    label = label_for(arm, args.sample, k)
     out = os.path.join(args.outdir, f"{arm}-{args.sample}-r{k}.json")
     cmd = [*TOOL, "--repo", args.repo, "--range", args.range, "--json",
            "--label", label, "--out", out]
@@ -85,12 +89,42 @@ def read_ledger(path: str) -> dict[str, list[dict]]:
     return by_label
 
 
-def paired_is_real_deltas(on: list[dict], off: list[dict]) -> list[float]:
-    key = lambda j: (j["file"], j["line"], j.get("line_end"))  # noqa: E731
-    off_by = {key(j): j.get("is_real") for j in off}
-    return [j["is_real"] - off_by[key(j)] for j in on
+def unit_key(j: dict) -> str:
+    return f"{j['file']}:{j['line']}:{j.get('line_end')}"
+
+
+def paired_is_real_deltas(on: list[dict], off: list[dict]) -> dict[str, float]:
+    """is_real(on) - is_real(off) per identical unit, keyed file:line:end."""
+    off_by = {unit_key(j): j.get("is_real") for j in off}
+    return {unit_key(j): j["is_real"] - off_by[unit_key(j)] for j in on
             if j.get("is_real") is not None
-            and off_by.get(key(j)) is not None]
+            and off_by.get(unit_key(j)) is not None}
+
+
+def golden_files(path: str) -> set[str]:
+    out: set[str] = set()
+    with open(path) as f:
+        for ln in f:
+            if ln.strip() and not ln.startswith("#"):
+                out.add(ln.split("\t")[0])
+    return out
+
+
+def guard_files(judged: list[dict], files: set[str], expect: str) -> str | None:
+    """The run-level stamp reads `ts-ast` as soon as ANY unit is enriched, so
+    a golden file that failed to parse would run unenriched in both arms
+    and the A/B would report "no effect". Require every judged unit of
+    every golden file to carry the expected stamp."""
+    for fpath in sorted(files):
+        units = [j for j in judged if j.get("file") == fpath]
+        if not units:
+            return f"golden file {fpath} was not judged"
+        bad = [j for j in units if j.get("enrichment") != expect]
+        if bad:
+            return (f"golden file {fpath}: {len(bad)}/{len(units)} unit(s) "
+                    f"stamped {bad[0].get('enrichment')!r}, expected "
+                    f"{expect!r} (parse error or oversize file?)")
+    return None
 
 
 def sign_test_p(deltas: list[float]) -> float:
@@ -105,7 +139,7 @@ def sign_test_p(deltas: list[float]) -> float:
 
 def decide(rows: list[dict], clean: bool = False) -> dict:
     """rows: one dict per repeat with on/off reported counts and true
-    positives plus the paired is_real deltas. `clean` marks a sample with
+    positives plus the paired is_real deltas ({unit: delta}). `clean` marks a sample with
     no known defects, where ANY surfaced finding is a false positive; on a
     golden sample the on-arm may surface more findings (true positives) and
     only its false positives (reported - tp) are compared. "Any NEW false
@@ -116,8 +150,18 @@ def decide(rows: list[dict], clean: bool = False) -> dict:
     precision_ok = all(fps(r, "on") <= fps(r, "off") for r in rows)
     recall_signal = bool(rows) and all(
         r["on_tp"] >= r["off_tp"] + 2 for r in rows)
-    deltas = [d for r in rows for d in r["deltas"]]
+    # repeats of one unit are not independent: average each unit's delta
+    # across repeats, then sign-test the per-unit means
+    per_unit: dict[str, list[float]] = {}
+    for r in rows:
+        for key, d in r["deltas"].items():
+            per_unit.setdefault(key, []).append(d)
+    deltas = [sum(v) / len(v) for v in per_unit.values()]
     mean_delta = sum(deltas) / len(deltas) if deltas else 0.0
+    nonzero = sum(1 for d in deltas if d != 0)
+    # n < 6 non-zero pairs can never reach p < 0.05, so the softening kill
+    # is untestable on a sample that small; say so instead of implying it
+    underpowered = nonzero < 6
     softened = mean_delta < 0 and sign_test_p(deltas) < 0.05
     if not precision_ok or softened:
         verdict = "KILL"
@@ -127,7 +171,8 @@ def decide(rows: list[dict], clean: bool = False) -> dict:
         verdict = "NO-DETECTABLE-EFFECT"
     return {"verdict": verdict, "precision_ok": precision_ok,
             "recall_signal": recall_signal, "mean_is_real_delta": mean_delta,
-            "sign_test_p": sign_test_p(deltas), "n_paired_units": len(deltas)}
+            "sign_test_p": sign_test_p(deltas), "n_paired_units": len(deltas),
+            "softening_test_underpowered": underpowered}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,12 +197,24 @@ def main(argv: list[str] | None = None) -> int:
                                    f"{args.sample}-{int(time.time())}")
     if args.repeats < 1:
         ap.error("--repeats must be >= 1")
+    clean = args.clean or bool(args.negative_golden and not args.golden)
+    if not (clean or args.golden):
+        ap.error("give --golden (a sample with known defects) or --clean / "
+                 "--negative-golden (a clean sample); otherwise every "
+                 "finding would be scored as a false positive")
     os.makedirs(args.outdir, exist_ok=True)
     runs: dict[str, list[Any]] = {"on": [], "off": []}
     for k in range(1, args.repeats + 1):
         for arm in ("on", "off"):
             res = run_one(args, arm, k)
             bad = guard(res, arm, args.expect)
+            if not bad and not clean and res.get("golden_eval") is None:
+                bad = "no golden_eval in the result"
+            if not bad and arm == "on" and args.golden:
+                judged = read_ledger(os.path.join(
+                    args.outdir, "metrics.jsonl")).get(
+                        label_for(arm, args.sample, k), [])
+                bad = guard_files(judged, golden_files(args.golden), args.expect)
             if bad:
                 print(f"enrichment_ab: ABORT, vacuous {arm}-arm r{k}: {bad}",
                       file=sys.stderr)
@@ -171,10 +228,10 @@ def main(argv: list[str] | None = None) -> int:
             "on_reported": len(on["findings"]), "off_reported": len(off["findings"]),
             "on_tp": tp(on), "off_tp": tp(off),
             "deltas": paired_is_real_deltas(
-                ledger.get(f"exp:enrich:on:{args.sample}:r{k}", []),
-                ledger.get(f"exp:enrich:off:{args.sample}:r{k}", []))})
+                ledger.get(label_for("on", args.sample, k), []),
+                ledger.get(label_for("off", args.sample, k), []))})
     print(json.dumps({"sample": args.sample, "repeats": rows,
-                      **decide(rows, clean=args.clean)}, indent=2))
+                      **decide(rows, clean=clean)}, indent=2))
     return 0
 
 

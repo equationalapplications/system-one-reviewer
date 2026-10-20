@@ -997,9 +997,9 @@ def _ts_parse(src, ext, loader=None):
     lang = TS_LANGUAGE_BY_EXT.get(ext)
     if lang is None or not src or len(src) > TS_ENRICHMENT_MAX_CHARS:
         return None
-    key = (lang, id(loader), src)
-    if key in _TS_PARSE_CACHE:
-        return _TS_PARSE_CACHE[key]
+    key = (lang, src)
+    if loader is None and key in _TS_PARSE_CACHE:
+        return _TS_PARSE_CACHE[key]  # injected test loaders bypass the cache
     derived = None
     try:
         tree_sitter = (loader or importlib.import_module)("tree_sitter")
@@ -1017,7 +1017,8 @@ def _ts_parse(src, ext, loader=None):
                            _ts_symbol_spans(tree.root_node))
     except Exception:
         derived = None
-    _TS_PARSE_CACHE[key] = derived
+    if loader is None:
+        _TS_PARSE_CACHE[key] = derived
     return derived
 
 

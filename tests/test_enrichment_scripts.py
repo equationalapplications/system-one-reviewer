@@ -60,13 +60,17 @@ def test_sign_test():
     assert ab.sign_test_p([0.1, -0.1, 0.1, -0.1]) == 1.0
 
 
-def _row(on_rep, off_rep, on_tp, off_tp, deltas=()):
+def _row(on_rep, off_rep, on_tp, off_tp, deltas=None):
     return {"on_reported": on_rep, "off_reported": off_rep,
-            "on_tp": on_tp, "off_tp": off_tp, "deltas": list(deltas)}
+            "on_tp": on_tp, "off_tp": off_tp, "deltas": dict(deltas or {})}
+
+
+def _units(value, n=8):
+    return {f"a.ts:{i}:{i + 2}": value for i in range(n)}
 
 
 def test_decide():
-    flat = [0.0] * 4
+    flat = _units(0.0, 4)
     # recall signal in every repeat, precision held
     rows = [_row(1, 1, 5, 3, flat)] * 3
     assert ab.decide(rows)["verdict"] == "SIGNAL"
@@ -84,15 +88,110 @@ def test_decide():
     assert ab.decide(rows)["verdict"] == "KILL"
     assert ab.decide([])["verdict"] == "NO-DETECTABLE-EFFECT"
     # systematic softening kills even when precision and recall pass
-    rows = [_row(1, 1, 5, 3, [-0.1] * 8)] * 2
-    assert ab.decide(rows)["verdict"] == "KILL"
+    rows = [_row(1, 1, 5, 3, _units(-0.1))] * 2
+    d = ab.decide(rows)
+    assert d["verdict"] == "KILL" and not d["softening_test_underpowered"]
+    # too few non-zero pairs to ever reach p < 0.05: say so, do not kill
+    rows = [_row(1, 1, 5, 3, _units(-0.1, 4))] * 2
+    d = ab.decide(rows)
+    assert d["verdict"] == "SIGNAL" and d["softening_test_underpowered"]
+    # repeats of one unit are averaged, not counted as independent pairs
+    rows = [_row(1, 1, 5, 3, _units(-0.1, 3))] * 5
+    assert ab.decide(rows)["n_paired_units"] == 3
 
 
 def test_paired_deltas_pair_by_unit():
     on = [{"file": "a.ts", "line": 1, "line_end": 3, "is_real": 0.5},
           {"file": "b.ts", "line": 1, "line_end": 3, "is_real": 0.9}]
     off = [{"file": "a.ts", "line": 1, "line_end": 3, "is_real": 0.7}]
-    assert ab.paired_is_real_deltas(on, off) == pytest.approx([-0.2])
+    got = ab.paired_is_real_deltas(on, off)
+    assert list(got) == ["a.ts:1:3"] and got["a.ts:1:3"] == pytest.approx(-0.2)
+
+
+def test_guard_files_requires_every_golden_unit_enriched():
+    judged = [{"file": "g.ts", "enrichment": "ts-ast"},
+              {"file": "g.ts", "enrichment": "ts-ast"},
+              {"file": "other.ts", "enrichment": "none"}]
+    assert ab.guard_files(judged, {"g.ts"}, "ts-ast") is None
+    judged[1]["enrichment"] = "none"
+    assert "parse error" in ab.guard_files(judged, {"g.ts"}, "ts-ast")
+    assert "not judged" in ab.guard_files(judged, {"missing.ts"}, "ts-ast")
+
+
+def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast"):
+    """Stand in for the reviewer CLI: write the --out file and append a
+    ledger record for the requested label, like the real tool does."""
+    import json as _json
+    import types
+
+    def fake_run(cmd, env=None, capture_output=None, text=None):
+        label = cmd[cmd.index("--label") + 1]
+        out = cmd[cmd.index("--out") + 1]
+        arm = "off" if "--no-enrichment" in cmd else "on"
+        enr = "none" if arm == "off" else stamp_on
+        res = {"meta": {"enrichment": enr, "status": "ok", "fail_open": False,
+                        "wheels": {"ts": {"available": True}}},
+               "findings": [], "golden_eval": {"true_positives": 0}}
+        with open(out, "w") as f:
+            _json.dump(res, f)
+        judged = [{"file": "g.ts", "line": i, "line_end": i + 2,
+                   "enrichment": enr,
+                   "is_real": on_is_real if arm == "on" else 0.9}
+                  for i in range(8)]
+        with open(env["JEV_REVIEW_METRICS"], "a") as f:
+            f.write(_json.dumps({"label": label, "judged": judged}) + "\n")
+        return types.SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(ab.subprocess, "run", fake_run)
+    golden = tmp_path / "g.tsv"
+    golden.write_text("g.ts\t1\tdesc\n")
+    return str(golden)
+
+
+def test_main_wires_labels_so_the_softening_kill_can_fire(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.5)
+    rc = ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
+                  "--expect", "ts-ast", "--golden", golden, "--repeats", "2",
+                  "--outdir", str(tmp_path / "o")])
+    out = _json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["n_paired_units"] == 8 and out["verdict"] == "KILL"
+    assert out["mean_is_real_delta"] == pytest.approx(-0.4)
+
+
+def test_main_aborts_when_a_golden_file_never_enriched(
+        monkeypatch, tmp_path, capsys):
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9)
+
+    real_run = ab.subprocess.run
+
+    def broken_unit_stamp(cmd, **kw):
+        r = real_run(cmd, **kw)
+        # corrupt the on-arm ledger record: file unenriched, run still ts-ast
+        if "--no-enrichment" not in cmd:
+            p = kw["env"]["JEV_REVIEW_METRICS"]
+            lines = open(p).read().splitlines()
+            import json as _json
+            rec = _json.loads(lines[-1])
+            rec["judged"][0]["enrichment"] = "none"
+            lines[-1] = _json.dumps(rec)
+            open(p, "w").write("\n".join(lines) + "\n")
+        return r
+
+    monkeypatch.setattr(ab.subprocess, "run", broken_unit_stamp)
+    rc = ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
+                  "--expect", "ts-ast", "--golden", golden, "--repeats", "1",
+                  "--outdir", str(tmp_path / "o")])
+    assert rc == 2
+    assert "parse error" in capsys.readouterr().err
+
+
+def test_main_refuses_a_run_with_neither_golden_nor_clean(tmp_path):
+    with pytest.raises(SystemExit):
+        ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
+                 "--expect", "ts-ast", "--outdir", str(tmp_path / "o")])
 
 
 # ---------- census ----------
