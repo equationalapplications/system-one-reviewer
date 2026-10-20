@@ -2,7 +2,7 @@
 
 ## Read INTENT.md first
 
-`docs/founding/INTENT.md` is this repo's charter. **Every spec must align with
+`INTENT.md` (repo root) is this repo's charter. **Every spec must align with
 it**: the INTENT file wins on *intent* (what SOR is for, what it must never
 try to cover), specs win on *detail*. If a spec's goal contradicts an INTENT
 rule, the spec is wrong until the INTENT is amended through PR review — do not
