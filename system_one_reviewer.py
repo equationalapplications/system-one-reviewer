@@ -1387,6 +1387,24 @@ def ts_units(path, before_text, after_text, entries,
     return subs
 
 
+def site_units(path, before_text, after_text, entries, change_type="code-change",
+               parent_cluster=None):
+    """E2: decision-site cutting for TS/JS/Python code-change clusters.
+
+    Sites: object-literal property assignments, call-argument expressions,
+    conditional expressions, sibling-constant declarations.
+    Leaf-most, non-overlapping selection per spec E2.
+
+    Returns site sub-clusters with cut="sites", or None if sites cannot be
+    extracted (parse error, no sites, non-Python). Spec requires tree-sitter
+    for TS/JS; AST walk for Python. Placeholder v0.9 returns None (falls back
+    to line-window). Full site cutting deferred to measurement phase.
+    """
+    # E2 placeholder: Language-specific site detectors required.
+    # Structure in place; implementation deferred to v0.10 per budget.
+    return None
+
+
 def line_window_subclusters(path, entries, change_type="code-change",
                             parent_cluster=None,
                             window_lines=FALLBACK_WINDOW_LINES):
@@ -2683,6 +2701,40 @@ def judge_pr_level(findings, ask, size_skipped_code=None):
                 "error": f"pr-level model call failed ({prov_name}): {exc!r}"[:300]}
 
 
+# E5: wheels packaging availability check (per-cutter self-check per M2/m4).
+_WHEELS_VERSIONS = {}  # Cached per-cutter versions
+
+
+def check_cutter_availability(lang):
+    """E5: check if tree_sitter wheels for `lang` are available in this
+    interpreter. Returns (available: bool, version: str|None).
+
+    Lazy import seam: if tree_sitter is unavailable, returns (False, None).
+    Raises no exception; fails closed (absent wheels → window fallback).
+    """
+    if lang not in ("ts", "js", "python"):
+        return False, None
+    if lang in _WHEELS_VERSIONS:
+        return _WHEELS_VERSIONS[lang]
+
+    try:
+        if lang == "python":
+            import ast
+            # Python stdlib; always available
+            _WHEELS_VERSIONS[lang] = (True, "stdlib")
+            return True, "stdlib"
+        else:  # ts, js
+            import tree_sitter
+            import tree_sitter_javascript  # noqa: F401
+            # Record pinned version (spec E5: exact pinned versions)
+            version = getattr(tree_sitter, '__version__', 'unknown')
+            _WHEELS_VERSIONS[lang] = (True, version)
+            return True, version
+    except (ImportError, AttributeError):
+        _WHEELS_VERSIONS[lang] = (False, None)
+        return False, None
+
+
 # E1 wire_format enum (honest stamp to distinguish cutting paths per run).
 # Precedence (highest to lowest): sites > ts-units > ast-units > line-window > hunk
 # Represents which cutter paths were actually used in a run. Mixed runs carry
@@ -2983,6 +3035,10 @@ def main():
                          "(measurement arm; states stay v03b-shaped)")
     args = ap.parse_args()
 
+    # E5: check cutter availability early (per-cutter self-check per spec)
+    for lang in ("python", "ts", "js"):
+        check_cutter_availability(lang)
+
     provider, model = provider_from(args.provider, args.model)
     if provider == "laya":
         laya_ask_or_die(model=model)  # fail fast on a missing local stack
@@ -3182,6 +3238,8 @@ def main():
             "record_version": PACKAGING_VERSION,
             "packaging_version": PACKAGING_VERSION,  # E1: distinct source contract
             "wire_format": stamp_wire_format(kept),  # E1: cutting path tracking
+            "wheels": {lang: {"available": avail, "version": ver}
+                       for lang, (avail, ver) in _WHEELS_VERSIONS.items()},  # E5
             # r10-m2/r9-M1: the POST-judge formula — never bare len(kept),
             # or a runtime-split run logs n_analyzed short by added_units
             # and sweep :98 rejects a legal run. added_units=0 in Task 4
@@ -3257,6 +3315,8 @@ def main():
              "record_version": PACKAGING_VERSION,
              "packaging_version": PACKAGING_VERSION,
              "status": status,  # v0.9: honest-status signal (cond 10)
+             "wheels": {lang: {"available": avail, "version": ver}
+                        for lang, (avail, ver) in _WHEELS_VERSIONS.items()},  # E5
              "tool_version": __version__,
              "provider": provider, "model": model,
              "fixture": args.fixture,
