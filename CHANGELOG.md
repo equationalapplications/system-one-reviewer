@@ -1,3 +1,9 @@
+## [0.10.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.9.0...v0.10.0) (2026-10-20)
+
+### Features
+
+* tree-sitter ast_context enrichment for TS/JS, with census and A/B smoke tests ([#22](https://github.com/equationalapplications/system-one-reviewer/issues/22)) ([f3012de](https://github.com/equationalapplications/system-one-reviewer/commit/f3012debfeca264a14d82da84cb1e152b020e0e8))
+
 ## [0.9.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.8.0...v0.9.0) (2026-10-20)
 
 ### Features
