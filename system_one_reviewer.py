@@ -861,6 +861,7 @@ ENRICHMENT_MAX_SYMBOLS = 40        # file top-level symbol table cap
 ENRICHMENT_MAX_CONTEXT_LINES = 20  # enclosing-symbol context-window cap
 ENRICHMENT_MAX_TABLE_CHARS = 2000  # TS symbol table cap: sum of name + signature
 ENRICHMENT_MAX_LINE_CHARS = 160    # TS per-line cap (table signatures, window lines)
+ENRICHMENT_MAX_CHAIN_CHARS = 200   # TS cap on each symbol name and on `enclosing`
 
 
 def _source_lines(src):
@@ -1090,36 +1091,56 @@ def _ts_symbol_label(node):
 
 
 def _ts_symbol_spans(root):
-    """[(start_line, end_line, chain)] for every named symbol node in the
-    tree (1-based lines, chain outermost first). Iterative, so deep trees
-    cannot hit the recursion limit."""
+    """[(start_line, end_line, parent, name, depth)] for every named symbol
+    node in the tree (1-based lines; `parent` indexes the nearest named
+    ancestor in this same list, -1 at the top; `depth` counts the chain).
+    Compact records, not chains: a deeply nested file would otherwise
+    copy an O(depth) chain per node. Iterative, so deep trees cannot hit
+    the recursion limit."""
     out: list = []
-    stack: list = [(root, [], "")]
+    stack: list = [(root, -1, "")]
     while stack:
-        node, chain, parent_type = stack.pop()
+        node, parent, parent_type = stack.pop()
         name = _ts_symbol_label(node)
         if name is None and parent_type == "export_statement" \
                 and node.type in ("function_expression", "class"):
             name = "<default>"  # `export default function () {}`
-        here = chain + [name] if name else chain
+        here = parent
         if name:
+            depth = out[parent][4] + 1 if parent >= 0 else 1
             out.append((node.start_point[0] + 1, node.end_point[0] + 1,
-                        here))
+                        parent, _ts_cut(name, ENRICHMENT_MAX_CHAIN_CHARS),
+                        depth))
+            here = len(out) - 1
         for child in reversed(node.children):
             stack.append((child, here, node.type))
     return out
 
 
+def _ts_cut(text, limit):
+    """`text` cut to `limit` chars, ending in an ellipsis when cut."""
+    return text if len(text) <= limit else text[:limit - 1] + "\u2026"
+
+
 def _ts_enclosing_span(spans, lineno):
     """(start, end, chain) of the innermost symbol containing `lineno`
-    (narrowest span; ties go to the deeper node), or None."""
+    (narrowest span; ties go to the deeper node), or None. The dotted chain
+    (outermost first) is built only for the selected span."""
     best = None
-    for st, en, chain in spans:
+    for idx, (st, en, _parent, _name, depth) in enumerate(spans):
         if st <= lineno <= en:
-            key = (en - st, -st, -len(chain))
+            key = (en - st, -st, -depth)
             if best is None or key < best[0]:
-                best = (key, st, en, chain)
-    return None if best is None else best[1:]
+                best = (key, st, en, idx)
+    if best is None:
+        return None
+    chain: list = []
+    idx = best[3]
+    while idx >= 0:
+        chain.append(spans[idx][3])
+        idx = spans[idx][2]
+    chain.reverse()
+    return best[1], best[2], chain
 
 
 def _ts_ast_context(src, ext, lineno, loader=None):
@@ -1141,7 +1162,8 @@ def _ts_ast_context(src, ext, lineno, loader=None):
         window = [_ts_clip(src_lines[i - 1])
                   for i in range(lo, hi + 1)][:ENRICHMENT_MAX_CONTEXT_LINES]
     return {"symbols": dict(table),
-            "enclosing": ".".join(best[2]) if best else None,
+            "enclosing": _ts_cut(".".join(best[2]), ENRICHMENT_MAX_CHAIN_CHARS)
+            if best else None,
             "context": window}
 
 
@@ -2058,8 +2080,9 @@ def run_site_census(diff_text, images, provider="jev"):
     would silently undo the anchor fix). Returns a report dict with one
     entry per attempted floor plus the terminal outcome — "pass" or
     "fail" (Opus r3 R3's terminal-outcome contract: if it still fails
-    after both tightenings, E2 does not ship and the numbers go back to
-    Kurt).
+    after both tightenings, the numbers go back to Kurt). E2 itself ships
+    regardless (INTENT rule 2: metrics refine, they do not gate shipping);
+    the V7 envelope gap is a measured, open decision, not a blocker.
     """
     hunks = package_hunks(diff_text)
     kept, _skipped = triage(hunks, provider=provider)
@@ -4251,7 +4274,9 @@ def main():
              "provider": provider, "model": model,
              "fixture": args.fixture,
              "fixture_head": head,
-             "findings": result["findings"], "jitter": jitter,
+             # `lines` is source text: --out / --json only, never the ledger
+             "findings": [{k: v for k, v in f.items() if k != "lines"}
+                          for f in result["findings"]], "jitter": jitter,
              "pr_level": result["pr_level"], "golden_eval": golden_eval})
 
     if args.json:

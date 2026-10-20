@@ -198,6 +198,11 @@ def check_single_provider_group(recs):
         detail = ", ".join(sorted(f"provider={p!r} model={m!r}" for p, m in groups))
         die(f"mixed providers among selected runs — sweep groups by "
             f"(provider, model): {detail}")
+    enrichments = {r.get("enrichment", "none") for r in recs}
+    if len(enrichments) != 1:
+        die("mixed enrichment among selected runs — a threshold sweep must "
+            "replay payloads built the same way: "
+            + ", ".join(f"enrichment={e!r}" for e in sorted(enrichments, key=str)))
     return groups.pop()
 
 

@@ -2,7 +2,8 @@
 """On/off A/B for ast_context enrichment, with a vacuity guard.
 
     enrichment_ab.py --repo DIR --range A..B --sample NAME --expect ts-ast
-        [--golden G.tsv | --negative-golden N.tsv] [--repeats 3] [--outdir D]
+        [--golden G.tsv | --negative-golden N.tsv] [--must-enrich FILE ...]
+        [--repeats 3] [--outdir D]
 
 Runs the reviewer on the same range with enrichment on and with
 --no-enrichment, K repeats each, labels `exp:enrich:{on,off}:<sample>:r<k>`,
@@ -10,16 +11,21 @@ always with --out, ledger isolated under --outdir. (Real model calls and
 real cost: run it deliberately, a handful of ranges at a time.)
 
     enrichment_ab.py --combine SAMPLE1.json [SAMPLE2.json ...]
+        [--expect-samples NAME ...]
 
 VACUITY GUARD. The 2026-10-02 enrichment A/B compared two unenriched arms.
 After every on-arm run this aborts (exit 2) unless the run-level
 `enrichment` stamp contains --expect, the wheels needed for it are
 available, the run status is ok (no fail-open, no incomplete review: partial
-coverage would confound enrichment), and every file listed in --golden or
---negative-golden has at least one unit stamped with --expect (a file with
-none never engaged, e.g. a parse failure). Partial enrichment is NOT an abort: the over-cap context
-drop legitimately turns some units to "none", so the per-file enriched
-share is reported as `golden_file_enriched_share` (mean over repeats).
+coverage would confound enrichment), and every file listed in --golden, every
+enrichable code file of --negative-golden (GONE rows and extensions the
+--expect value does not cover are ignored) and every --must-enrich file has
+at least one unit stamped with --expect (a file with none never engaged,
+e.g. a parse failure). Partial enrichment is NOT an abort: the over-cap
+context drop legitimately turns some units to "none", so the per-file
+enriched share is reported as `golden_file_enriched_share` (mean over
+repeats). Every golden row must also be reachable by a unit anchor (the
++-1 line match eval_against_golden uses), in both arms.
 
 COUNTS. The tool caps `--out` `findings` and `golden_eval` at the top 5,
 which saturates on large goldens. So the surfaced list is rebuilt, uncapped,
@@ -28,17 +34,22 @@ from the ledger `judged` entries by the tool's own compose() at REFLEX_GATE
 eval_against_golden. False positives are surfaced - true positives; on a
 clean sample (no golden) every surfaced finding is one.
 
-`decide` encodes the pre-registered rules: precision first (the on-arm may
-not surface more findings than the off-arm on a clean sample in any
-repeat), recall only counts as signal if on beats off by >= 2 true
-positives in every repeat, and a systematic is_real drop on identical
-units (paired by file:line:line_end) is a kill even if both pass.
+`decide` encodes the pre-registered rules: precision first (false
+positives POOLED over the repeats may exceed the off-arm's by at most
+MARGIN; a per-repeat comparison killed identical arms about half the time
+on Poisson noise), recall only counts as signal if on beats off by >= 2
+true positives in every repeat, and a systematic is_real drop on identical
+units (paired by file:line:line_end; per-unit mean over repeats, more
+units worse than better, sign test p < 0.05) is a kill even if both pass.
 
 `combine_verdicts` merges the per-sample results (the JSON this prints,
 which carries `golden`): any KILL kills; SIGNAL only if every golden
 sample is SIGNAL and none KILL; otherwise NO-DETECTABLE-EFFECT. Clean
 samples can only veto (KILL), never be required to signal. `--combine
-FILE...` reads those JSON outputs and prints the combined verdict.
+FILE...` reads those JSON outputs and prints the combined verdict;
+`--expect-samples NAME...` downgrades SIGNAL to NO-DETECTABLE-EFFECT when a
+named sample (e.g. one that aborted) has no result, and lists it as
+`missing`.
 """
 
 import argparse
@@ -53,6 +64,10 @@ from typing import Any
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = [sys.executable, os.path.join(REPO_ROOT, "system_one_reviewer.py")]
+# pooled false positives (on - off) tolerated before the precision rule kills
+MARGIN = 1
+ENRICHABLE_EXTS = {"ts-ast": ("ts", "tsx", "js", "jsx", "mjs", "cjs"),
+                   "ast": ("py",)}
 
 
 _TOOL_MOD: Any = None
@@ -164,30 +179,63 @@ def paired_is_real_deltas(on: list[dict], off: list[dict]) -> dict[str, float]:
             and off_by.get(unit_key(j)) is not None}
 
 
-def golden_rows(path: str) -> list[tuple[str, int]]:
-    rows: list[tuple[str, int]] = []
+def _data_lines(path: str) -> list[tuple[int, list[str]]]:
+    """(line number, tab-split columns) of every non-blank, non-comment line,
+    stripped first like the tool's own golden readers."""
+    out = []
     with open(path) as f:
-        for ln in f:
-            if ln.strip() and not ln.startswith("#"):
-                parts = ln.split("\t")
-                rows.append((parts[0], int(parts[1])))
+        for n, ln in enumerate(f, 1):
+            ln = ln.strip()
+            if ln and not ln.startswith("#"):
+                out.append((n, ln.split("\t")))
+    return out
+
+
+def golden_rows(path: str) -> list[tuple[str, int]]:
+    """Positive golden rows (file<TAB>line<TAB>description)."""
+    rows: list[tuple[str, int]] = []
+    for n, parts in _data_lines(path):
+        try:
+            rows.append((parts[0], int(parts[1])))
+        except (IndexError, ValueError):
+            sys.exit(f"enrichment_ab: {path}:{n}: expected file<TAB>line, "
+                     f"got {parts!r}")
     return rows
 
 
-def golden_files(path: str) -> set[str]:
-    return {fpath for fpath, _ in golden_rows(path)}
+def negative_golden_files(path: str, expect: str) -> set[str]:
+    """Files of a negative golden (file<TAB>verify-substring, `GONE` for a
+    file that must not exist) that enrichment should engage: not GONE and an
+    extension the `expect` cutter covers."""
+    exts = ENRICHABLE_EXTS[expect]
+    files = set()
+    for _n, parts in _data_lines(path):
+        ext = os.path.splitext(parts[0])[1].lower().lstrip(".")
+        if (len(parts) < 2 or parts[1] != "GONE") and ext in exts:
+            files.add(parts[0])
+    return files
+
+
+def guard_file_set(args: argparse.Namespace) -> set[str]:
+    files = set(args.must_enrich or [])
+    if args.golden:
+        files |= {fpath for fpath, _ in golden_rows(args.golden)}
+    if args.negative_golden:
+        files |= negative_golden_files(args.negative_golden, args.expect)
+    return files
 
 
 def guard_rows(judged: list[dict], rows: list[tuple[str, int]]) -> str | None:
-    """Every golden row must fall inside a judged unit (the +-1 line slack
-    eval_against_golden uses). A row no unit covers would otherwise be scored
-    as a missed defect when it was simply never shown to the model, in either
-    arm."""
+    """Every golden row must be reachable by a judged unit's ANCHOR line
+    (`line` +-1, the match eval_against_golden uses). A row inside a unit's
+    span but away from its anchor can never score a hit, so the reported
+    unit would count as a false positive in both arms."""
     for fpath, line in rows:
-        if not any(j.get("file") == fpath
-                   and j.get("line_start", j["line"]) - 1 <= line
-                   <= j.get("line_end", j["line"]) + 1 for j in judged):
-            return f"golden row {fpath}:{line} was not covered by any judged unit"
+        if not any(j.get("file") == fpath and abs(j["line"] - line) <= 1
+                   for j in judged):
+            return (f"golden row {fpath}:{line} is not reachable by any "
+                    f"judged unit anchor (line +-1): fix the golden or the "
+                    f"cutting")
     return None
 
 
@@ -231,15 +279,19 @@ def sign_test_p(deltas: list[float]) -> float:
 
 def decide(rows: list[dict], clean: bool = False) -> dict:
     """rows: one dict per repeat with on/off reported counts and true
-    positives plus the paired is_real deltas ({unit: delta}). `clean` marks a sample with
-    no known defects, where ANY surfaced finding is a false positive; on a
-    golden sample the on-arm may surface more findings (true positives) and
-    only its false positives (reported - tp) are compared. "Any NEW false
-    positive class is a kill" is a judgment on the adjudicated findings and
-    is checked by hand, not here."""
+    positives plus the paired is_real deltas ({unit: delta}). `clean` marks a
+    sample with no known defects, where ANY surfaced finding is a false
+    positive; on a golden sample the on-arm may surface more findings (true
+    positives) and only its false positives (reported - tp) are compared.
+    Precision is POOLED: total on-arm FPs may exceed total off-arm FPs by at
+    most MARGIN. Softening needs a negative mean per-unit delta, strictly
+    more worsened than improved units, and a sign test p < 0.05. "Any NEW
+    false positive class is a kill" is a judgment on the adjudicated
+    findings and is checked by hand, not here."""
     def fps(r: dict, arm: str) -> int:
         return r[f"{arm}_reported"] - (0 if clean else r[f"{arm}_tp"])
-    precision_ok = all(fps(r, "on") <= fps(r, "off") for r in rows)
+    precision_ok = (sum(fps(r, "on") for r in rows)
+                    <= sum(fps(r, "off") for r in rows) + MARGIN)
     recall_signal = bool(rows) and all(
         r["on_tp"] >= r["off_tp"] + 2 for r in rows)
     # repeats of one unit are not independent: average each unit's delta
@@ -248,13 +300,15 @@ def decide(rows: list[dict], clean: bool = False) -> dict:
     for r in rows:
         for key, d in r["deltas"].items():
             per_unit.setdefault(key, []).append(d)
-    deltas = [sum(v) / len(v) for v in per_unit.values()]
+    deltas = [round(sum(v) / len(v), 9) for v in per_unit.values()]
     mean_delta = sum(deltas) / len(deltas) if deltas else 0.0
     nonzero = sum(1 for d in deltas if d != 0)
+    worse = sum(d < 0 for d in deltas)
+    better = sum(d > 0 for d in deltas)
     # n < 6 non-zero pairs can never reach p < 0.05, so the softening kill
     # is untestable on a sample that small; say so instead of implying it
     underpowered = nonzero < 6
-    softened = mean_delta < 0 and sign_test_p(deltas) < 0.05
+    softened = mean_delta < 0 and worse > better and sign_test_p(deltas) < 0.05
     if not precision_ok or softened:
         verdict = "KILL"
     elif recall_signal:
@@ -267,11 +321,21 @@ def decide(rows: list[dict], clean: bool = False) -> dict:
             "softening_test_underpowered": underpowered}
 
 
-def combine_verdicts(results: list[dict]) -> str:
-    """Spec rule over per-sample outputs (each has `verdict` and `golden`)."""
+def missing_samples(results: list[dict], expect: list[str]) -> list[str]:
+    have = {r.get("sample") for r in results}
+    return [name for name in expect if name not in have]
+
+
+def combine_verdicts(results: list[dict],
+                     expect_samples: list[str] | None = None) -> str:
+    """Spec rule over per-sample outputs (each has `verdict` and `golden`).
+    A named sample with no result (an aborted run) can veto but never let
+    the combination signal."""
     verdicts = [r["verdict"] for r in results]
     if "KILL" in verdicts:
         return "KILL"
+    if missing_samples(results, expect_samples or []):
+        return "NO-DETECTABLE-EFFECT"
     golden = [r["verdict"] for r in results if r["golden"]]
     if golden and all(v == "SIGNAL" for v in golden):
         return "SIGNAL"
@@ -282,12 +346,18 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if argv and argv[0] == "--combine":
+        rest = argv[1:]
+        expect: list[str] = []
+        if "--expect-samples" in rest:
+            at = rest.index("--expect-samples")
+            rest, expect = rest[:at], rest[at + 1:]
         results = []
-        for path in argv[1:]:
+        for path in rest:
             with open(path) as f:
                 results.append(json.load(f))
-        print(json.dumps({"combined_verdict": combine_verdicts(results),
-                          "samples": [r.get("sample") for r in results]},
+        print(json.dumps({"combined_verdict": combine_verdicts(results, expect),
+                          "samples": [r.get("sample") for r in results],
+                          "missing": missing_samples(results, expect)},
                          indent=2))
         return 0
     ap = argparse.ArgumentParser(description=__doc__,
@@ -299,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="stamp the on-arm must carry")
     ap.add_argument("--golden")
     ap.add_argument("--negative-golden", dest="negative_golden")
+    ap.add_argument("--must-enrich", dest="must_enrich", nargs="+", metavar="FILE",
+                    help="files that must have an enriched unit, in any mode")
     ap.add_argument("--clean", action="store_true",
                     help="sample has no known defects (negative head/fixture)")
     ap.add_argument("--repeats", type=int, default=3)
@@ -316,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
                  "defects, so its true positives would be scored as false "
                  "positives")
     clean = args.clean or bool(args.negative_golden and not args.golden)
+    gfiles = guard_file_set(args)
     if not (clean or args.golden):
         ap.error("give --golden (a sample with known defects) or --clean / "
                  "--negative-golden (a clean sample); otherwise every "
@@ -329,15 +402,13 @@ def main(argv: list[str] | None = None) -> int:
             bad = guard(res, arm, args.expect)
             if not bad and not clean and res.get("golden_eval") is None:
                 bad = "no golden_eval in the result"
-            gpath = args.golden or args.negative_golden
-            if not bad and gpath:
+            if not bad and (gfiles or args.golden):
                 judged = read_ledger(os.path.join(
                     args.outdir, "metrics.jsonl")).get(
                         label_for(arm, args.sample, k), [])
                 if args.golden:
                     bad = guard_rows(judged, golden_rows(args.golden))
                 if not bad and arm == "on":
-                    gfiles = golden_files(gpath)
                     bad = guard_files(judged, gfiles, args.expect)
                     if not bad:
                         shares.append(

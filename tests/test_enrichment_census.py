@@ -72,3 +72,35 @@ def test_main_exits_3_when_a_wheel_import_raises(tmp_path, monkeypatch, capsys):
     assert rc == 3
     err = capsys.readouterr().err
     assert "tree_sitter" in err and "ImportError" in err
+
+
+def _commit_file(tmp_path, name, data):
+    repo = tmp_path / "r2"
+    repo.mkdir()
+    (repo / name).write_bytes(data)
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    for cmd in (["init", "-q"], ["add", "."], ["commit", "-qm", "x"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True, env=env)
+    return repo
+
+
+def test_git_show_decodes_a_non_utf8_blob_with_replacement(tmp_path):
+    repo = _commit_file(tmp_path, "b.py", b"# caf\xe9\ndef f():\n    return 1\n")
+    src = census.git_show(str(repo), "HEAD", "b.py")
+    assert src is not None and "caf\ufffd" in src
+    recs = census.census(census.load_tool(), str(repo), "HEAD", [("b.py", 3)])
+    assert recs[0]["enriched"] and not recs[0]["missing"]
+
+
+def test_main_exit_code_is_1_only_when_every_row_is_missing(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    golden = tmp_path / "g.tsv"
+    base = ["--repo", str(repo), "--head", "HEAD", "--golden", str(golden)]
+    golden.write_text("gone1.py\t1\ngone2.py\t1\n")
+    assert census.main(base) == 1
+    golden.write_text("gone1.py\t1\nb.py\t2\n")
+    assert census.main(base) == 0
+    golden.write_text("b.py\t2\n")
+    assert census.main(base) == 0
+    capsys.readouterr()

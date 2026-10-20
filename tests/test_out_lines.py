@@ -11,8 +11,9 @@ import json
 from test_enrichment import _add_file_diff
 
 
-def _run_out(jr, monkeypatch, tmp_path, capsys, is_real):
-    """Drive main() with --out; returns (out_json, judged_units)."""
+def _run_out(jr, monkeypatch, tmp_path, capsys, is_real, records=None):
+    """Drive main() with --out; returns (out_json, judged_units). `records`
+    collects what main() hands to log_run."""
     diff = _add_file_diff("m.py", ["def f():", "    return 1"])
     judged_units: list = []
     out_path = tmp_path / "out.json"
@@ -36,7 +37,8 @@ def _run_out(jr, monkeypatch, tmp_path, capsys, is_real):
     monkeypatch.setattr(jr, "mode_file_images",
                         lambda repo_, mode_, head_, path_, old_file=None:
                         (None, "def f():\n    return 1\n"))
-    monkeypatch.setattr(jr, "log_run", lambda rec: None)
+    monkeypatch.setattr(jr, "log_run",
+                        lambda rec: records.append(rec) if records is not None else None)
     monkeypatch.setattr(jr, "make_provider",
                         lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
     monkeypatch.setattr(jr, "load_api_key", lambda: "k")
@@ -45,9 +47,12 @@ def _run_out(jr, monkeypatch, tmp_path, capsys, is_real):
         ["system-one-reviewer", "--repo", str(tmp_path), "--staged",
          "--provider", "jev", "--json", "--out", str(out_path)])
     jr.main()
-    capsys.readouterr()
+    stdout = capsys.readouterr().out
     with open(out_path) as f:
-        return json.load(f), judged_units
+        out = json.load(f)
+    if records is not None:
+        records.append({"stdout": json.loads(stdout)})
+    return out, judged_units
 
 
 def test_out_findings_carry_judged_unit_lines(jr, monkeypatch, tmp_path,
@@ -73,3 +78,21 @@ def test_out_findings_empty_below_gate(jr, monkeypatch, tmp_path, capsys):
                                  is_real=0.10)
     assert len(judged_units) == 1
     assert out["findings"] == []
+
+
+def test_ledger_record_carries_no_finding_lines(jr, monkeypatch, tmp_path,
+                                                capsys):
+    """`lines` is source text: --out and the --json stdout keep it, the
+    append-only ledger never gets it (AGENTS.md: finding TEXT is not
+    persisted unless --out)."""
+    records: list = []
+    out, _ = _run_out(jr, monkeypatch, tmp_path, capsys, is_real=0.95,
+                      records=records)
+    stdout = records.pop()["stdout"]
+    assert len(records) == 1
+    assert records[0]["findings"]
+    assert all("lines" not in f for f in records[0]["findings"])
+    # the other finding fields still reach the ledger
+    assert records[0]["findings"][0]["file"] == out["findings"][0]["file"]
+    assert out["findings"][0]["lines"]
+    assert stdout["findings"][0]["lines"] == out["findings"][0]["lines"]

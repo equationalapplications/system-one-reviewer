@@ -26,7 +26,7 @@ without; the no-wheels run must skip, not fail). Commit only when told.
       spec-plan-implement, README, stale notes on the two Oct 2 eval docs.
 - [x] T8 Spec reviewed by Fable and revised (this plan follows the revision).
 
-## Remaining
+## Remaining (as first written; T9 to T11 and the follow-ups in T14/T15 are now done)
 
 Each task touches distinct files so they can run in parallel.
 
@@ -54,7 +54,9 @@ new `docs/benchmarks/2026-10-20-ts-enrichment-envelope.json`, new
 Files: `scripts/enrichment_ab.py`, `tests/test_enrichment_scripts.py` (A/B
 tests only; do not touch the census test).
 1. Count reported findings and false positives from the ledger `judged`
-   entries with `is_real >= REFLEX_GATE` (0.80; read the constant from the
+   entries (first written as `is_real >= REFLEX_GATE` (0.80); superseded in
+   T14: the tool's own `compose()` and `eval_against_golden()` on the uncapped
+   list, rubric threshold and severity >= 1 included; read the constant from the
    tool module), not from `--out` `findings` (capped at 5). True positives
    were first read from `golden_eval`, which the second review showed is
    capped at 5; see T14.
@@ -87,6 +89,18 @@ Findings from the second independent review, applied after T9 to T11:
   `splitlines()` line drift fixed with a form-feed test; tie-break test.
 - Docs: INTENT rule 8 sentence aligned with item 4, "small fixtures"
   wording, unsupported claim removed, spec rules updated.
+
+### T15 Third-review fixes (Sonnet, high depth)
+- Tool: `lines` kept out of the metrics ledger (only the `--out`/stdout copy
+  carries it); symbol spans stored as compact records with the chain built
+  only for the selected span, and the chain and names clipped; surviving
+  mutations killed; stale E2 comment corrected.
+- Harness: real negative-golden format; pooled precision rule with margin 1;
+  softening direction and float-noise rounding; golden rows checked against
+  the unit anchor like the scorer; `--must-enrich`; `--expect-samples`;
+  census decodes with `errors="replace"`; sweep gates on the run-level
+  `enrichment` stamp.
+- Docs: E2 wording in INTENT, worst-case cost, known limits in the spec.
 
 ### T12 Gates (controller)
 `ruff check .`, `mypy`, pytest with and without wheels; re-run the vacuity

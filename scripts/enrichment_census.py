@@ -49,8 +49,10 @@ def read_golden(path: str) -> list[tuple[str, int]]:
 
 def git_show(repo: str, rev: str, path: str) -> str | None:
     p = subprocess.run(["git", "-C", repo, "show", f"{rev}:{path}"],
-                       capture_output=True, text=True)
-    return p.stdout if p.returncode == 0 else None
+                       capture_output=True)
+    # the tool decodes file bytes with errors="replace"; strict decoding here
+    # would crash on a non-UTF-8 blob the reviewer handles
+    return p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else None
 
 
 def window_start(tool: Any, path: str, src: str, line: int) -> int | None:

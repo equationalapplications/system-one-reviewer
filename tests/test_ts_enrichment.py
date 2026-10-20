@@ -300,15 +300,30 @@ def test_short_lines_are_not_clipped(jr):
 
 # ---------- enclosing-span tie-break ----------
 
+def _records(*chains_spans):
+    """Compact span records (start, end, parent, name, depth) from
+    (start, end, chain) triples; a chain extends the previous record whose
+    chain is its prefix, as _ts_symbol_spans builds them."""
+    out: list = []
+    seen: dict = {}
+    for st, en, chain in chains_spans:
+        parent = seen.get(tuple(chain[:-1]), -1)
+        out.append((st, en, parent, chain[-1], len(chain)))
+        seen[tuple(chain)] = len(out) - 1
+    return out
+
+
 def test_enclosing_span_tie_goes_to_deeper_chain(jr):
     """Identical start and end: the longer chain wins (it encloses less)."""
-    spans = [(3, 5, ["A"]), (3, 5, ["A", "m"]), (3, 5, ["B"])]
+    spans = _records((3, 5, ["A"]), (3, 5, ["A", "m"]), (3, 5, ["B"]))
     assert jr._ts_enclosing_span(spans, 4)[2] == ["A", "m"]
-    assert jr._ts_enclosing_span(list(reversed(spans)), 4)[2] == ["A", "m"]
     # narrower span still beats a deeper chain; later start breaks ties first
-    assert jr._ts_enclosing_span([(1, 9, ["X", "y", "z"]), (2, 8, ["Q"])],
-                                 4)[2] == ["Q"]
-    assert jr._ts_enclosing_span([(1, 5, ["P"]), (2, 6, ["Q"])], 3)[2] == ["Q"]
+    assert jr._ts_enclosing_span(
+        _records((1, 9, ["X"]), (1, 9, ["X", "y"]), (1, 9, ["X", "y", "z"]),
+                 (2, 8, ["Q"])), 4)[2] == ["Q"]
+    assert jr._ts_enclosing_span(
+        _records((1, 5, ["P"]), (2, 6, ["Q"])), 3)[2] == ["Q"]
+    assert jr._ts_enclosing_span(_records((1, 5, ["P"])), 9) is None
 
 
 def test_real_parse_same_span_symbols_resolve_to_deeper(jr):
@@ -319,3 +334,113 @@ def test_real_parse_same_span_symbols_resolve_to_deeper(jr):
     assert jr._ts_ast_context(cls, "ts", 1)["enclosing"] == "C.m"
     ns = "namespace A { namespace B { const x = 1; } }\n"
     assert jr._ts_ast_context(ns, "ts", 1)["enclosing"] == "A.B"
+
+
+# ---------- bounded enclosing chain ----------
+
+def test_deeply_nested_symbols_stay_bounded(jr):
+    """'{m(){' repeated made every named node copy its whole chain (GBs and
+    seconds under the size cap); compact records keep it linear."""
+    import time
+    import tracemalloc
+    _ts()
+    src = "{m(){" * 12000
+    assert 60000 <= len(src) <= jr.TS_ENRICHMENT_MAX_CHARS
+    jr.clear_runtime_caches()
+    tracemalloc.start()
+    t0 = time.monotonic()
+    try:
+        ctx = jr._ts_ast_context(src + "}}" * 12000, "ts", 1)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert time.monotonic() - t0 < 10
+    assert peak < 200 * 1024 * 1024
+    assert ctx is not None and ctx["enclosing"].startswith("m.m.m")
+    assert len(ctx["enclosing"]) <= jr.ENRICHMENT_MAX_CHAIN_CHARS
+
+
+def test_long_symbol_name_is_clipped_in_enclosing(jr):
+    _ts()
+    lim = jr.ENRICHMENT_MAX_CHAIN_CHARS
+    src = "function " + "a" * 50000 + "() {\n  return 1;\n}\n"
+    ctx = jr._ts_ast_context(src, "ts", 2)
+    assert len(ctx["enclosing"]) == lim and ctx["enclosing"].endswith("\u2026")
+    assert ctx["enclosing"].startswith("aaaa")
+    # the stored span records are bounded too, not just the final string
+    assert all(len(rec[3]) <= lim for rec in jr._ts_parse(src, "ts")[1])
+    # a long dotted chain is clipped as a whole too
+    names = [f"n{i}" for i in range(200)]
+    nested = "".join(f"function {n}() {{\n" for n in names) + "}\n" * 200
+    deep = jr._ts_ast_context(nested, "ts", 200)
+    assert len(deep["enclosing"]) <= lim
+    short = jr._ts_ast_context("function f() {\n  function g() {}\n}\n", "ts", 2)
+    assert short["enclosing"] == "f.g"
+
+
+# ---------- cache and symbol-shape gaps ----------
+
+def test_cache_key_includes_the_source_text(jr):
+    """Two sources of the same language and length must not share an entry."""
+    _ts()
+    a = "function aaa() {\n  return 1;\n}\n"
+    b = "function bbb() {\n  return 1;\n}\n"
+    assert len(a) == len(b)
+    jr.clear_runtime_caches()
+    assert jr._ts_ast_context(a, "ts", 2)["enclosing"] == "aaa"
+    assert jr._ts_ast_context(b, "ts", 2)["enclosing"] == "bbb"
+
+
+def test_injected_loader_does_not_read_the_cache(jr):
+    src = "const a = () => 1;\n"
+
+    def failing(name):
+        raise ImportError(name)
+
+    jr.clear_runtime_caches()
+    jr._TS_PARSE_CACHE[("typescript", src)] = ({"bogus": "x"}, [])
+    assert jr._ts_parse(src, "ts", failing) is None
+    assert jr._ts_ast_context(src, "ts", 1, failing) is None
+    jr.clear_runtime_caches()
+
+
+def test_clear_runtime_caches_empties_the_parse_cache(jr):
+    jr._TS_PARSE_CACHE[("typescript", "x")] = None
+    jr.clear_runtime_caches()
+    assert jr._TS_PARSE_CACHE == {}
+
+
+def test_computed_keys_are_not_symbols_and_quoted_keys_are_unquoted(jr):
+    _ts()
+    body = "function o() {\n  const p = {\n    %s: () => {\n      return 1;\n" \
+           "    },\n  };\n}\n"
+    comp = body % "[k]"
+    assert jr._ts_ast_context(comp, "ts", 4)["enclosing"] == "o"
+    quoted = body % "'a-b'"
+    assert jr._ts_ast_context(quoted, "ts", 4)["enclosing"] == "o.a-b"
+
+
+def test_uppercase_extension_resolves_through_build_ast_context(jr):
+    _ts()
+    src = "export function f() {\n  return 1;\n}\n"
+    unit = {"file": "M.TS", "line": 2, "hunk_start": 1,
+            "entries": [("+", 2, "  return 1;", 2)],
+            "change_type": "code-change"}
+    out = jr.attach_ast_context([unit], lambda p, u: (None, src))
+    assert out[0]["ast_context"]["enclosing"] == "f"
+    assert jr._enrichment_stamp(out[0]) == "ts-ast"
+
+
+def test_file_without_symbols_has_no_context(jr):
+    _ts()
+    src = 'import x from "y";\nconsole.log(x);\n'
+    assert jr._ts_ast_context(src, "ts", 2) is None
+
+
+def test_symbol_count_cap_keeps_head_in_source_order(jr):
+    _ts()
+    names = [f"f{i:02d}" for i in range(60)]
+    src = "".join(f"export function {n}() {{}}\n" for n in names)
+    ctx = jr._ts_ast_context(src, "ts", 1)
+    assert list(ctx["symbols"]) == names[:jr.ENRICHMENT_MAX_SYMBOLS]
+    assert len(ctx["symbols"]) == 40

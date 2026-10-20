@@ -102,6 +102,11 @@ Enrichment adds input tokens per unit; it adds no model calls.
   `ENRICHMENT_MAX_LINE_CHARS`, and the window stays at 20 lines. Without
   the character cap 40 long exported signatures gave about 6,300 characters
   (about 2,100 tokens) per unit. The Python path is unchanged.
+- **Worst case.** The fixture figures above are small-function figures. An
+  adversarially built ordinary module reached about 1,655 tokens of context
+  per unit before the character caps; the caps (table 2,000 characters,
+  lines and the enclosing chain clipped) now bound it, and the real
+  distribution on a large module is still to be measured.
 - **Multiplier.** Each E2 site unit carries its own copy, and the V7 census
   measured 9.63x site expansion on the Stage A range (INTENT rule 2 status),
   so added tokens per run scale with units, not files. The parse is cached;
@@ -160,29 +165,47 @@ release.
      (`status` is `ok`: a fail-open or incomplete-review run confounds
      enrichment with coverage), every file named in the golden or
      negative-golden has at least one unit stamped with the expected value,
-     and, in BOTH arms, every golden row falls inside a judged unit (a row
-     no unit covers would be scored as a missed defect it was never shown).
+     and, in BOTH arms, every golden row falls within one line of a judged
+     unit's anchor line, which is the same test the scorer applies (a row no
+     unit anchor reaches would be scored as a missed defect it was never
+     shown, and the unit as a false positive; a large new-file unit whose
+     defect is deep inside it is therefore not reachable, and the abort says
+     so). The negative-golden file is read as `file<TAB>verify-substring`
+     (skipping `GONE` rows and non-code files). `--must-enrich FILE...`
+     adds files to the stamp guard for any mode, including `--clean`.
      `--clean` and `--golden` together are rejected, since a golden sample's
      true positives would be scored as false positives. A golden file with none enriched means it failed to
      parse; partial enrichment is reported as an enriched share, not an
      abort, because over-cap context drop (above) legitimately turns some
      units to `none` on long constructors.
-   - **Precision first:** on a clean sample (`--clean`) the on-arm may not
-     surface more findings than the off-arm in any repeat; on a golden
-     sample only false positives (gate-crossers minus true positives) are
-     compared. A new FP *class* is a kill, judged by hand from the
-     adjudicated findings, not by the script.
+   - **Precision first:** false positives are pooled over the repeats, and
+     the on-arm total may not exceed the off-arm total by more than a margin
+     of 1. (A per-repeat rule was rejected: simulated with identical arms and
+     independent Poisson false positives at 0.3 / 0.5 / 1.0 per run, it
+     false-KILLs 49% / 61% / 72% of samples; the pooled rule with margin 1
+     false-KILLs 12% / 18% / 26%, still not low.) A KILL is therefore a
+     prompt for the maintainer to read the adjudicated findings, not an
+     automatic switch: the script flips nothing. On a clean sample
+     (`--clean`) every surfaced finding is a false positive; on a golden
+     sample only gate-crossers minus true positives are. A new FP *class* is
+     a kill, judged by hand from the adjudicated findings, not by the
+     script.
    - **Recall:** signal only if on beats off by at least 2 true positives in
      every repeat (11 TS defects x 3 repeats; the goldens are tiny, so this
      is a smoke test, not a significance claim).
    - **Softening:** a systematic negative paired `is_real` shift on
-     identical units (sign test over per-unit means, p < 0.05) is a kill
-     even if the above pass; below 6 non-zero pairs the test cannot reach
-     significance and the output says `softening_test_underpowered`.
+     identical units is a kill even if the above pass: the per-unit mean
+     deltas (rounded to 9 decimals, so float noise is a tie) must have a
+     negative mean, strictly more negative than positive units, and a
+     two-sided sign-test p < 0.05. Below 6 non-zero pairs the test cannot
+     reach significance and the output says `softening_test_underpowered`.
    - **Combining samples:** each `--sample` yields its own verdict. Overall
      is KILL if any sample is KILL; SIGNAL only if every golden sample is
-     SIGNAL and none is KILL; otherwise NO-DETECTABLE-EFFECT.
-   - **What a verdict does:** only a KILL flips the default off before
+     SIGNAL and none is KILL; otherwise NO-DETECTABLE-EFFECT. A sample that
+     aborted leaves no result, so `--combine --expect-samples NAME...` lists
+     the samples that must be present and refuses SIGNAL if one is missing.
+   - **What a verdict does:** only a KILL, confirmed by the maintainer
+     against the adjudicated findings, flips the default off before
      dogfooding. NO-DETECTABLE-EFFECT and an underpowered result are
      recorded, not acted on; the default is decided by step 4.
 4. **Dogfooding (the real decision).**
@@ -209,7 +232,22 @@ release.
      positives and surfaces little), the default stays on and the question
      reopens with the next golden or after the next 15 PRs.
 
-## Known limits of the harness
+## Known limits
+
+- **Constructs that resolve to no enclosing symbol:** assigned or wrapped
+  functions are not named symbols. CommonJS `exports.foo = function`,
+  `Foo.prototype.bar = function` and Express route callbacks leave the file
+  without a chain; `React.memo(...)`, `forwardRef(...)`, `createAsyncThunk`
+  and `describe`/`it` blocks keep the table but have no enclosing symbol.
+  A unit with an empty chain and window still carries the `ts-ast` stamp, so
+  `golden_file_enriched_share` overstates symbol coverage.
+- **The symbol table lists only function/class/const declarations**
+  (interfaces, type aliases, enums, namespaces and `declare` forms resolve in
+  the enclosing chain but are not table entries).
+- **Lone-CR files:** `\n`-only line splitting means a Python file whose line
+  endings are a bare `\r` reads as one line. Very rare; unchanged.
+- **Judge noise** is assumed independent across repeats in the false-KILL
+  analysis; real judge behaviour is not yet known.
 
 - Paired `is_real` deltas key on `file:line:line_end`. Two sub-units with
   the same span in one cluster would collapse; not seen in practice, and the
