@@ -84,7 +84,7 @@ CALL_FAIL_LIMIT = 2           # consecutive Jev failures -> fail-open
 # all, because #45 showed deletion clusters over-scoring, not
 # under-scoring. Both stay >=0.05 from the 0.80/0.90 upper region.
 REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
-DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per 
+DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per
 # Fable gate cond 2)
 KNOWN_FIXTURES = {"positive", "negative"}
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
@@ -1831,7 +1831,7 @@ def _ts_top_level_declarations(root):
 V7_MEDIAN_SITE_SIZE_FORBIDDEN_LINES = 120
 # V7: adopted envelope (Kurt, msg 1561831827394793606, "Yes") — median
 # site count per admitted top-level cluster.
-V7_MEDIAN_EXPANSION_ENVELOPE = 10.0  # re-ruled per census measurement 
+V7_MEDIAN_EXPANSION_ENVELOPE = 10.0  # re-ruled per census measurement
 # (9.63×, floor tightenings exhausted; Kurt ruling msg 1561917565234708573)
 V7_MAX_TIGHTENINGS = 2
 # V7: median per-call wall time used to PROJECT total wall time next to
