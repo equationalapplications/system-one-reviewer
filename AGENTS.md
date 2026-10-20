@@ -38,7 +38,7 @@ always pass `--out`.
   clean run is never merge evidence.
 - SOR posts nothing anywhere. It prints reports; delivery is the caller's job.
 - Coverage-incomplete runs (any `skipped[].reason` = `max-hunks>ceiling`, or
-  verdict containing `incomplete review`) can never be read as Approved.
+  verdict containing `status == "incomplete review"`) can never be read as Approved.
 
 ## Where decisions live
 

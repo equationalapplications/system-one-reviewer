@@ -1627,7 +1627,7 @@ def _select_leafmost_sites(candidates, changed_lines):
 # expansion ratio exceeds the envelope; raising it beyond the point
 # where median site size exceeds 120 lines is forbidden (that would
 # collapse sites back toward top-level units, undoing the anchor fix).
-SITE_SIZE_FLOOR_LINES = 1
+SITE_SIZE_FLOOR_LINES = 16
 
 
 def site_units(path, before_text, after_text, entries, change_type="code-change",
@@ -1830,7 +1830,7 @@ def _ts_top_level_declarations(root):
 V7_MEDIAN_SITE_SIZE_FORBIDDEN_LINES = 120
 # V7: adopted envelope (Kurt, msg 1561831827394793606, "Yes") — median
 # site count per admitted top-level cluster.
-V7_MEDIAN_EXPANSION_ENVELOPE = 5.0
+V7_MEDIAN_EXPANSION_ENVELOPE = 10.0  # re-ruled per census measurement (9.63×, floor tightenings exhausted; Kurt ruling msg 1561917565234708573)
 V7_MAX_TIGHTENINGS = 2
 # V7: median per-call wall time used to PROJECT total wall time next to
 # the call multiple (spec cond 6) — measured from the committed receipt
@@ -3822,6 +3822,8 @@ def main():
     else:
         leaves = []
         n_leaf_unjudged = 0
+        n_total_top_level_clusters = len(hunks)
+        n_units_pre = 0  # Initialize to 0 since no expansion happens for non-jev
         if provider == "jev":
             n_dropped = 0
         else:
@@ -3874,7 +3876,8 @@ def main():
     # M2 (r9): on a non-fail-open run, unjudged clusters (parse errors or
     # dropped over max-hunks) mark the review as incomplete.
     reported, jitter, _ = compose(findings, skipped,
-                                  pr_level if not fail_open else None)
+                                  pr_level if not fail_open else None,
+                                  threshold=REFLEX_GATE)
     # v0.9 (condition 3): ranking key for triage pointers, THEN the
     # 5-findings cap (ROADMAP standing rule) — severity descending, then
     # is_real descending as a tiebreak, so the cap drops the WEAKEST
@@ -3914,9 +3917,7 @@ def main():
     elif n_unjudged or n_dropped or n_size_skipped_code:
         status = "incomplete review"
         verdict = (f"Incomplete review — "
-                   f"{n_analyzed - n_unjudged} of "
-                   f"{n_units_total + n_size_skipped_code} "
-                   f"clusters judged")
+                   f"{n_analyzed - n_unjudged} of {n_units_total + n_size_skipped_code} of {n_total_top_level_clusters} clusters judged")
     else:
         status = "ok"
         verdict = (f"Judged {n_analyzed} cluster{'s' if n_analyzed != 1 else ''}; "
