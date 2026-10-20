@@ -109,7 +109,18 @@ system-one-reviewer --repo PATH --range A..B --fixture positive --label run3
 
 --json      machine-readable output to stdout
 --out FILE  write full JSON report (all scores) to a file
+--include-test-findings  surface findings from test-file units (default: held back)
 ```
+
+Test-file units (path rule in ROADMAP S3) are judged and logged with
+`reflex_class: "test"`, but their findings are held out of the surfaced
+findings by default. A run that holds any prints
+`N test-file finding(s) held back; --include-test-findings shows them` and
+records the count in `meta.n_test_held`. Held findings are not listed in
+`--json`; hosts that need them read the ledger. Each surfaced finding carries
+`where: {symbol, line}`: a locator only, never a claim. `symbol` is the
+dotted enclosing symbol (or `null`), and `line` is the hunk's anchor line.
+Ledger records written before `reflex_class` existed read as `code`.
 
 Metrics append to `$XDG_STATE_HOME/jev-review/metrics.jsonl` (default
 `~/.local/state/...`). Nothing leaves your machine except the model calls.

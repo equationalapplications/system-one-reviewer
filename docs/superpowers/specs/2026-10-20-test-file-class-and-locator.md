@@ -177,13 +177,13 @@ Post-release evaluation (does not block the release):
 - The locator names a place, not a problem. A unit with no resolvable symbol
   (module level, wrapped callbacks such as `memo(...)`) gets `symbol: null`.
 
-## Open questions
+## Open questions (resolved)
 
-- Should held test findings appear in `--json` under a `held` list for hosts
-  that want them, rather than only a count? (Not needed for the aws-cloud-agent
-  shadow, which reads the ledger; add on request.)
-- Should the class list move into `INTENT.md` or the ROADMAP S3 table once S3
-  lands more classes?
+- No `held` list in `--json`. The count goes in `meta.n_test_held` only. Hosts
+  that need held findings (the aws-cloud-agent shadow) read the ledger; add a
+  list on request.
+- The class list lives in ROADMAP S3, not INTENT. INTENT states the rule; the
+  ROADMAP carries the classes as they ship.
 
 ## Out of scope
 

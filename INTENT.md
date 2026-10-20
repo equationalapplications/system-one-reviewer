@@ -120,7 +120,7 @@ the bar is treated as a bug, not a nuisance.
 *Why:* a false positive costs a person's time and often a paid re-review —
 strictly more than SOR saves.
 
-**Status: Built (v0.9).** The reflex gate is **adopted at is_real 0.80** (Kurt, 2026-10-19, from the R1 sweep: zero of 48 wild false positives reach 0.80). V2 TRIAGE CHECK asserts no run output contains "Approved" or "Changes requested"; findings are reported only as ranked triage pointers at 0.80+ gate.
+**Status: Built (v0.9).** The reflex gate is **adopted at is_real 0.80** (Kurt, 2026-10-19, from the R1 sweep: zero of 48 wild false positives reach 0.80). V2 TRIAGE CHECK asserts no run output contains "Approved" or "Changes requested"; findings are reported only as ranked triage pointers at 0.80+ gate. Test-file findings are judged and logged but held back by default (field data: all three test-file firings in the 2026-10-20 sample of five were false or arguable); see `docs/superpowers/specs/2026-10-20-test-file-class-and-locator.md`.
 
 ### 5. SOR does not cover what an LLM covers better
 
