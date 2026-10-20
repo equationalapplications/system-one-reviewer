@@ -30,6 +30,7 @@ Usage:
 
 import argparse
 import ast
+import difflib
 import fnmatch
 import importlib
 import json
@@ -594,6 +595,140 @@ def validate_input(doc):
         out.append({"path": path, "old_path": old_path if renamed else None,
                     "before": before, "after": after})
     return {"head": head, "repo": repo, "files": out}
+
+
+def split_lines(text):
+    """Split on "\\n" only (never str.splitlines(), which also splits on U+2028
+    and form feed). Each element keeps its terminator; a final element without
+    one is the no-newline line, so a change that only adds or removes the final
+    newline stays visible. "" gives []."""
+    if not text:
+        return []
+    parts = text.split("\n")
+    last = parts.pop()
+    lines = [p + "\n" for p in parts]
+    if last:
+        lines.append(last)
+    return lines
+
+
+def _full_opcodes(a, b):
+    """Opcodes for the whole of a and b: the common leading/trailing lines are
+    stripped (git does this, difflib does not), the core is matched, and the
+    indices are shifted back. Returns (opcodes, used_autojunk)."""
+    lo = 0
+    n = min(len(a), len(b))
+    while lo < n and a[lo] == b[lo]:
+        lo += 1
+    hi = 0
+    while hi < n - lo and a[len(a) - 1 - hi] == b[len(b) - 1 - hi]:
+        hi += 1
+    ca, cb = a[lo:len(a) - hi], b[lo:len(b) - hi]
+    junk = len(ca) > INPUT_MATCH_LINES or len(cb) > INPUT_MATCH_LINES
+    sm = difflib.SequenceMatcher(None, ca, cb, autojunk=junk)
+    ops = [("equal", 0, lo, 0, lo)] if lo else []
+    ops += [(t, i1 + lo, i2 + lo, j1 + lo, j2 + lo) for t, i1, i2, j1, j2 in sm.get_opcodes()]
+    if hi:
+        ops.append(("equal", len(a) - hi, len(a), len(b) - hi, len(b)))
+    return ops, junk
+
+
+def _group_opcodes(codes, n=3):
+    """difflib's get_grouped_opcodes applied to an opcode list (the stripped
+    prefix/suffix are already in it), so the result equals the full-sequence one."""
+    codes = list(codes)
+    if not codes:
+        return []
+    if codes[0][0] == "equal":
+        t, i1, i2, j1, j2 = codes[0]
+        codes[0] = (t, max(i1, i2 - n), i2, max(j1, j2 - n), j2)
+    if codes[-1][0] == "equal":
+        t, i1, i2, j1, j2 = codes[-1]
+        codes[-1] = (t, i1, min(i2, i1 + n), j1, min(j2, j1 + n))
+    groups, group = [], []
+    for t, i1, i2, j1, j2 in codes:
+        if t == "equal" and i2 - i1 > 2 * n:
+            group.append((t, i1, min(i2, i1 + n), j1, min(j2, j1 + n)))
+            groups.append(group)
+            group = []
+            i1, j1 = max(i1, i2 - n), max(j1, j2 - n)
+        group.append((t, i1, i2, j1, j2))
+    if group and not (len(group) == 1 and group[0][0] == "equal"):
+        groups.append(group)
+    return groups
+
+
+def _hunk_range(start, count):
+    """git's range format: ',1' omitted; an empty side starts at the line before."""
+    if count == 0:
+        return f"{start},0"
+    return str(start + 1) if count == 1 else f"{start + 1},{count}"
+
+
+def _emit(prefix, lines, out):
+    for ln in lines:
+        if ln.endswith("\n"):
+            out.append(prefix + ln[:-1])
+        else:
+            out.append(prefix + ln)
+            out.append("\\ No newline at end of file")
+
+
+def synthesize_file_diff(entry):
+    """The git-shaped diff block for one validated file entry, and whether the
+    autojunk=True fallback was used. An added/deleted EMPTY file and a pure
+    rename emit headers only."""
+    path, before, after = entry["path"], entry["before"], entry["after"]
+    old = entry.get("old_path") or path
+    a, b = split_lines(before or ""), split_lines(after or "")
+    out = [f"diff --git a/{old} b/{path}"]
+    if before is None:
+        out.append("new file mode 100644")
+    elif after is None:
+        out.append("deleted file mode 100644")
+    elif old != path:
+        out += [f"rename from {old}", f"rename to {path}"]
+    if a == b and (before is None or after is None or before == after):
+        return "\n".join(out) + "\n", False
+    out.append("--- /dev/null" if before is None else f"--- a/{old}")
+    out.append("+++ /dev/null" if after is None else f"+++ b/{path}")
+    ops, junk = _full_opcodes(a, b)
+    for group in _group_opcodes(ops):
+        i1, i2, j1, j2 = group[0][1], group[-1][2], group[0][3], group[-1][4]
+        out.append(f"@@ -{_hunk_range(i1, i2 - i1)} +{_hunk_range(j1, j2 - j1)} @@")
+        for t, x1, x2, y1, y2 in group:
+            if t == "equal":
+                _emit(" ", a[x1:x2], out)
+                continue
+            if t in ("replace", "delete"):
+                _emit("-", a[x1:x2], out)
+            if t in ("replace", "insert"):
+                _emit("+", b[y1:y2], out)
+    return "\n".join(out) + "\n", junk
+
+
+def build_input(doc):
+    """Triage and diff a validated --input document. Binary (NUL) and oversize
+    files are recorded in `skipped`, not diffed and not in `images`; the rest
+    are synthesized in input order."""
+    diffs, skipped, images, n_autojunk = [], [], {}, 0
+    for f in doc["files"]:
+        sides = [s for s in (f["before"], f["after"]) if s is not None]
+        reason = None
+        if any("\0" in s for s in sides):
+            reason = "input-binary"
+        elif any(len(s) > INPUT_MAX_FILE_CHARS or len(split_lines(s)) > INPUT_MAX_FILE_LINES
+                 for s in sides):
+            reason = "hunk>input-oversize"
+        if reason:
+            skipped.append({"file": f["path"], "reason": reason, "line_start": 1, "line_end": 1})
+            continue
+        text, junk = synthesize_file_diff(f)
+        diffs.append(text)
+        n_autojunk += junk
+        images[f["path"]] = (f["before"], f["after"])
+    return {"diff": "".join(diffs), "head": doc["head"], "repo": doc["repo"],
+            "skipped": skipped, "images": images, "n_autojunk": n_autojunk}
 
 
 GIT_PROBE_TIMEOUT = 30  # seconds; rev-parse is instant unless git is stuck
