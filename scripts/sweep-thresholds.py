@@ -263,24 +263,27 @@ def rewrap(j, run_version=None):
             "reflex_class": j.get("reflex_class", "code")}
 
 
-def replay(jr, run, t, deletion_threshold=None):
+def replay(jr, run, t, deletion_threshold=None, include_test=False):
     """Reported findings for this run at threshold t, via compose itself.
 
     deletion_threshold=None keeps compose's shipped default (fixture
     sweeps never move the deletion knob); field mode passes the candidate
-    explicitly.
+    explicitly. include_test=True surfaces test-class findings (compose
+    holds them by default) so a golden row in a test file can be scored.
     """
     version = run.get("packaging_version")
     kwargs = {"threshold": t}
     if deletion_threshold is not None:
         kwargs["deletion_threshold"] = deletion_threshold
+    if include_test:
+        kwargs["hold_classes"] = ()
     reported, _, _ = jr.compose(
         [rewrap(j, run_version=version) for j in run["judged"]], [], None,
         **kwargs)
     return reported
 
 
-def negative_fp(jr, run, t, benign_files=frozenset()):
+def negative_fp(jr, run, t, benign_files=frozenset(), include_test=False):
     """FP census at threshold t on a negative fixture, via the tool's own
     eval_negative: blocker_major + other_fp (minor style notes don't count;
     E5 formula). `benign_files` names files in the negative golden that the
@@ -288,7 +291,7 @@ def negative_fp(jr, run, t, benign_files=frozenset()):
     reported finding on one of them is triage leakage and dies loudly.
     Files the golden names that triage keeps (source files) are judged on
     purpose and are NOT leakage."""
-    reported = replay(jr, run, t)
+    reported = replay(jr, run, t, include_test=include_test)
     for f in reported:
         if f["hunk"]["file"] in benign_files:
             die(f"run {run.get('label')!r}: reported a finding on "
@@ -330,7 +333,8 @@ def _fp_pos_from_eval(jr, reported, e):
                         and f.get("category") == "style"))
 
 
-def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
+def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None,
+          include_test=False):
     benign = benign_files_from_negative_golden(neg_golden_path, jr)
     rows = []
     for t in threshold_grid():
@@ -338,7 +342,7 @@ def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
         # curve and the FP_pos census.
         evals, reported_each, fp_pos_each = [], [], []
         for run in pos_runs:
-            reported = replay(jr, run, t)
+            reported = replay(jr, run, t, include_test=include_test)
             e = jr.eval_against_golden(reported, golden_path)
             evals.append(e)
             reported_each.append(reported)
@@ -347,7 +351,7 @@ def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
         # precision_i = TP_i / (TP_i + FP_pos_i + FP_neg_mean), folded into
         # an F1 against recall_i — negative FPs enter the curve.
         # FP_neg per negative run, then averaged (E5).
-        fp_neg_each = [negative_fp(jr, r, t, benign) for r in neg_runs]
+        fp_neg_each = [negative_fp(jr, r, t, benign, include_test) for r in neg_runs]
         f1s = []
         for e, fp_pos in zip(evals, fp_pos_each, strict=True):
             tp = e["true_positives"]
@@ -389,16 +393,20 @@ def sweep(jr, pos_runs, neg_runs, golden_path, neg_golden_path=None):
 
     return {"rows": rows, "candidate": candidate, "tied": tied,
             "rule_margin_ok": margin_ok, "rule_neg_fp_ok": neg_fp_ok,
-            "shipped": SHIPPED_THRESHOLD, "change": margin_ok and neg_fp_ok}
+            "shipped": SHIPPED_THRESHOLD, "change": margin_ok and neg_fp_ok,
+            "include_test": include_test}
 
 
 # ---------- reporting ----------
 
 def render(res, provider, model):
+    # the held default prints nothing, so default output is unchanged
     prov = provider + (f"/{model}" if model else "")
     lines = [f"threshold sweep (provider/model: {prov})",
              "t | TP | FP_pos | FP_neg (each / mean) | dFP_neg vs 0.50 | "
              "per-run F1 | min F1"]
+    if res.get("include_test"):
+        lines.insert(1, "test findings: included")
     for r in res["rows"]:
         lines.append(
             f"{r['t']:.2f} | {r['tp_range']} | {r['fp_pos_range']} | "
@@ -503,7 +511,7 @@ def select_field_runs(recs, goldens, label_prefix,
     return runs
 
 
-def field_fp(jr, run, t, dt):
+def field_fp(jr, run, t, dt, include_test=False):
     """FP census for a clean field run at (code t, deletion dt).
 
     Same counting as negative_fp (eval_negative; MINOR-style exempt), but
@@ -512,7 +520,7 @@ def field_fp(jr, run, t, dt):
     threshold's pressure (a separate calibration question — it cannot be
     fixed by moving dt, and counting it here would fake a signal).
     """
-    reported = replay(jr, run, t, deletion_threshold=dt)
+    reported = replay(jr, run, t, deletion_threshold=dt, include_test=include_test)
 
     def is_del(f):
         return f.get("rubric", "code-change") == "deletion"
@@ -527,7 +535,7 @@ def field_fp(jr, run, t, dt):
 
 # ---------- field-mode sweep (F2 executability plan, step b) ----------
 
-def sweep_field(jr, field_runs, grid=None):
+def sweep_field(jr, field_runs, grid=None, include_test=False):
     """Deletion-threshold sweep over clean field runs (expected_issues=0).
 
     The five v03b CJ runs are all ground-truth clean, so per threshold the
@@ -560,7 +568,7 @@ def sweep_field(jr, field_runs, grid=None):
             "baseline row to decide KEEP/RAISE from")
     rows = []
     for dt in grid:
-        fps = {pr: field_fp(jr, run, SHIPPED_THRESHOLD, dt)
+        fps = {pr: field_fp(jr, run, SHIPPED_THRESHOLD, dt, include_test)
                for pr, run in field_runs.items()}
         del_total = sum(v[1] for v in fps.values())
         code_total = sum(v[0] for v in fps.values())
@@ -571,7 +579,8 @@ def sweep_field(jr, field_runs, grid=None):
     decision = "KEEP" if fps_at_shipped == 0 else "RAISE_ABOVE_GRID"
     return {"rows": rows, "shipped": DELETION_SHIPPED,
             "fps_at_shipped": fps_at_shipped, "decision": decision,
-            "code_total_at_shipped": base["code_total"]}
+            "code_total_at_shipped": base["code_total"],
+            "include_test": include_test}
 
 
 def render_field(res, provider, model, prs):
@@ -581,6 +590,8 @@ def render_field(res, provider, model, prs):
              f"code threshold pinned at {SHIPPED_THRESHOLD})",
              f"dt | deletion-rubric FPs | code-rubric FPs (pinned t) | "
              f"deletion FP per-PR ({header})"]
+    if res.get("include_test"):
+        lines.insert(1, "test findings: included")
     for r in res["rows"]:
         per = " | ".join(str(r["fps"][p][1]) for p in prs)
         lines.append(f"{r['dt']:.2f} | {r['deletion_total']} | "
@@ -622,6 +633,11 @@ def main(argv=None):
                          "requires --field-goldens, forbids fixture args")
     ap.add_argument("--field-goldens",
                     help="field golden TSV: pr<TAB>full40sha<TAB>expected")
+    ap.add_argument("--include-test-findings", dest="include_test_findings",
+                    action="store_true",
+                    help="replay test-class findings as surfaced (compose "
+                         "holds them by default); needed to score a golden "
+                         "row in a test file")
     _add_packaging_version_arg(ap)  # Task 7 r8-m2: default = v08-ast
     args = ap.parse_args(argv)
 
@@ -649,14 +665,15 @@ def main(argv=None):
         runs = select_field_runs(recs, goldens, args.label,
                                  args.packaging_version)
         provider, model = check_single_provider_group(list(runs.values()))
-        res = sweep_field(jr, runs)
+        res = sweep_field(jr, runs, include_test=args.include_test_findings)
         print(render_field(res, provider, model, sorted(runs)))
         return 0
 
     expected = load_shas(args.shas)
     pos, neg, provider, model = select_runs(recs, expected, args.label,
                                             args.packaging_version)
-    res = sweep(jr, pos, neg, args.golden, args.negative_golden)
+    res = sweep(jr, pos, neg, args.golden, args.negative_golden,
+                args.include_test_findings)
     print(render(res, provider, model))
     return 0
 

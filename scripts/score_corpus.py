@@ -53,9 +53,11 @@ def _covers(e, file, line):
     return e["file"] == file and lo <= line <= hi
 
 
-def replay_indices(jr, sw, rec, t, dt):
+def replay_indices(jr, sw, rec, t, dt, include_test=False):
     wrapped = [sw.rewrap(j, run_version=rec.get("packaging_version")) for j in rec["judged"]]
-    reported, _, _ = jr.compose(wrapped, [], None, threshold=t, deletion_threshold=dt)
+    # compose holds test-class findings by default; include_test surfaces them
+    reported, _, _ = jr.compose(wrapped, [], None, threshold=t, deletion_threshold=dt,
+                                hold_classes=() if include_test else ("test",))
     # v0.9 fork resolution (A+C): compose() itself returns no verdict (its
     # 3rd value is always "") — this script's verdict accuracy/flip
     # measurement needs the retired rule, which lives on in
@@ -89,9 +91,10 @@ def classify_miss(file, line, judged, idx, skipped, t, dt):
     return "not-judged"
 
 
-def score_sample(jr, sw, sample, goldens, dismissed, rec, out, t, dt, tmpdir):
+def score_sample(jr, sw, sample, goldens, dismissed, rec, out, t, dt, tmpdir,
+                 include_test=False):
     judged = rec["judged"]
-    idx, reported, verdict = replay_indices(jr, sw, rec, t, dt)
+    idx, reported, verdict = replay_indices(jr, sw, rec, t, dt, include_test)
     idx_set = set(idx)
     res = {"sample_id": sample["sample_id"], "repo": sample["repo"], "kind": sample["kind"],
            "verdict": verdict, "n_reported": len(idx),
@@ -188,7 +191,7 @@ def _variance(by_sample):
 
 
 def score(corpus_dir, config, split="train", jr=None, sw=None, threshold=None,
-          deletion_threshold=None, repeats=None):
+          deletion_threshold=None, repeats=None, include_test=False):
     sw = sw or load_sweep()
     jr = jr or sw.load_tool()
     t = jr.REAL_THRESHOLD if threshold is None else threshold
@@ -219,7 +222,8 @@ def score(corpus_dir, config, split="train", jr=None, sw=None, threshold=None,
                     continue
                 path = rc.out_path(corpus_dir, config, sid, k)
                 out = json.load(open(path)) if os.path.exists(path) else None
-                row = score_sample(jr, sw, s, goldens, dismissed, rec, out, t, dt, tmp)
+                row = score_sample(jr, sw, s, goldens, dismissed, rec, out, t, dt, tmp,
+                                  include_test)
                 row["k"] = k
                 rows.append(row)
                 by_sample.setdefault(sid, []).append((rec, row["verdict"]))
@@ -231,16 +235,19 @@ def score(corpus_dir, config, split="train", jr=None, sw=None, threshold=None,
         by_repo[repo] = _aggregate(repo_rows, sum(
             1 for d in corpus["dismissed"] if cl.parse_sample_id(d["sample_id"])[0] == repo
             and d["sample_id"] in samples))
-    return {"config": config, "split": split, "threshold": t, "deletion_threshold": dt,
-            "samples": rows, "aggregate": agg, "by_repo": by_repo,
-            "variance": _variance(by_sample), "missing": missing}
+    res = {"config": config, "split": split, "threshold": t, "deletion_threshold": dt,
+           "samples": rows, "aggregate": agg, "by_repo": by_repo,
+           "variance": _variance(by_sample), "missing": missing}
+    if include_test:  # recorded only when set, so default output is unchanged
+        res["include_test_findings"] = True
+    return res
 
 
-def replay_grid(corpus_dir, config, split="train", jr=None, sw=None):
+def replay_grid(corpus_dir, config, split="train", jr=None, sw=None, include_test=False):
     sw = sw or load_sweep()
     jr = jr or sw.load_tool()
     return [{"threshold": t, **score(corpus_dir, config, split, jr=jr, sw=sw,
-                                     threshold=t)["aggregate"]}
+                                     threshold=t, include_test=include_test)["aggregate"]}
             for t in sw.GRID]
 
 
@@ -253,6 +260,8 @@ def render_markdown(res, grid=None):
     lines = [f"## Corpus score — config `{res['config']}`, split `{res['split']}`", "",
              f"threshold {res['threshold']}, deletion threshold {res['deletion_threshold']}",
              "", "| metric | value |", "|---|---|"]
+    if res.get("include_test_findings"):
+        lines.insert(3, "test findings: included")
     for label, key in (("samples (positive / clean)", None), ("golden issues", "golden_total"),
                        ("recall (strict)", "recall_strict"),
                        ("recall (cluster)", "recall_cluster"), ("precision", "precision"),
@@ -285,11 +294,17 @@ def main(argv=None):
     ap.add_argument("--repeats", type=int, default=None)
     ap.add_argument("--replay-grid", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--include-test-findings", dest="include_test_findings",
+                    action="store_true",
+                    help="replay test-class findings as surfaced (held by default)")
     ap.add_argument("--corpus", default=rc.DEFAULT_CORPUS)
     args = ap.parse_args(argv)
     try:
-        res = score(args.corpus, args.config, args.split, repeats=args.repeats)
-        grid = replay_grid(args.corpus, args.config, args.split) if args.replay_grid else None
+        res = score(args.corpus, args.config, args.split, repeats=args.repeats,
+                    include_test=args.include_test_findings)
+        grid = (replay_grid(args.corpus, args.config, args.split,
+                            include_test=args.include_test_findings)
+                if args.replay_grid else None)
     except cl.CorpusError as e:
         print(f"score_corpus: {e}", file=sys.stderr)
         return 1

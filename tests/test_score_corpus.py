@@ -172,3 +172,48 @@ def test_replay_indices_holds_test_class_entries(jr, sw):
     rec = {"judged": [held, kept], "packaging_version": "v03b"}
     idx, reported, _ = sc.replay_indices(jr, sw, rec, 0.5, 0.7)
     assert idx == [1] and [f["hunk"]["file"] for f in reported] == ["a.py"]
+
+
+def test_replay_indices_include_test_surfaces_test_entries(jr, sw):
+    held = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    rec = {"judged": [held], "packaging_version": "v03b"}
+    assert sc.replay_indices(jr, sw, rec, 0.5, 0.7)[0] == []
+    idx, reported, _ = sc.replay_indices(jr, sw, rec, 0.5, 0.7, include_test=True)
+    assert idx == [0] and [f["hunk"]["file"] for f in reported] == ["a.test.ts"]
+
+
+def _test_class_corpus(root):
+    _write_corpus(root, [("a.test.ts", 10, "major")])
+    _write_run(root, "base", PRE, 1,
+               [{**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}])
+    _write_run(root, "base", FIN, 1, [])
+
+
+def test_score_and_replay_grid_forward_include_test(tmp_path, jr, sw, split):
+    root = str(tmp_path)
+    _test_class_corpus(root)
+    held = sc.score(root, "base", split=split, jr=jr, sw=sw)
+    assert held["aggregate"]["recall_strict"] == 0.0
+    assert "include_test_findings" not in held
+    inc = sc.score(root, "base", split=split, jr=jr, sw=sw, include_test=True)
+    assert inc["aggregate"]["recall_strict"] == 1.0 and inc["include_test_findings"] is True
+    assert "test findings: included" in sc.render_markdown(inc)
+    assert "test findings" not in sc.render_markdown(held)
+    by_t = lambda g: {x["threshold"]: x["recall_strict"] for x in g}  # noqa: E731
+    assert by_t(sc.replay_grid(root, "base", split=split, jr=jr, sw=sw))[0.5] == 0.0
+    assert by_t(sc.replay_grid(root, "base", split=split, jr=jr, sw=sw,
+                               include_test=True))[0.5] == 1.0
+
+
+def test_main_include_test_flag_reaches_scoring(tmp_path, capsys):
+    root = str(tmp_path)
+    _test_class_corpus(root)
+    base = ["--config", "base", "--split", "all", "--corpus", root, "--json", "--replay-grid"]
+    assert sc.main(base) == 0
+    held = json.loads(capsys.readouterr().out)
+    assert sc.main([*base, "--include-test-findings"]) == 0
+    inc = json.loads(capsys.readouterr().out)
+    assert held["result"]["aggregate"]["recall_strict"] == 0.0
+    assert inc["result"]["aggregate"]["recall_strict"] == 1.0
+    assert all(g["recall_strict"] == 1.0 for g in inc["grid"] if g["threshold"] <= 0.7)
+    assert all(g["recall_strict"] == 0.0 for g in held["grid"])

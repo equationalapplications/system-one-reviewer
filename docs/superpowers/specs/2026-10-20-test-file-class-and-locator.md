@@ -84,8 +84,12 @@ is a code change with its own test table, not configuration.
 - `--include-test-findings` passes `hold_classes=()` so `compose` surfaces
   everything, as in v0.10.0. Measurement runs and the Stage A golden need it:
   the golden has a real defect at `tests/unit/custody-stack.test.ts:200`,
-  which by default can no longer score as found. The A/B harness takes the
-  same flag and passes it to both arms.
+  which by default can no longer score as found. The A/B harness, the
+  threshold sweep (`scripts/sweep-thresholds.py`, fixture and field modes) and
+  the corpus scorer (`scripts/score_corpus.py`, including `--replay-grid`) take
+  the same flag so golden replays keep their baselines. The harness forwards it
+  to both arms; the replay scripts print `test findings: included` only when it
+  is set, so default output is unchanged.
 - The 5-finding cap and the ranking apply after the hold, so a held test
   finding never displaces a code finding.
 - Held findings are not silent: `meta.n_test_held` and one report line
@@ -173,7 +177,8 @@ Post-release evaluation (does not block the release):
   `code`; a product file that happens to live under `test/` is held. Both are
   visible in the ledger by class.
 - The Stage A golden row `custody-stack.test.ts:200` is unscored by default.
-  Use `--include-test-findings` for golden runs.
+  Use `--include-test-findings` for golden runs and for replays against it
+  (A/B harness, sweep, corpus scorer).
 - The locator names a place, not a problem. A unit with no resolvable symbol
   (module level, wrapped callbacks such as `memo(...)`) gets `symbol: null`.
 

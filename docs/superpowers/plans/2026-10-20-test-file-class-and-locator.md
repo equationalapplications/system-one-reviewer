@@ -383,6 +383,17 @@ In `main()`, after the `sorted(...)[:5]` cap, for each `f in reported`: `pre, po
 
 ---
 
+### Task 4b: `--include-test-findings` for the sweep and the corpus scorer (added after review)
+
+Measurement baselines need golden replays that can still score a test-file row
+(Stage A: `custody-stack.test.ts:200`). `scripts/sweep-thresholds.py`
+(`replay`, `negative_fp`, `sweep`, `field_fp`, `sweep_field`, `main`) and
+`scripts/score_corpus.py` (`replay_indices`, `score_sample`, `score`,
+`replay_grid`, `main`) take `--include-test-findings` / `include_test`,
+passing `hold_classes=()` to `compose`; default output is unchanged and the
+setting is printed only when on. Tests and mutation checks live in
+`tests/test_sweep.py` and `tests/test_score_corpus.py`.
+
 ### Task 5: Docs
 
 **Files:**
