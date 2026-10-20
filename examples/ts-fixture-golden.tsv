@@ -1,0 +1,6 @@
+# TS positive golden — 3 planted defects, each on an E2 decision-site kind
+# (spec m4, V1 TS leg). Head built by build-ts-fixture.sh; pinned SHA in
+# fixture-shas.txt as positive_ts=.
+src/app.ts	7	timeout property swaps computeTimeout(jitter, base) instead of (base, jitter) — call-argument defect inside a non-literal object-property assignment	computeTimeout(jitter, base)	MAJOR
+src/app.ts	14	lastN's slice() call swaps its two arguments (end, start instead of start, end) — plain call-argument defect	items.slice(items.length, items.length - n)	MAJOR
+src/app.ts	18	describe's ternary swaps its two branches — admin gets restricted scope, non-admin gets full — conditional/ternary polarity defect	isAdmin ? restricted : full	BLOCKER

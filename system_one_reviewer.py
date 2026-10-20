@@ -2175,6 +2175,12 @@ def git_show_or_none(repo, rev, path):
 
 _IMAGE_CACHE: dict = {}
 _MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable)
+# E1/V5: --force-window-cut run-level toggle (module state, same pattern as
+# the caches above — per-run, cleared by clear_runtime_caches). When True,
+# _split_once skips ast_units/ts_units (window-only leg); main() also skips
+# _apply_site_cutting entirely. Provides the window-only leg V5 compares
+# against a site-cut run of the SAME range.
+_FORCE_WINDOW_CUT = False
 
 
 def clear_runtime_caches():
@@ -2183,8 +2189,10 @@ def clear_runtime_caches():
     in-process reuse (tests, sweep scripts, a second main()) could serve
     another repo's image. Library callers doing multiple runs should
     call this between runs too."""
+    global _FORCE_WINDOW_CUT
     _IMAGE_CACHE.clear()
     _MERGE_BASE_CACHE.clear()
+    _FORCE_WINDOW_CUT = False
 
 
 def mode_file_images(repo, mode, head, path, old_file=None,
