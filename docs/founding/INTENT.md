@@ -92,7 +92,7 @@ try harder?".
 *Why:* the judgment is only as good as the evidence shown, and
 deterministic preparation is testable, cheap, and ours to invent.
 
-**Status: Partly built → Built (v0.9).** Packaging, splitting, enrichment, golden harness, and E1 wire_format stamping exist. E5 wheels self-check added 2026-10-19 (per-cutter availability + version pinning). E2 decision-site cutting deferred to v0.10 under fork resolution A+C (anchor release + triage re-scope only in v0.9).
+**Status: Partly built (v0.9).** Packaging, splitting, enrichment, golden harness, E1 wire_format stamping, and E2 decision-site cutting (object-literal property assignments, call-argument expressions, conditionals, sibling-constant declarations; TS/JS via tree-sitter, Python via `ast`) exist and are wired into every code-change cluster. E5 wheels self-check added (per-cutter availability + version pinning, parses a known snippet per language). Known gap, MEASURED not assumed: the V7 model-off census on the real golden range (`docs/benchmarks/2026-10-19-v7-site-census-golden-range.json`) shows median site expansion at 9.63× even after both allowed floor tightenings — above the adopted 5× envelope — so E2 does not yet clear its own release gate on this range; the envelope decision is open, not resolved.
 
 ### 3. SOR emits no verdict; it is input to adjudication
 
