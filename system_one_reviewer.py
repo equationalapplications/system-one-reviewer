@@ -3436,6 +3436,68 @@ def majors_verdict_for_measurement(reported, per_declaration=False):
 
 # ---------- measurement ----------
 
+REFLEX_GATE = 0.80  # the adopted reflex gate (ROADMAP S1; INTENT rule 4)
+
+
+def v1_noise_aware_result(baseline_scores, new_scores, noise_band,
+                          gate=REFLEX_GATE, jitter_zone=0.03):
+    """V1 (spec, condition 9): noise-aware fixture regression, both legs.
+
+    `baseline_scores`/`new_scores`: {defect_key: is_real} for the SAME
+    fixture defects, from the baseline build and the build under test
+    (or, for the baseline-vs-baseline proof, two runs of the SAME
+    build). `noise_band`: the observed score delta from a SEPARATE
+    baseline-run-twice measurement (spec V3(a)) — the legitimate
+    wobble leg (a) must tolerate.
+
+    Leg (a): every common defect's new score is AT OR ABOVE its
+    baseline value MINUS `noise_band` (a cutting-regression check — site-
+    level cutting must not silently drop a defect's score).
+    Leg (b): the SURFACED set (score >= `gate`) is compared between the
+    two arms, EXCLUDING any defect whose score in EITHER arm falls
+    within `jitter_zone` of `gate` (those are reported BY NAME, never
+    silently dropped) — the comparison only passes if the two arms'
+    remaining surfaced sets are IDENTICAL.
+
+    Returns a result dict with both legs' pass/fail, the jitter-excluded
+    keys (by name, per spec), and enough detail for a baseline-vs-
+    baseline rerun to PROVE (not merely claim) the gate cannot fail on
+    noise alone — this function with new_scores==baseline_scores and
+    noise_band==0 always passes both legs trivially; the real proof is
+    running it with new_scores being a SECOND independent measurement
+    of the SAME baseline build (whatever wobble that run shows IS the
+    noise_band's own evidence).
+    """
+    common = sorted(set(baseline_scores) & set(new_scores))
+    leg_a_failures = [
+        k for k in common
+        if new_scores[k] < baseline_scores[k] - noise_band
+    ]
+    leg_a_pass = not leg_a_failures
+
+    def _near_gate(v):
+        return abs(v - gate) <= jitter_zone
+
+    jitter_excluded = sorted(
+        k for k in common
+        if _near_gate(baseline_scores[k]) or _near_gate(new_scores[k]))
+    comparable = [k for k in common if k not in jitter_excluded]
+    baseline_surfaced = {k for k in comparable if baseline_scores[k] >= gate}
+    new_surfaced = {k for k in comparable if new_scores[k] >= gate}
+    leg_b_pass = baseline_surfaced == new_surfaced
+
+    return {
+        "leg_a_pass": leg_a_pass,
+        "leg_a_failures": leg_a_failures,
+        "leg_b_pass": leg_b_pass,
+        "jitter_excluded": jitter_excluded,
+        "baseline_surfaced": sorted(baseline_surfaced),
+        "new_surfaced": sorted(new_surfaced),
+        "surfaced_delta": sorted(baseline_surfaced ^ new_surfaced),
+        "overall_pass": leg_a_pass and leg_b_pass,
+    }
+
+
 def log_run(record):
     os.makedirs(os.path.dirname(METRICS_PATH), exist_ok=True)
     record["ts"] = datetime.now(timezone.utc).isoformat()

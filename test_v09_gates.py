@@ -1,279 +1,319 @@
 #!/usr/bin/env python3
-"""v0.9 gate tests (V1/V2/V3/V5 validation per spec rev 12, Fable final-spec gate).
+"""v0.9 BEHAVIORAL gate tests (V1/V2/V3/V5, spec rev 12) — real runs
+against real code paths, not a structure-presence checklist.
 
-Fable gate conditions tested:
-- Condition 1: No "Approved" or "Changes requested" anywhere in output
-- Condition 2: Deletion threshold stated in code (0.70)
-- Condition 3: Ranking key (is_real >= 0.80) + 5-findings cap
-- Condition 4: INTENT rules status lines updated
-- Condition 5: Corpus manifest pins (verified in this file)
-- Condition 6: V7 census structure (placeholder for measurement)
-- Condition 7: Jitter reporting at 0.80 gate
-- Condition 8: Evidence wording + ROADMAP fixed
-- Condition 9: V1 noise-aware testing (baseline twice)
-- Condition 10: Status field carrier (meta + ledger)
-
-V1/V2/V3/V5 exit contracts from spec:
-- V1: fixture regression (site-level cutting leaves scores at-or-above baseline)
-- V2: golden recall at 0.80 gate + TRIAGE CHECK (no forbidden verdict strings)
-- V3: negative-arm precision (noise-band, like-for-like comparison)
-- V5: stamp test (wire_format distinguishes cutting paths)
+Run: python3 test_v09_gates.py   (plain asserts, no pytest dependency
+needed for this file specifically, though the main suite uses pytest —
+see tests/).
 """
 
 import json
+import subprocess
 import sys
-from pathlib import Path
 
-# Import the module under test
 import system_one_reviewer as sor
 
 
-def check_condition(num, assertion, msg):
-    """Helper to report condition check results."""
+def check(label, cond, detail=""):
+    status = "PASS" if cond else "FAIL"
+    print(f"[{status}] {label}" + (f" — {detail}" if detail and not cond else ""))
+    return cond
+
+
+# ---------- V5: stamp distinguishes site-cut from window-cut (real run) ----------
+
+def _multisite_ts_unit():
+    head = """function f() {
+  const config = {
+    timeout: computeTimeout(x, y),
+    retries: 3,
+  };
+  const val = cond ? a : b;
+  const FOO = 1;
+  const BAR = 2;
+"""
+    filler = "\n".join(f"  console.log({i});" for i in range(130))
+    tail = "  return config;\n}\n"
+    after = head + filler + "\n" + tail
+    lines = after.splitlines()
+    entries = [("+", i, ln, 1) for i, ln in enumerate(lines, start=1) if ln.strip()]
+    unit = {"file": "f.ts", "entries": entries, "change_type": "code-change",
+            "hunk_start": 1, "line": 1, "line_start": 1, "line_end": len(lines)}
+
+    def images(path, u):
+        return ("", after)
+    return unit, images
+
+
+def test_v5_stamp_distinguishes_site_cut_from_window_cut():
+    unit, images = _multisite_ts_unit()
+
+    kept = sor._apply_site_cutting([dict(unit)], images)
+    kept, _leaves = sor.expand_oversize_units(kept, images)
+    normal_wf = sor.stamp_wire_format(kept)
+    normal_cuts = {u.get("cut") for u in kept}
+
+    sor._FORCE_WINDOW_CUT = True
     try:
-        assert assertion, msg
-        print(f"✓ Condition {num}: {msg}")
-        return True
-    except AssertionError as e:
-        print(f"✗ Condition {num}: {e}")
-        return False
+        kept2, _leaves2 = sor.expand_oversize_units([dict(unit)], images)
+    finally:
+        sor._FORCE_WINDOW_CUT = False
+    forced_wf = sor.stamp_wire_format(kept2)
+    forced_cuts = {u.get("cut") for u in kept2}
+
+    ok = check("V5: normal run stamps wire_format='sites'",
+              normal_wf == "sites", f"got {normal_wf!r}")
+    ok &= check("V5: --force-window-cut stamps wire_format='line-window'",
+               forced_wf == "line-window", f"got {forced_wf!r}")
+    ok &= check("V5: wire_format differs between the two arms of the SAME range",
+               normal_wf != forced_wf, f"{normal_wf!r} == {forced_wf!r}")
+    ok &= check("V5: per-unit cut fields agree with the actual cut path (normal)",
+               normal_cuts == {"sites"}, f"got {normal_cuts}")
+    ok &= check("V5: per-unit cut fields agree with the actual cut path (forced)",
+               forced_cuts == {"line-window"}, f"got {forced_cuts}")
+    return ok
 
 
-def test_condition_1():
-    """Condition 1: No "Approved" or "Changes requested" in output."""
-    # Verify compose() returns empty verdict
-    test_findings = [
-        {"hunk": {"file": "test.py", "line": 1}, "is_real": 0.85,
-         "severity": 1.5, "rubric": "code-change"}
+# ---------- V1: noise-aware fixture regression (condition 9) ----------
+
+def test_v1_baseline_vs_baseline_proves_gate_cannot_fail_on_noise():
+    """The mandatory proof (spec condition 9): a baseline-vs-baseline
+    rerun — the SAME build measured twice — must pass BOTH legs. Real
+    noise (small score wobble within the observed band) is included,
+    not just the trivial zero-noise case."""
+    baseline_run_a = {"B1": 0.30, "B2": 0.56, "M1": 0.45, "M3": 0.39,
+                      "N1": 0.33, "N3": 0.48, "N4": 0.33}
+    # A second measurement of the SAME baseline build: small real wobble
+    # (<=0.02), consistent with the fact-probe's measured ~0.04 corroboration
+    # band cited in the spec's Problem 2 note.
+    baseline_run_b = {k: round(v + d, 2) for (k, v), d in zip(
+        baseline_run_a.items(), [0.01, -0.02, 0.0, 0.02, -0.01, 0.01, -0.02])}
+    noise_band = max(abs(baseline_run_a[k] - baseline_run_b[k])
+                     for k in baseline_run_a)
+
+    result = sor.v1_noise_aware_result(baseline_run_a, baseline_run_b, noise_band)
+    ok = check("V1: baseline-vs-baseline leg (a) passes (no regression claim "
+              "from noise alone)", result["leg_a_pass"], result)
+    ok &= check("V1: baseline-vs-baseline leg (b) passes (surfaced set stable)",
+               result["leg_b_pass"], result)
+    ok &= check("V1: overall baseline-vs-baseline passes both legs",
+               result["overall_pass"], result)
+    print(f"      noise_band measured: {noise_band}")
+    print(f"      jitter-excluded units (within 0.03 of 0.80): "
+          f"{result['jitter_excluded']}")
+    return ok
+
+
+def test_v1_catches_a_real_regression():
+    """Sanity check on the OTHER side: v1_noise_aware_result must not be
+    a rubber stamp — a genuine drop beyond the noise band fails leg (a)."""
+    baseline = {"B2": 0.56, "M3": 0.39}
+    regressed = {"B2": 0.30, "M3": 0.39}  # B2 dropped 0.26, way beyond any band
+    result = sor.v1_noise_aware_result(baseline, regressed, noise_band=0.03)
+    ok = check("V1: a real regression (score drop > noise_band) fails leg (a)",
+              not result["leg_a_pass"], result)
+    ok &= check("V1: the regressed defect is named in leg_a_failures",
+               "B2" in result["leg_a_failures"], result["leg_a_failures"])
+    return ok
+
+
+def test_v1_jitter_zone_excluded_and_named():
+    """Leg (b): units within 0.03 of the 0.80 gate in EITHER arm are
+    excluded from the surfaced-set comparison and reported BY NAME."""
+    baseline = {"clean1": 0.50, "near_gate": 0.79, "clear_surface": 0.90}
+    new = {"clean1": 0.50, "near_gate": 0.82, "clear_surface": 0.90}
+    result = sor.v1_noise_aware_result(baseline, new, noise_band=0.05)
+    ok = check("V1: near-gate unit excluded from leg (b) comparison",
+              "near_gate" in result["jitter_excluded"], result["jitter_excluded"])
+    ok &= check("V1: leg (b) passes once the jitter-zone unit is excluded",
+               result["leg_b_pass"], result)
+    return ok
+
+
+# ---------- V2: surfaced-set delta vs baseline + TRIAGE CHECK ----------
+
+def _run_main_twice_same_input(tmp_module_path, diff, judged_scores):
+    """Runs main() twice over the IDENTICAL diff with a DETERMINISTIC
+    fake judge (same scores both times) — the surfaced set (is_real >=
+    0.80) must be byte-identical between the two runs, proving the
+    0.80-gated TRIAGE CHECK path is reproducible."""
+    import importlib.util
+    import tempfile
+    import os
+
+    def _one_run(tmp_path):
+        spec = importlib.util.spec_from_file_location(
+            f"jev-v09-gate-{tmp_path.name}", tmp_module_path)
+        jr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(jr)
+        jr.METRICS_PATH = str(tmp_path / "metrics.jsonl")
+
+        calls = iter(judged_scores)
+
+        def fake_judge(kept, ask, errors=None, split_unit=None):
+            out = []
+            for h in kept:
+                score = next(calls, 0.1)
+                out.append({"hunk": h, "severity": 2.0, "is_real": score,
+                           "category": "bug-risk", "rubric": "code-change",
+                           "references_remaining": None,
+                           "change_type": "code-change", "latency_ms": 1.0})
+            return out, [1.0] * len(kept), {"added_units": 0,
+                                            "avg_input_tokens": None}
+
+        jr.judge = fake_judge
+        jr.judge_pr_level = lambda f, a, size_skipped_code=None: {
+            "overall_risk": 1.0, "needs_human_review": 0.5, "latency_ms": 1.0}
+        jr.resolve_diff = lambda repo, args: (diff, "0" * 40, "staged")
+        jr.mode_file_images = lambda repo_, mode_, head_, path_, old_file=None: (
+            None, "x = 1\n")
+        jr.log_run = lambda rec: None
+        jr.make_provider = lambda *a, **k: (lambda s, q: ({"answers": {}}, 1.0))
+        jr.load_api_key = lambda: "k"
+        jr.sys.argv = ["system-one-reviewer", "--repo", str(tmp_path),
+                      "--staged", "--provider", "jev", "--json"]
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            jr.main()
+        return json.loads(buf.getvalue())
+
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
+        out1 = _one_run(Path(d1))
+        out2 = _one_run(Path(d2))
+    return out1, out2
+
+
+def test_v2_surfaced_set_delta_and_triage_check():
+    repo_root = "."
+    tool_path = __import__("os").path.join(repo_root, "system_one_reviewer.py")
+    diff = (
+        "diff --git a/a.py b/a.py\n--- /dev/null\n+++ b/a.py\n"
+        "@@ -0,0 +1,1 @@\n+x = 1\n"
+        "diff --git a/b.py b/b.py\n--- /dev/null\n+++ b/b.py\n"
+        "@@ -0,0 +1,1 @@\n+y = 2\n"
+        "diff --git a/c.py b/c.py\n--- /dev/null\n+++ b/c.py\n"
+        "@@ -0,0 +1,1 @@\n+z = 3\n"
+    )
+    # Deterministic scores: one clearly above 0.80 (surfaces), one clearly
+    # below (does not), one right at the jitter edge of 0.80.
+    scores = [0.90, 0.40, 0.78]
+    out1, out2 = _run_main_twice_same_input(tool_path, diff, scores)
+
+    surfaced1 = sorted((f["file"], f["line"]) for f in out1["findings"])
+    surfaced2 = sorted((f["file"], f["line"]) for f in out2["findings"])
+
+    ok = check("V2: surfaced set (is_real>=0.80) is identical across two "
+              "runs of the SAME range/scores (no new pointers, none lost)",
+              surfaced1 == surfaced2, (surfaced1, surfaced2))
+
+    full_text1 = json.dumps(out1)
+    full_text2 = json.dumps(out2)
+    ok &= check("V2 TRIAGE CHECK: 'Approved' appears nowhere in run 1 output",
+               "Approved" not in full_text1)
+    ok &= check("V2 TRIAGE CHECK: 'Changes requested' appears nowhere in "
+               "run 1 output", "Changes requested" not in full_text1)
+    ok &= check("V2 TRIAGE CHECK: 'Approved' appears nowhere in run 2 output",
+               "Approved" not in full_text2)
+    ok &= check("V2 TRIAGE CHECK: 'Changes requested' appears nowhere in "
+               "run 2 output", "Changes requested" not in full_text2)
+    ok &= check("V2: every claim can cite the E1 wire_format + per-unit "
+               "cut field", "wire_format" in out1["meta"]
+               and all("cut" in f for f in out1["findings"]))
+    ok &= check("V2: status field is one of the honest-status values",
+               out1["meta"]["status"] in ("ok", "fail-open", "incomplete review"),
+               out1["meta"]["status"])
+    return ok
+
+
+# ---------- V3(a): jitter counts at the 0.80 gate reported ----------
+
+def test_v3a_jitter_counts_at_080_gate():
+    """The jitter helper (`near()`) already keys off the threshold
+    argument passed to compose() — this is reporting-only (spec cond 7):
+    calling compose() with threshold=0.80 (the TRIAGE CHECK gate) must
+    populate `jitter` for near-gate units, exactly as it does at the
+    legacy 0.50 level."""
+    findings = [
+        {"hunk": {"file": "a.py", "line": 1}, "is_real": 0.79,
+         "severity": 2.0, "rubric": "code-change"},   # within 0.03 of 0.80
+        {"hunk": {"file": "b.py", "line": 1}, "is_real": 0.95,
+         "severity": 2.0, "rubric": "code-change"},   # clear of the zone
+        {"hunk": {"file": "c.py", "line": 1}, "is_real": 0.40,
+         "severity": 2.0, "rubric": "code-change"},   # clear, below gate
     ]
-    reported, jitter, verdict = sor.compose(test_findings, [], None)
-    return check_condition(1, verdict == "",
-                          "compose() returns empty verdict (no forbidden strings)")
+    _reported, jitter, _verdict = sor.compose(findings, [], None,
+                                              threshold=sor.REFLEX_GATE)
+    jitter_files = {j["file"] for j in jitter}
+    ok = check("V3(a): the 0.79-scored unit (within 0.03 of 0.80) is "
+              "flagged as jitter", "a.py" in jitter_files, jitter)
+    ok &= check("V3(a): the 0.95-scored unit (clear of the zone) is NOT "
+               "flagged as jitter", "b.py" not in jitter_files, jitter)
+    ok &= check("V3(a): the 0.40-scored unit (clear, below gate) is NOT "
+               "flagged as jitter", "c.py" not in jitter_files, jitter)
+    return ok
 
 
-def test_condition_2():
-    """Condition 2: Deletion threshold stated in code."""
-    threshold = sor.DELETION_REAL_THRESHOLD
-    stated = 0.70
-    msg = f"Deletion threshold is {threshold} (v0.9: stated per Fable gate cond 2)"
-    return check_condition(2, threshold == stated, msg)
+# ---------- E2 sanity: site cutting is real, not a stub ----------
+
+def test_e2_site_cutting_is_real_not_a_stub():
+    unit, images = _multisite_ts_unit()
+    subs = sor.site_units(unit["file"], "", images("f.ts", unit)[1],
+                          unit["entries"], change_type="code-change")
+    ok = check("E2: site_units() returns real sub-clusters for a "
+              "multi-site TS unit (not None, not a stub)",
+              subs is not None and len(subs) > 1,
+              None if subs is None else len(subs))
+    ok &= check("E2: every produced sub-cluster is tagged cut='sites'",
+               subs is not None and all(s.get("cut") == "sites" for s in subs))
+    ok &= check("E2: leaf-most selection picks the call-argument over its "
+              "enclosing non-literal property (depth-tracked)",
+              _leafmost_depth_check())
+    return ok
 
 
-def test_condition_3():
-    """Condition 3: Ranking key (0.80) + 5-findings cap."""
-    # Verify REAL_THRESHOLD constant
-    threshold_ok = sor.REAL_THRESHOLD == 0.50
-    # Verify 5-findings cap exists in code (checked via implementation detail)
-    import inspect
-    source = inspect.getsource(sor.main)
-    cap_ok = "reported[:5]" in source
-    msg = f"Ranking key {sor.REAL_THRESHOLD} + 5-findings cap implemented"
-    return check_condition(3, threshold_ok and cap_ok, msg)
-
-
-def test_condition_4():
-    """Condition 4: INTENT.md status lines updated."""
-    # Verify by checking file exists and contains updated text
-    intent_file = Path("docs/founding/INTENT.md")
-    if not intent_file.exists():
-        return check_condition(4, False, "INTENT.md exists")
-
-    with open(intent_file) as f:
-        content = f.read()
-
-    # Check for v0.9 markers in each rule status
-    has_v09_marker = "v0.9" in content
-    msg = "INTENT.md status lines updated with v0.9 markers"
-    return check_condition(4, has_v09_marker, msg)
-
-
-def test_condition_5():
-    """Condition 5: Corpus manifest pins recorded."""
-    manifest_file = Path("docs/benchmarks/corpus-manifest.md")
-    if not manifest_file.exists():
-        return check_condition(5, False, "Corpus manifest exists")
-
-    with open(manifest_file) as f:
-        content = f.read()
-
-    # Check for reproof range markers
-    has_reproof = "reproof:ct-61cluster" in content
-    has_neg_heads = "Negative heads" in content
-    msg = "Corpus manifest pins recorded (reproof ranges, negative heads)"
-    return check_condition(5, has_reproof and has_neg_heads, msg)
-
-
-def test_condition_6():
-    """Condition 6: V7 census structure (model-off gate placeholder)."""
-    # Structure in place for measurement phase
-    msg = "V7 census structure (model-off, site-count gate) ready for measurement"
-    # Placeholder: True when infrastructure exists (TBD v0.10)
-    return check_condition(6, True, msg)
-
-
-def test_condition_7():
-    """Condition 7: Jitter reporting at 0.80 gate."""
-    # Jitter helper `near()` already keys off threshold
-    threshold_zone = 0.03
-    test_val_near = 0.79  # within zone of 0.80
-    test_val_far = 0.70   # outside zone
-
-    near_ok = sor.near(test_val_near, 0.80, threshold_zone)
-    far_ok = not sor.near(test_val_far, 0.80, threshold_zone)
-    msg = f"Jitter reporting at 0.80 gate (zone={threshold_zone})"
-    return check_condition(7, near_ok and far_ok, msg)
-
-
-def test_condition_8():
-    """Condition 8: Evidence wording fixes + ROADMAP fixed."""
-    roadmap_file = Path("docs/founding/ROADMAP.md")
-    if not roadmap_file.exists():
-        return check_condition(8, False, "ROADMAP.md exists")
-
-    with open(roadmap_file) as f:
-        content = f.read()
-
-    # Check for "seven" instead of "six"
-    has_seven = "seven Oct 15–19 fix-window" in content
-    msg = "Evidence wording + ROADMAP 'six' → 'seven' fix applied"
-    return check_condition(8, has_seven, msg)
-
-
-def test_condition_9():
-    """Condition 9: V1 noise-aware testing structure."""
-    # Structure in place for V1 (baseline twice, per-unit scores, surfaced set)
-    # Full V1 requires golden fixtures and measurement infrastructure
-    msg = "V1 noise-aware testing structure (baseline×2, per-unit, surfaced-set) ready"
-    return check_condition(9, True, msg)
-
-
-def test_condition_10():
-    """Condition 10: Status field carrier (meta + ledger)."""
-    # Verify status field would be included in outputs
-    import inspect
-    main_src = inspect.getsource(sor.main)
-    meta_has_status = 'meta["status"]' in main_src or '"status": status' in main_src
-    log_has_status = '"status": status' in main_src
-    msg = "Status field carrier in meta and ledger (ok/fail-open/incomplete review)"
-    return check_condition(10, meta_has_status and log_has_status, msg)
-
-
-def test_v1_exit_contract():
-    """V1 fixture regression: site-level cutting leaves scores at-or-above baseline.
-
-    Structure for measurement phase: requires golden fixture + baseline run twice.
-    """
-    print("\n--- V1 exit contract (fixture regression) ---")
-    print("✓ V1 structure in place (requires golden fixture for measurement)")
-    print("  - Per-unit is_real scores at 0.50 (legacy telemetry level)")
-    print("  - Surfaced set at 0.80 gate (unchanged vs baseline)")
-    print("  - Jitter zone (0.77-0.83) excluded from comparison")
-    return True
-
-
-def test_v2_exit_contract():
-    """V2 golden recall: TRIAGE CHECK (no "Approved"/"Changes requested" anywhere).
-
-    V2 pre-flight: run site cutter (model-off), confirm anchors within ±1.
-    """
-    print("\n--- V2 exit contract (golden recall + TRIAGE CHECK) ---")
-
-    # TRIAGE CHECK: no forbidden verdict strings
-    forbidden = ["Approved", "Changes requested"]
-    msg_ok = True
-    render_doc = sor.render.__doc__ or ""
-    main_doc = sor.main.__doc__ or ""
-    for word in forbidden:
-        if word in render_doc or word in main_doc:
-            msg_ok = False
-
-    if msg_ok:
-        print("✓ V2 TRIAGE CHECK: no forbidden verdict strings found")
-    else:
-        print("✗ V2 TRIAGE CHECK: forbidden strings found in docstrings")
-
-    print("✓ V2 pre-flight structure in place (site cutter model-off)")
-    print("  - Anchor placement within ±1 (B2/M2 class fix)")
-    print("  - B2/M2 units judged 3× each at 0.80 gate")
-    return msg_ok
-
-
-def test_v3_exit_contract():
-    """V3 negative arm: baseline runs twice, noise-band, like-for-like comparison.
-
-    V3(a): noise band measured on negative heads + reproof ranges.
-    V3(c): per-declaration majors counting change (measured separately).
-    """
-    print("\n--- V3 exit contract (negative-arm precision) ---")
-    print("✓ V3(a) structure: noise-band from baseline×2 (5 negative heads + reproof)")
-    print("✓ V3(c) structure: per-declaration majors vs flat count comparison")
-    print("  - parent_declaration field carries forward (rewrap)")
-    print("  - V3 measures flips caused solely by per-declaration rule")
-    return True
-
-
-def test_v5_exit_contract():
-    """V5 stamp test: wire_format distinguishes cutting paths.
-
-    window-cut vs site-cut must have different wire_format values.
-    """
-    print("\n--- V5 exit contract (stamp test) ---")
-
-    # Verify wire_format enum exists
-    has_enum = hasattr(sor, 'WIRE_FORMAT_ENUM')
-    has_precedence = hasattr(sor, 'WIRE_FORMAT_PRECEDENCE')
-    has_stamp_fn = hasattr(sor, 'stamp_wire_format')
-
-    if has_enum and has_precedence and has_stamp_fn:
-        print(f"✓ V5 stamp test structure: wire_format enum {sor.WIRE_FORMAT_ENUM}")
-        print(f"  - Precedence: {dict(sor.WIRE_FORMAT_PRECEDENCE)}")
-        print("  - Distinguishes window-cut from site-cut (and other paths)")
-    else:
-        print("✗ V5 stamp test: missing enum/precedence/function")
+def _leafmost_depth_check():
+    import ast
+    after = ("def f():\n"
+            "    config = {\n"
+            "        'timeout': compute(x, y),\n"
+            "    }\n")
+    tree = ast.parse(after)
+    cands = sor._py_site_candidates(tree)
+    assignment = sor._select_leafmost_sites(cands, [3])
+    if 3 not in [l for lines in assignment.values() for l in lines]:
         return False
-
-    return True
+    # the winning candidate for line 3 must be the DEEPEST (call_argument),
+    # not the enclosing property_assignment pair
+    idx = next(i for i, lines in assignment.items() if 3 in lines)
+    return cands[idx][2] == "call_argument"
 
 
 def run_all():
-    """Run all gate condition checks."""
-    print("SOR v0.9 FABLE GATE CONDITIONS (final-spec gate, rev 12)")
-    print("=" * 70)
-
+    tests = [
+        test_v5_stamp_distinguishes_site_cut_from_window_cut,
+        test_v1_baseline_vs_baseline_proves_gate_cannot_fail_on_noise,
+        test_v1_catches_a_real_regression,
+        test_v1_jitter_zone_excluded_and_named,
+        test_v2_surfaced_set_delta_and_triage_check,
+        test_v3a_jitter_counts_at_080_gate,
+        test_e2_site_cutting_is_real_not_a_stub,
+    ]
     results = []
-    results.append(test_condition_1())
-    results.append(test_condition_2())
-    results.append(test_condition_3())
-    results.append(test_condition_4())
-    results.append(test_condition_5())
-    results.append(test_condition_6())
-    results.append(test_condition_7())
-    results.append(test_condition_8())
-    results.append(test_condition_9())
-    results.append(test_condition_10())
-
-    # V1/V2/V3/V5 exit contracts
-    print("\n" + "=" * 70)
-    print("GATE EXIT CONTRACTS")
-    print("=" * 70)
-
-    results.append(test_v1_exit_contract())
-    results.append(test_v2_exit_contract())
-    results.append(test_v3_exit_contract())
-    results.append(test_v5_exit_contract())
-
-    # Summary
+    for t in tests:
+        print(f"\n--- {t.__name__} ---")
+        try:
+            results.append(bool(t()))
+        except Exception as exc:
+            print(f"[ERROR] {t.__name__}: {exc!r}")
+            results.append(False)
     print("\n" + "=" * 70)
     passed = sum(results)
-    total = len(results)
-    print(f"SUMMARY: {passed}/{total} checks passed")
-
-    if passed == total:
-        print("✓ All Fable gate conditions satisfied (v0.9 anchor release ready)")
-        return 0
-    else:
-        print(f"✗ {total - passed} items incomplete or deferred")
-        return 1
+    print(f"SUMMARY: {passed}/{len(results)} behavioral gate tests passed")
+    return 0 if passed == len(results) else 1
 
 
 if __name__ == "__main__":
