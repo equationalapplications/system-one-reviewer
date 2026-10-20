@@ -23,7 +23,7 @@ sustained rate, cost per sustained finding, and firing counts per class.
 
 **S1 — High-bar replay, model off** [ADOPTED — Kurt, msg 1561773701530386494]
 Why first: zero cost; decides whether the generic rubric keeps any verdict
-role. Method: sweep stored per-unit is_real scores (six Oct 15–19 window
+role. Method: sweep stored per-unit is_real scores (seven Oct 15–19 fix-window
 runs, six Oct 2 fixture runs, v08-gates corpus replay) at bars
 0.60–0.95. Gate: a bar where the 48 window false positives vanish and the
 5 fixture true positives survive → adopt as the reflex gate; no such bar →

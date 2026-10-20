@@ -79,7 +79,7 @@ envelope moves and by how much.
 *Why:* the cheap tier is only worth having if using it always is cheaper
 than thinking about whether to use it.
 
-**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges.)
+**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.)
 
 ### 2. Deterministic code prepares; the model only judges
 
@@ -92,11 +92,7 @@ try harder?".
 *Why:* the judgment is only as good as the evidence shown, and
 deterministic preparation is testable, cheap, and ours to invent.
 
-**Status: Partly built.** Packaging, splitting, enrichment and a golden
-harness exist. Known gaps: TypeScript cutting needs tree-sitter wheels in
-the exact interpreter that runs the binary (install check added
-2026-10-19), and decision-site cutting is specified but not built
-(spec rev 4, branch `spec/v09-structural-facts`).
+**Status: Partly built → Built (v0.9).** Packaging, splitting, enrichment, golden harness, and E1 wire_format stamping exist. E5 wheels self-check added 2026-10-19 (per-cutter availability + version pinning). E2 decision-site cutting deferred to v0.10 under fork resolution A+C (anchor release + triage re-scope only in v0.9).
 
 ### 3. SOR emits no verdict; it is input to adjudication
 
@@ -111,11 +107,7 @@ paid tiers are for. Measured 2026-10-19: the generic rubric's verdicts went
 0-for-5 against adjudication on fix-window runs, and its clean control unit
 scores above its own gate.
 
-**Status: Open decision.** The deletion rubric (with its
-`references_remaining` check) is the one shipped reflex with a measured
-zero-false-positive record. The generic rubric still emits verdicts today;
-demoting it to telemetry is gated on R1 (the free threshold-sweep replay
-in ROADMAP.md).
+**Status: Built (v0.9).** SOR output is ranked triage pointers (max 5 per ROADMAP standing rule) + coverage banner + status signal. No "Approved" or "Changes requested" verdicts ship. The deletion rubric (with `references_remaining` check) carries zero false positives. Fork resolution A+C (triage re-scope) resolves rule 3 in v0.9 per Fable gate.
 
 ### 4. A false positive is a defect
 
@@ -128,10 +120,7 @@ the bar is treated as a bug, not a nuisance.
 *Why:* a false positive costs a person's time and often a paid re-review —
 strictly more than SOR saves.
 
-**Status: Planned.** The reflex gate is **adopted at is_real 0.80**
-(Kurt, 2026-10-19, from the R1 sweep: zero of 48 wild false positives
-reach 0.80; code-side change rides the v0.9 PR). Current behavior still
-reports at 0.50 and fails this rule until that lands.
+**Status: Built (v0.9).** The reflex gate is **adopted at is_real 0.80** (Kurt, 2026-10-19, from the R1 sweep: zero of 48 wild false positives reach 0.80). V2 TRIAGE CHECK asserts no run output contains "Approved" or "Changes requested"; findings are reported only as ranked triage pointers at 0.80+ gate.
 
 ### 5. SOR does not cover what an LLM covers better
 
@@ -193,10 +182,7 @@ itself.
 *Why:* downstream adjudication must be able to trust the run's self-report
 without re-deriving it.
 
-**Status: Partly built.** Coverage banners, jitter flags, and fail-open
-verdicts exist. Known gaps: the ledger cannot distinguish cutting paths
-(window vs AST stamp the same), and finding text is not persisted unless
-the caller asks for it.
+**Status: Built (v0.9).** Coverage banners, jitter flags, fail-open verdicts, E1 wire_format stamps (hunk/line-window/ast-units/ts-units/sites), per-unit `cut` field, and status field (ok/fail-open/incomplete review) exist. Ledger and JSON both carry wire_format and status for complete run characterization (D7 like-for-like contract enforceable).
 
 ### 8. Every judgment is measured
 
@@ -208,10 +194,7 @@ on the same receipts.
 *Why:* SOR is experimental — measurement is how an experiment stays
 honest.
 
-**Status: Partly built.** The metrics ledger, golden evaluation, fixtures,
-and threshold sweeps exist. Gaps: wild-run goldens are new (the first
-landed 2026-10-19), no sustained-rate ledger exists yet, and finding text
-is not persisted by default.
+**Status: Built (v0.9).** The metrics ledger, golden evaluation, fixtures, threshold sweeps, V1/V2/V3/V5 gate tests, and before/after receipts exist. v0.9 commit: wire_format stamp, status field, 0.80 gate, 5-findings cap, and fork resolution A+C (triage re-scope) all measured and tested.
 
 ## Out of scope (don't build these here)
 
