@@ -1,3 +1,9 @@
+## [0.11.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.10.0...v0.11.0) (2026-10-20)
+
+### Features
+
+* hold test-file findings by default and add a locator to surfaced findings ([#27](https://github.com/equationalapplications/system-one-reviewer/issues/27)) ([8c7738d](https://github.com/equationalapplications/system-one-reviewer/commit/8c7738da62a34e7f2f34ac329e0417ba605cb931)), references [#26](https://github.com/equationalapplications/system-one-reviewer/issues/26)
+
 ## [0.10.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.9.0...v0.10.0) (2026-10-20)
 
 ### Features
