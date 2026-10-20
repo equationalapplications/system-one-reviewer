@@ -16,9 +16,10 @@ Date rev 5: Opus r1 M/minor fixes + optional research annex.
 Date rev 4: Opus r1 BLOCKERs resolved (V0 executed; root cause fixed).
 Date rev 3: GLM Tier-2 cycle 1 adjudicated (14 REAL / 1 PARTIAL / 0 FP).
 Date rev 2: OQ1/OQ2/OQ3 ruled by Kurt ("1,2,1").
-Status: DRAFT rev 12 — Fable final-spec gate (2026-10-19): REQUEST CHANGES,
-delta-gated; A+C FORK RESOLVED (anchor release + triage re-scope, no verdict
-output); next: Fable delta verdict on rev 12
+Status: DRAFT rev 13 — envelope RE-RULED to median ≤10× per V7 census
+(9.63× measured; Kurt, msg 1561917565234708573); spec text Fable-gated at
+rev 12 (APPROVE); implementation on `impl/v09-structural-facts` complete,
+tests green.
 Scope: `system_one_reviewer.py` (+ tests), `examples/`, `docs/benchmarks/`, install
 docs. No provider/API changes; NO changes to the generic code-change question set
 (HUNK_QUESTIONS). E6 (test-file question variant) is SPECIFIED here but SHIPS in
@@ -370,7 +371,16 @@ with a synthetic fact force-attached — is_real must stay below the report gate
   after both tightenings, E2 does NOT ship in v0.9; the census numbers go
   back to Kurt with the envelope decision. When the census passes, V2/V5 may
   spend. **ENVELOPE CONFIRMED (Kurt, msg 1561831827394793606, "Yes"):
-  median ≤ 5× is the adopted envelope.**
+  median ≤ 5× is the adopted envelope.** **ENVELOPE RE-RULED (Kurt,
+  msg 1561917565234708573, ruling "1" — 2026-10-19, per the terminal-outcome
+  contract above): the adopted envelope is now MEDIAN expansion ≤ 10×.**
+  Basis: the model-off V7 census on the real golden range
+  (`docs/benchmarks/2026-10-19-v7-site-census-golden-range.json`) measured
+  median expansion 87.74× → 25.79× → 9.63× across the two allowed floor
+  tightenings (floors 1 → 4 → 16), with median site size 20 lines (far under
+  the 120-line forbidden ceiling) and projected wall time ~155.5s. 9.63× ≤ 10×
+  passes; the census numbers went back to Kurt per the terminal-outcome
+  contract and this re-rule is his decision.
 
 ## Non-goals
 
