@@ -292,6 +292,70 @@ def _leafmost_depth_check():
     return cands[idx][2] == "call_argument"
 
 
+# ---------- condition 3: ranking key before the 5-findings cap ----------
+
+def test_ranking_key_keeps_strongest_findings_under_the_cap():
+    """condition 3: the 5-findings cap must drop the WEAKEST findings,
+    never an arbitrary diff-order suffix. Construct 6 findings where the
+    single BLOCKER is judged LAST (diff order) — a naive reported[:5]
+    truncation would drop it; the ranking key must not."""
+    diff = "".join(
+        f"diff --git a/f{i}.py b/f{i}.py\n--- /dev/null\n+++ b/f{i}.py\n"
+        f"@@ -0,0 +1,1 @@\n+x = 1\n"
+        for i in range(6))
+    # 5 MAJORs (sev=2.0) judged first, then the lone BLOCKER (sev=3.0) last.
+    scores = [(2.0, 0.85)] * 5 + [(3.0, 0.90)]
+    import importlib.util
+    import tempfile
+    from pathlib import Path
+    import io
+    import contextlib
+
+    spec = importlib.util.spec_from_file_location(
+        "jev-v09-rank-test", "system_one_reviewer.py")
+    jr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(jr)
+    with tempfile.TemporaryDirectory() as d:
+        tmp_path = Path(d)
+        jr.METRICS_PATH = str(tmp_path / "metrics.jsonl")
+        calls = iter(scores)
+
+        def fake_judge(kept, ask, errors=None, split_unit=None):
+            out = []
+            for h in kept:
+                sev, real = next(calls, (1.0, 0.1))
+                out.append({"hunk": h, "severity": sev, "is_real": real,
+                           "category": "bug-risk", "rubric": "code-change",
+                           "references_remaining": None,
+                           "change_type": "code-change", "latency_ms": 1.0})
+            return out, [1.0] * len(kept), {"added_units": 0,
+                                            "avg_input_tokens": None}
+        jr.judge = fake_judge
+        jr.judge_pr_level = lambda f, a, size_skipped_code=None: {
+            "overall_risk": 1.0, "needs_human_review": 0.5, "latency_ms": 1.0}
+        jr.resolve_diff = lambda repo, args: (diff, "0" * 40, "staged")
+        jr.mode_file_images = lambda r, m, h, p, old_file=None: (None, "x = 1\n")
+        jr.log_run = lambda rec: None
+        jr.make_provider = lambda *a, **k: (lambda s, q: ({"answers": {}}, 1.0))
+        jr.load_api_key = lambda: "k"
+        jr.sys.argv = ["system-one-reviewer", "--repo", str(tmp_path),
+                      "--staged", "--provider", "jev", "--json"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            jr.main()
+        out = json.loads(buf.getvalue())
+
+    severities = [f["severity"] for f in out["findings"]]
+    ok = check("condition 3: the cap keeps exactly 5 findings",
+              len(out["findings"]) == 5, len(out["findings"]))
+    ok &= check("condition 3: the BLOCKER judged LAST survives the cap "
+              "(ranking key, not diff-order truncation)",
+              3.0 in severities, severities)
+    ok &= check("condition 3: findings are ranked severity-descending",
+               severities == sorted(severities, reverse=True), severities)
+    return ok
+
+
 def run_all():
     tests = [
         test_v5_stamp_distinguishes_site_cut_from_window_cut,
@@ -301,6 +365,7 @@ def run_all():
         test_v2_surfaced_set_delta_and_triage_check,
         test_v3a_jitter_counts_at_080_gate,
         test_e2_site_cutting_is_real_not_a_stub,
+        test_ranking_key_keeps_strongest_findings_under_the_cap,
     ]
     results = []
     for t in tests:

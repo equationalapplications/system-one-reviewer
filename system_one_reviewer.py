@@ -3875,8 +3875,14 @@ def main():
     # dropped over max-hunks) mark the review as incomplete.
     reported, jitter, _ = compose(findings, skipped,
                                   pr_level if not fail_open else None)
-    # v0.9: apply 5-findings cap per ROADMAP standing rule
-    reported = reported[:5]
+    # v0.9 (condition 3): ranking key for triage pointers, THEN the
+    # 5-findings cap (ROADMAP standing rule) — severity descending, then
+    # is_real descending as a tiebreak, so the cap drops the WEAKEST
+    # findings, never an arbitrary diff-order suffix. Without the sort,
+    # a high-severity finding that happened to be judged last could be
+    # truncated away while a weaker early one survives.
+    reported = sorted(reported, key=lambda f: (
+        -(f.get("severity") or 0), -(f.get("is_real") or 0)))[:5]
     # r15-M1: leaves now join BEFORE judge_pr_level/compose (see the
     # amended insertion window above); the old post-compose insert is
     # gone. n_unjudged counts them unchanged.
