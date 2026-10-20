@@ -3765,6 +3765,8 @@ def main():
     #   (4) attach ast_context (jev only, unless --no-enrichment; Task 6)
     #   (5) re-estimate + RE-expand (step 0: DROP ast_context, r12-M1)
     #   (6) freeze n_units_pre / n_dropped
+    # Initialize n_total_top_level_clusters for banner denominator (INTENT rule 7)
+    n_total_top_level_clusters = len(hunks)
     if provider == "jev" and kept:
         # r2-M2: per-mode pre/post file images for the cutter; a missing
         # image degrades (mode_file_images returns None) — never exits.
@@ -3822,7 +3824,6 @@ def main():
     else:
         leaves = []
         n_leaf_unjudged = 0
-        n_total_top_level_clusters = len(hunks)
         n_units_pre = 0  # Initialize to 0 since no expansion happens for non-jev
         if provider == "jev":
             n_dropped = 0
