@@ -29,6 +29,7 @@ Usage:
 
 import argparse
 import ast
+import importlib
 import json
 import math
 import os
@@ -39,6 +40,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from http.client import HTTPSConnection
+from typing import Any
 from urllib.parse import urlparse
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
@@ -1475,7 +1477,7 @@ def _py_site_candidates(tree):
             self.generic_visit(node)
 
         def _visit_block(self, body):
-            run = []
+            run: list = []
 
             def flush():
                 if len(run) >= 2:
@@ -1573,7 +1575,7 @@ def _ts_site_candidates(root):
             s, e = span(node)
             candidates.append((s, e, "conditional", depth))
         if node.type in ("program", "statement_block", "class_body"):
-            run = []
+            run: list = []
 
             def flush():
                 if len(run) >= 2:
@@ -1610,11 +1612,11 @@ def _select_leafmost_sites(candidates, changed_lines):
     assignment: dict[int, list] = {}
     for line in changed_lines:
         best = None
-        best_key = None  # (-depth, size, start) — lexicographically smallest wins
+        best_key: tuple | None = None  # (-depth, size, start) — lexicographically smallest wins
         for idx, (s, e, _k, depth) in enumerate(candidates):
             if s <= line <= e:
                 key = (-depth, e - s, s)
-                if best is None or key < best_key:
+                if best_key is None or key < best_key:
                     best, best_key = idx, key
         if best is not None:
             assignment.setdefault(best, []).append(line)
@@ -1657,6 +1659,7 @@ def site_units(path, before_text, after_text, entries, change_type="code-change"
         return None
     ext = os.path.splitext(path or "")[1].lower().lstrip(".")
     candidates = None
+    tree: Any
     if ext == "py":
         try:
             tree = ast.parse(after_text or "")
@@ -3267,7 +3270,7 @@ def judge_pr_level(findings, ask, size_skipped_code=None):
 
 
 # E5: wheels packaging availability check (per-cutter self-check per M2/m4).
-_WHEELS_VERSIONS = {}  # Cached per-cutter versions
+_WHEELS_VERSIONS: dict[str, tuple] = {}  # Cached per-cutter versions
 
 
 _CUTTER_SNIPPETS = {
@@ -3301,7 +3304,7 @@ def check_cutter_availability(lang):
             ast.parse(_CUTTER_SNIPPETS["python"])
             _WHEELS_VERSIONS[lang] = (True, "stdlib")
             return True, "stdlib"
-        import tree_sitter
+        tree_sitter = importlib.import_module("tree_sitter")
         grammar_pkg = ("tree_sitter_typescript" if lang == "ts"
                        else "tree_sitter_javascript")
         grammar_mod = __import__(grammar_pkg)
