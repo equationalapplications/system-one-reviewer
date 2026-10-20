@@ -55,7 +55,14 @@ def _covers(e, file, line):
 
 def replay_indices(jr, sw, rec, t, dt):
     wrapped = [sw.rewrap(j, run_version=rec.get("packaging_version")) for j in rec["judged"]]
-    reported, _, verdict = jr.compose(wrapped, [], None, threshold=t, deletion_threshold=dt)
+    reported, _, _ = jr.compose(wrapped, [], None, threshold=t, deletion_threshold=dt)
+    # v0.9 fork resolution (A+C): compose() itself returns no verdict (its
+    # 3rd value is always "") — this script's verdict accuracy/flip
+    # measurement needs the retired rule, which lives on in
+    # majors_verdict_for_measurement (measurement-only, built for V3(c));
+    # flat (non-per-declaration) counting reproduces the pre-v0.9 behavior
+    # this script was written against.
+    verdict = jr.majors_verdict_for_measurement(reported, per_declaration=False)
     ids = {id(f) for f in reported}
     return [i for i, w in enumerate(wrapped) if id(w) in ids], reported, verdict
 

@@ -1,0 +1,2810 @@
+[
+ {
+  "unit": "B1+N1-custody-tables",
+  "variant": "clean",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 0.16,
+   "confidence": 0.85,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.92,
+    "1": 0.03,
+    "2": 0.03,
+    "3": 0.02
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.3
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.33,
+   "probabilities": {
+    "bug-risk": 0.03,
+    "security": 0.27,
+    "style": 0.19,
+    "performance": 0.0,
+    "test-gap": 0.07,
+    "other": 0.44
+   }
+  },
+  "latency_ms": 171.3,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.16,
+    "confidence": 0.85,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.92,
+     "1": 0.03,
+     "2": 0.03,
+     "3": 0.02
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.3
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.33,
+    "probabilities": {
+     "bug-risk": 0.03,
+     "security": 0.27,
+     "style": 0.19,
+     "performance": 0.0,
+     "test-gap": 0.07,
+     "other": 0.44
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "B1+N1-custody-tables",
+  "variant": "clean",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 0.18,
+   "confidence": 0.82,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.9,
+    "1": 0.04,
+    "2": 0.04,
+    "3": 0.02
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.31
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.35,
+   "probabilities": {
+    "bug-risk": 0.03,
+    "security": 0.24,
+    "style": 0.19,
+    "performance": 0.0,
+    "test-gap": 0.08,
+    "other": 0.46
+   }
+  },
+  "latency_ms": 95.2,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.18,
+    "confidence": 0.82,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.9,
+     "1": 0.04,
+     "2": 0.04,
+     "3": 0.02
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.31
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.35,
+    "probabilities": {
+     "bug-risk": 0.03,
+     "security": 0.24,
+     "style": 0.19,
+     "performance": 0.0,
+     "test-gap": 0.08,
+     "other": 0.46
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B1+N1-custody-tables",
+  "variant": "clean",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 0.15,
+   "confidence": 0.85,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.92,
+    "1": 0.03,
+    "2": 0.03,
+    "3": 0.02
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.31
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.34,
+   "probabilities": {
+    "bug-risk": 0.03,
+    "security": 0.24,
+    "style": 0.19,
+    "performance": 0.01,
+    "test-gap": 0.08,
+    "other": 0.45
+   }
+  },
+  "latency_ms": 119.5,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.15,
+    "confidence": 0.85,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.92,
+     "1": 0.03,
+     "2": 0.03,
+     "3": 0.02
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.31
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.34,
+    "probabilities": {
+     "bug-risk": 0.03,
+     "security": 0.24,
+     "style": 0.19,
+     "performance": 0.01,
+     "test-gap": 0.08,
+     "other": 0.45
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B1+N1-custody-tables",
+  "variant": "fact",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 2.97,
+   "confidence": 0.97,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.03,
+    "3": 0.97
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.96
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.94,
+   "probabilities": {
+    "bug-risk": 0.95,
+    "security": 0.05,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 95.7,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.97,
+    "confidence": 0.97,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.03,
+     "3": 0.97
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.96
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.94,
+    "probabilities": {
+     "bug-risk": 0.95,
+     "security": 0.05,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B1+N1-custody-tables",
+  "variant": "fact",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 2.96,
+   "confidence": 0.97,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.03,
+    "3": 0.97
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.95
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.93,
+   "probabilities": {
+    "bug-risk": 0.9400000000000001,
+    "security": 0.06,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 87.1,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.96,
+    "confidence": 0.97,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.03,
+     "3": 0.97
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.95
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.93,
+    "probabilities": {
+     "bug-risk": 0.9400000000000001,
+     "security": 0.06,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B1+N1-custody-tables",
+  "variant": "fact",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 2.96,
+   "confidence": 0.97,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.03,
+    "3": 0.97
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.96
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.94,
+   "probabilities": {
+    "bug-risk": 0.95,
+    "security": 0.05,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 86.7,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.96,
+    "confidence": 0.97,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.03,
+     "3": 0.97
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.96
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.94,
+    "probabilities": {
+     "bug-risk": 0.95,
+     "security": 0.05,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B2+M2-stack-trail",
+  "variant": "clean",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 1.47,
+   "confidence": 0.0,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.36,
+    "1": 0.05,
+    "2": 0.34,
+    "3": 0.25
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.55
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.26,
+   "probabilities": {
+    "bug-risk": 0.28,
+    "security": 0.11,
+    "style": 0.05,
+    "performance": 0.03,
+    "test-gap": 0.15,
+    "other": 0.38
+   }
+  },
+  "latency_ms": 96.3,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 1.47,
+    "confidence": 0.0,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.36,
+     "1": 0.05,
+     "2": 0.34,
+     "3": 0.25
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.55
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.26,
+    "probabilities": {
+     "bug-risk": 0.28,
+     "security": 0.11,
+     "style": 0.05,
+     "performance": 0.03,
+     "test-gap": 0.15,
+     "other": 0.38
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B2+M2-stack-trail",
+  "variant": "clean",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 1.47,
+   "confidence": 0.0,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.36,
+    "1": 0.05,
+    "2": 0.35,
+    "3": 0.24
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.55
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.28,
+   "probabilities": {
+    "bug-risk": 0.26,
+    "security": 0.09,
+    "style": 0.05,
+    "performance": 0.02,
+    "test-gap": 0.18,
+    "other": 0.4
+   }
+  },
+  "latency_ms": 165.2,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 1.47,
+    "confidence": 0.0,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.36,
+     "1": 0.05,
+     "2": 0.35,
+     "3": 0.24
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.55
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.28,
+    "probabilities": {
+     "bug-risk": 0.26,
+     "security": 0.09,
+     "style": 0.05,
+     "performance": 0.02,
+     "test-gap": 0.18,
+     "other": 0.4
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "B2+M2-stack-trail",
+  "variant": "clean",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 1.52,
+   "confidence": 0.0,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.33999999999999997,
+    "1": 0.05,
+    "2": 0.34,
+    "3": 0.27
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.56
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.26,
+   "probabilities": {
+    "bug-risk": 0.27,
+    "security": 0.1,
+    "style": 0.06,
+    "performance": 0.03,
+    "test-gap": 0.16,
+    "other": 0.38
+   }
+  },
+  "latency_ms": 161.8,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 1.52,
+    "confidence": 0.0,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.33999999999999997,
+     "1": 0.05,
+     "2": 0.34,
+     "3": 0.27
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.56
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.26,
+    "probabilities": {
+     "bug-risk": 0.27,
+     "security": 0.1,
+     "style": 0.06,
+     "performance": 0.03,
+     "test-gap": 0.16,
+     "other": 0.38
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "B2+M2-stack-trail",
+  "variant": "fact",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 2.86,
+   "confidence": 0.87,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.13,
+    "3": 0.87
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.95
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 1.0,
+   "probabilities": {
+    "bug-risk": 1.0,
+    "security": 0.0,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 82.8,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.86,
+    "confidence": 0.87,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.13,
+     "3": 0.87
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.95
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 1.0,
+    "probabilities": {
+     "bug-risk": 1.0,
+     "security": 0.0,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B2+M2-stack-trail",
+  "variant": "fact",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 2.86,
+   "confidence": 0.87,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.13,
+    "3": 0.87
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.95
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 1.0,
+   "probabilities": {
+    "bug-risk": 1.0,
+    "security": 0.0,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 130.5,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.86,
+    "confidence": 0.87,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.13,
+     "3": 0.87
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.95
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 1.0,
+    "probabilities": {
+     "bug-risk": 1.0,
+     "security": 0.0,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "B2+M2-stack-trail",
+  "variant": "fact",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 2.83,
+   "confidence": 0.84,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.16,
+    "3": 0.84
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.95
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 1.0,
+   "probabilities": {
+    "bug-risk": 1.0,
+    "security": 0.0,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 181.6,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.83,
+    "confidence": 0.84,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.16,
+     "3": 0.84
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.95
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 1.0,
+    "probabilities": {
+     "bug-risk": 1.0,
+     "security": 0.0,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "M1-stack-filter",
+  "variant": "clean",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 0.33,
+   "confidence": 0.66,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.84,
+    "1": 0.03,
+    "2": 0.08,
+    "3": 0.05
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.46
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.35,
+   "probabilities": {
+    "bug-risk": 0.46,
+    "security": 0.01,
+    "style": 0.1,
+    "performance": 0.02,
+    "test-gap": 0.09,
+    "other": 0.32
+   }
+  },
+  "latency_ms": 114.2,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.33,
+    "confidence": 0.66,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.84,
+     "1": 0.03,
+     "2": 0.08,
+     "3": 0.05
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.46
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.35,
+    "probabilities": {
+     "bug-risk": 0.46,
+     "security": 0.01,
+     "style": 0.1,
+     "performance": 0.02,
+     "test-gap": 0.09,
+     "other": 0.32
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M1-stack-filter",
+  "variant": "clean",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 0.35,
+   "confidence": 0.65,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.83,
+    "1": 0.04,
+    "2": 0.08,
+    "3": 0.05
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.44
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.27,
+   "probabilities": {
+    "bug-risk": 0.39,
+    "security": 0.01,
+    "style": 0.11,
+    "performance": 0.02,
+    "test-gap": 0.12,
+    "other": 0.35
+   }
+  },
+  "latency_ms": 174.4,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.35,
+    "confidence": 0.65,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.83,
+     "1": 0.04,
+     "2": 0.08,
+     "3": 0.05
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.44
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.27,
+    "probabilities": {
+     "bug-risk": 0.39,
+     "security": 0.01,
+     "style": 0.11,
+     "performance": 0.02,
+     "test-gap": 0.12,
+     "other": 0.35
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "M1-stack-filter",
+  "variant": "clean",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 0.31,
+   "confidence": 0.7,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.85,
+    "1": 0.04,
+    "2": 0.07,
+    "3": 0.04
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.45
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.42,
+   "probabilities": {
+    "bug-risk": 0.52,
+    "security": 0.01,
+    "style": 0.08,
+    "performance": 0.02,
+    "test-gap": 0.07,
+    "other": 0.3
+   }
+  },
+  "latency_ms": 126.4,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.31,
+    "confidence": 0.7,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.85,
+     "1": 0.04,
+     "2": 0.07,
+     "3": 0.04
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.45
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.42,
+    "probabilities": {
+     "bug-risk": 0.52,
+     "security": 0.01,
+     "style": 0.08,
+     "performance": 0.02,
+     "test-gap": 0.07,
+     "other": 0.3
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M1-stack-filter",
+  "variant": "fact",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 2.58,
+   "confidence": 0.58,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.01,
+    "1": 0.0,
+    "2": 0.39,
+    "3": 0.6
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.94
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 1.0,
+   "probabilities": {
+    "bug-risk": 1.0,
+    "security": 0.0,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 128.6,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.58,
+    "confidence": 0.58,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.01,
+     "1": 0.0,
+     "2": 0.39,
+     "3": 0.6
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.94
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 1.0,
+    "probabilities": {
+     "bug-risk": 1.0,
+     "security": 0.0,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M1-stack-filter",
+  "variant": "fact",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 2.62,
+   "confidence": 0.62,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.01,
+    "1": 0.0,
+    "2": 0.35,
+    "3": 0.64
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.94
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 1.0,
+   "probabilities": {
+    "bug-risk": 1.0,
+    "security": 0.0,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 145.5,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.62,
+    "confidence": 0.62,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.01,
+     "1": 0.0,
+     "2": 0.35,
+     "3": 0.64
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.94
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 1.0,
+    "probabilities": {
+     "bug-risk": 1.0,
+     "security": 0.0,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M1-stack-filter",
+  "variant": "fact",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 2.6,
+   "confidence": 0.6,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.01,
+    "1": 0.0,
+    "2": 0.37,
+    "3": 0.62
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.94
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 1.0,
+   "probabilities": {
+    "bug-risk": 1.0,
+    "security": 0.0,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 114.5,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.6,
+    "confidence": 0.6,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.01,
+     "1": 0.0,
+     "2": 0.37,
+     "3": 0.62
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.94
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 1.0,
+    "probabilities": {
+     "bug-risk": 1.0,
+     "security": 0.0,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M3-envelope-mapkms",
+  "variant": "clean",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 0.88,
+   "confidence": 0.13,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.63,
+    "1": 0.05,
+    "2": 0.14,
+    "3": 0.18
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.43
+  },
+  "category": {
+   "type": "choice",
+   "choice": "test-gap",
+   "confidence": 0.17,
+   "probabilities": {
+    "bug-risk": 0.06,
+    "security": 0.24,
+    "style": 0.1,
+    "performance": 0.0,
+    "test-gap": 0.31,
+    "other": 0.29
+   }
+  },
+  "latency_ms": 209.0,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.88,
+    "confidence": 0.13,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.63,
+     "1": 0.05,
+     "2": 0.14,
+     "3": 0.18
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.43
+   },
+   "category": {
+    "type": "choice",
+    "choice": "test-gap",
+    "confidence": 0.17,
+    "probabilities": {
+     "bug-risk": 0.06,
+     "security": 0.24,
+     "style": 0.1,
+     "performance": 0.0,
+     "test-gap": 0.31,
+     "other": 0.29
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "M3-envelope-mapkms",
+  "variant": "clean",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 0.9,
+   "confidence": 0.09,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.61,
+    "1": 0.06,
+    "2": 0.14,
+    "3": 0.19
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.43
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.2,
+   "probabilities": {
+    "bug-risk": 0.06,
+    "security": 0.24,
+    "style": 0.08,
+    "performance": 0.0,
+    "test-gap": 0.29,
+    "other": 0.33
+   }
+  },
+  "latency_ms": 126.1,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.9,
+    "confidence": 0.09,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.61,
+     "1": 0.06,
+     "2": 0.14,
+     "3": 0.19
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.43
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.2,
+    "probabilities": {
+     "bug-risk": 0.06,
+     "security": 0.24,
+     "style": 0.08,
+     "performance": 0.0,
+     "test-gap": 0.29,
+     "other": 0.33
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M3-envelope-mapkms",
+  "variant": "clean",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 0.96,
+   "confidence": 0.04,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.59,
+    "1": 0.06,
+    "2": 0.15,
+    "3": 0.2
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.44
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.2,
+   "probabilities": {
+    "bug-risk": 0.06,
+    "security": 0.24,
+    "style": 0.09,
+    "performance": 0.0,
+    "test-gap": 0.28,
+    "other": 0.33
+   }
+  },
+  "latency_ms": 163.7,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.96,
+    "confidence": 0.04,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.59,
+     "1": 0.06,
+     "2": 0.15,
+     "3": 0.2
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.44
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.2,
+    "probabilities": {
+     "bug-risk": 0.06,
+     "security": 0.24,
+     "style": 0.09,
+     "performance": 0.0,
+     "test-gap": 0.28,
+     "other": 0.33
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "M3-envelope-mapkms",
+  "variant": "fact",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 2.36,
+   "confidence": 0.6,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.01,
+    "1": 0.0,
+    "2": 0.61,
+    "3": 0.38
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.88
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.95,
+   "probabilities": {
+    "bug-risk": 0.96,
+    "security": 0.04,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 170.8,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.36,
+    "confidence": 0.6,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.01,
+     "1": 0.0,
+     "2": 0.61,
+     "3": 0.38
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.88
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.95,
+    "probabilities": {
+     "bug-risk": 0.96,
+     "security": 0.04,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.2
+ },
+ {
+  "unit": "M3-envelope-mapkms",
+  "variant": "fact",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 2.38,
+   "confidence": 0.59,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.01,
+    "1": 0.0,
+    "2": 0.6,
+    "3": 0.39
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.88
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.96,
+   "probabilities": {
+    "bug-risk": 0.97,
+    "security": 0.03,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 129.4,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.38,
+    "confidence": 0.59,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.01,
+     "1": 0.0,
+     "2": 0.6,
+     "3": 0.39
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.88
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.96,
+    "probabilities": {
+     "bug-risk": 0.97,
+     "security": 0.03,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "M3-envelope-mapkms",
+  "variant": "fact",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 2.34,
+   "confidence": 0.63,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.01,
+    "1": 0.0,
+    "2": 0.64,
+    "3": 0.35
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.87
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.94,
+   "probabilities": {
+    "bug-risk": 0.95,
+    "security": 0.05,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.0,
+    "other": 0.0
+   }
+  },
+  "latency_ms": 98.6,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.34,
+    "confidence": 0.63,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.01,
+     "1": 0.0,
+     "2": 0.64,
+     "3": 0.35
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.87
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.94,
+    "probabilities": {
+     "bug-risk": 0.95,
+     "security": 0.05,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.0,
+     "other": 0.0
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N3-envelope-opengate",
+  "variant": "clean",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 1.02,
+   "confidence": 0.0,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.58,
+    "1": 0.04,
+    "2": 0.17,
+    "3": 0.21
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.51
+  },
+  "category": {
+   "type": "choice",
+   "choice": "security",
+   "confidence": 0.64,
+   "probabilities": {
+    "bug-risk": 0.08,
+    "security": 0.7,
+    "style": 0.07,
+    "performance": 0.01,
+    "test-gap": 0.05,
+    "other": 0.09
+   }
+  },
+  "latency_ms": 146.3,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 1.02,
+    "confidence": 0.0,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.58,
+     "1": 0.04,
+     "2": 0.17,
+     "3": 0.21
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.51
+   },
+   "category": {
+    "type": "choice",
+    "choice": "security",
+    "confidence": 0.64,
+    "probabilities": {
+     "bug-risk": 0.08,
+     "security": 0.7,
+     "style": 0.07,
+     "performance": 0.01,
+     "test-gap": 0.05,
+     "other": 0.09
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N3-envelope-opengate",
+  "variant": "clean",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 1.01,
+   "confidence": 0.0,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.57,
+    "1": 0.05,
+    "2": 0.18,
+    "3": 0.2
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.52
+  },
+  "category": {
+   "type": "choice",
+   "choice": "security",
+   "confidence": 0.65,
+   "probabilities": {
+    "bug-risk": 0.07,
+    "security": 0.71,
+    "style": 0.09,
+    "performance": 0.01,
+    "test-gap": 0.04,
+    "other": 0.08
+   }
+  },
+  "latency_ms": 131.9,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 1.01,
+    "confidence": 0.0,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.57,
+     "1": 0.05,
+     "2": 0.18,
+     "3": 0.2
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.52
+   },
+   "category": {
+    "type": "choice",
+    "choice": "security",
+    "confidence": 0.65,
+    "probabilities": {
+     "bug-risk": 0.07,
+     "security": 0.71,
+     "style": 0.09,
+     "performance": 0.01,
+     "test-gap": 0.04,
+     "other": 0.08
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N3-envelope-opengate",
+  "variant": "clean",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 0.97,
+   "confidence": 0.03,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.59,
+    "1": 0.04,
+    "2": 0.18,
+    "3": 0.19
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.52
+  },
+  "category": {
+   "type": "choice",
+   "choice": "security",
+   "confidence": 0.64,
+   "probabilities": {
+    "bug-risk": 0.07,
+    "security": 0.7,
+    "style": 0.07,
+    "performance": 0.01,
+    "test-gap": 0.05,
+    "other": 0.1
+   }
+  },
+  "latency_ms": 100.2,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.97,
+    "confidence": 0.03,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.59,
+     "1": 0.04,
+     "2": 0.18,
+     "3": 0.19
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.52
+   },
+   "category": {
+    "type": "choice",
+    "choice": "security",
+    "confidence": 0.64,
+    "probabilities": {
+     "bug-risk": 0.07,
+     "security": 0.7,
+     "style": 0.07,
+     "performance": 0.01,
+     "test-gap": 0.05,
+     "other": 0.1
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N3-envelope-opengate",
+  "variant": "fact",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 2.13,
+   "confidence": 0.49,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.09,
+    "1": 0.01,
+    "2": 0.58,
+    "3": 0.32
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.77
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.71,
+   "probabilities": {
+    "bug-risk": 0.76,
+    "security": 0.2,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.02,
+    "other": 0.02
+   }
+  },
+  "latency_ms": 88.9,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.13,
+    "confidence": 0.49,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.09,
+     "1": 0.01,
+     "2": 0.58,
+     "3": 0.32
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.77
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.71,
+    "probabilities": {
+     "bug-risk": 0.76,
+     "security": 0.2,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.02,
+     "other": 0.02
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N3-envelope-opengate",
+  "variant": "fact",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 1.98,
+   "confidence": 0.42,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.14,
+    "1": 0.02,
+    "2": 0.56,
+    "3": 0.28
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.75
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.74,
+   "probabilities": {
+    "bug-risk": 0.78,
+    "security": 0.17,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.02,
+    "other": 0.03
+   }
+  },
+  "latency_ms": 118.2,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 1.98,
+    "confidence": 0.42,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.14,
+     "1": 0.02,
+     "2": 0.56,
+     "3": 0.28
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.75
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.74,
+    "probabilities": {
+     "bug-risk": 0.78,
+     "security": 0.17,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.02,
+     "other": 0.03
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N3-envelope-opengate",
+  "variant": "fact",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 2.03,
+   "confidence": 0.42,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.13,
+    "1": 0.02,
+    "2": 0.55,
+    "3": 0.3
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.75
+  },
+  "category": {
+   "type": "choice",
+   "choice": "bug-risk",
+   "confidence": 0.71,
+   "probabilities": {
+    "bug-risk": 0.76,
+    "security": 0.2,
+    "style": 0.0,
+    "performance": 0.0,
+    "test-gap": 0.02,
+    "other": 0.02
+   }
+  },
+  "latency_ms": 116.5,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 2.03,
+    "confidence": 0.42,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.13,
+     "1": 0.02,
+     "2": 0.55,
+     "3": 0.3
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.75
+   },
+   "category": {
+    "type": "choice",
+    "choice": "bug-risk",
+    "confidence": 0.71,
+    "probabilities": {
+     "bug-risk": 0.76,
+     "security": 0.2,
+     "style": 0.0,
+     "performance": 0.0,
+     "test-gap": 0.02,
+     "other": 0.02
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N4-placeholder-test",
+  "variant": "clean",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 0.49,
+   "confidence": 0.51,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.76,
+    "1": 0.07,
+    "2": 0.09,
+    "3": 0.08
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.32
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.39,
+   "probabilities": {
+    "bug-risk": 0.05,
+    "security": 0.01,
+    "style": 0.21,
+    "performance": 0.01,
+    "test-gap": 0.23,
+    "other": 0.49
+   }
+  },
+  "latency_ms": 98.6,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.49,
+    "confidence": 0.51,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.76,
+     "1": 0.07,
+     "2": 0.09,
+     "3": 0.08
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.32
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.39,
+    "probabilities": {
+     "bug-risk": 0.05,
+     "security": 0.01,
+     "style": 0.21,
+     "performance": 0.01,
+     "test-gap": 0.23,
+     "other": 0.49
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N4-placeholder-test",
+  "variant": "clean",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 0.38,
+   "confidence": 0.62,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.81,
+    "1": 0.06,
+    "2": 0.07,
+    "3": 0.06
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.3
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.42,
+   "probabilities": {
+    "bug-risk": 0.05,
+    "security": 0.01,
+    "style": 0.21,
+    "performance": 0.01,
+    "test-gap": 0.2,
+    "other": 0.52
+   }
+  },
+  "latency_ms": 109.6,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.38,
+    "confidence": 0.62,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.81,
+     "1": 0.06,
+     "2": 0.07,
+     "3": 0.06
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.3
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.42,
+    "probabilities": {
+     "bug-risk": 0.05,
+     "security": 0.01,
+     "style": 0.21,
+     "performance": 0.01,
+     "test-gap": 0.2,
+     "other": 0.52
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N4-placeholder-test",
+  "variant": "clean",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 0.46,
+   "confidence": 0.52,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.76,
+    "1": 0.07,
+    "2": 0.1,
+    "3": 0.07
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.31
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.38,
+   "probabilities": {
+    "bug-risk": 0.06,
+    "security": 0.01,
+    "style": 0.24,
+    "performance": 0.01,
+    "test-gap": 0.2,
+    "other": 0.48
+   }
+  },
+  "latency_ms": 86.7,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.46,
+    "confidence": 0.52,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.76,
+     "1": 0.07,
+     "2": 0.1,
+     "3": 0.07
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.31
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.38,
+    "probabilities": {
+     "bug-risk": 0.06,
+     "security": 0.01,
+     "style": 0.24,
+     "performance": 0.01,
+     "test-gap": 0.2,
+     "other": 0.48
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N4-placeholder-test",
+  "variant": "fact",
+  "rep": 1,
+  "severity": {
+   "type": "score",
+   "score": 0.53,
+   "confidence": 0.45,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.66,
+    "1": 0.19,
+    "2": 0.09,
+    "3": 0.06
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.4
+  },
+  "category": {
+   "type": "choice",
+   "choice": "style",
+   "confidence": 0.29,
+   "probabilities": {
+    "bug-risk": 0.02,
+    "security": 0.01,
+    "style": 0.41000000000000003,
+    "performance": 0.01,
+    "test-gap": 0.18,
+    "other": 0.37
+   }
+  },
+  "latency_ms": 106.4,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.53,
+    "confidence": 0.45,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.66,
+     "1": 0.19,
+     "2": 0.09,
+     "3": 0.06
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.4
+   },
+   "category": {
+    "type": "choice",
+    "choice": "style",
+    "confidence": 0.29,
+    "probabilities": {
+     "bug-risk": 0.02,
+     "security": 0.01,
+     "style": 0.41000000000000003,
+     "performance": 0.01,
+     "test-gap": 0.18,
+     "other": 0.37
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N4-placeholder-test",
+  "variant": "fact",
+  "rep": 2,
+  "severity": {
+   "type": "score",
+   "score": 0.57,
+   "confidence": 0.42,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.63,
+    "1": 0.22,
+    "2": 0.09,
+    "3": 0.06
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.4
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.28,
+   "probabilities": {
+    "bug-risk": 0.02,
+    "security": 0.01,
+    "style": 0.36,
+    "performance": 0.01,
+    "test-gap": 0.2,
+    "other": 0.4
+   }
+  },
+  "latency_ms": 105.8,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.57,
+    "confidence": 0.42,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.63,
+     "1": 0.22,
+     "2": 0.09,
+     "3": 0.06
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.4
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.28,
+    "probabilities": {
+     "bug-risk": 0.02,
+     "security": 0.01,
+     "style": 0.36,
+     "performance": 0.01,
+     "test-gap": 0.2,
+     "other": 0.4
+    }
+   }
+  },
+  "wall_s": 0.1
+ },
+ {
+  "unit": "N4-placeholder-test",
+  "variant": "fact",
+  "rep": 3,
+  "severity": {
+   "type": "score",
+   "score": 0.48,
+   "confidence": 0.52,
+   "legend": {
+    "0": "No real problem; the change is fine",
+    "1": "Minor: style, naming, small cleanup",
+    "2": "Major: likely bug, wrong logic, missing error handling",
+    "3": "Blocker: will break builds, tests, security, or data"
+   },
+   "probabilities": {
+    "0": 0.7,
+    "1": 0.17,
+    "2": 0.08,
+    "3": 0.05
+   }
+  },
+  "is_real": {
+   "type": "noul",
+   "noul": 0.36
+  },
+  "category": {
+   "type": "choice",
+   "choice": "other",
+   "confidence": 0.3,
+   "probabilities": {
+    "bug-risk": 0.02,
+    "security": 0.01,
+    "style": 0.36,
+    "performance": 0.01,
+    "test-gap": 0.18,
+    "other": 0.42
+   }
+  },
+  "latency_ms": 81.5,
+  "ok": true,
+  "raw": {
+   "severity": {
+    "type": "score",
+    "score": 0.48,
+    "confidence": 0.52,
+    "legend": {
+     "0": "No real problem; the change is fine",
+     "1": "Minor: style, naming, small cleanup",
+     "2": "Major: likely bug, wrong logic, missing error handling",
+     "3": "Blocker: will break builds, tests, security, or data"
+    },
+    "probabilities": {
+     "0": 0.7,
+     "1": 0.17,
+     "2": 0.08,
+     "3": 0.05
+    }
+   },
+   "is_real_issue": {
+    "type": "noul",
+    "noul": 0.36
+   },
+   "category": {
+    "type": "choice",
+    "choice": "other",
+    "confidence": 0.3,
+    "probabilities": {
+     "bug-risk": 0.02,
+     "security": 0.01,
+     "style": 0.36,
+     "performance": 0.01,
+     "test-gap": 0.18,
+     "other": 0.42
+    }
+   }
+  },
+  "wall_s": 0.1
+ }
+]

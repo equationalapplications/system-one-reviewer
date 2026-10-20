@@ -476,8 +476,9 @@ def test_triage_skips_do_not_trigger_incomplete_downgrade(jr, tmp_path,
                                                           capsys,
                                                           monkeypatch):
     """M1 (r10): a deliberate triage skip (docs/lockfile) is NOT a dropped
-    cluster — a run that judged every kept cluster stays a clean
-    'Approved', with no 'incomplete review' downgrade."""
+    cluster — a run that judged every kept cluster stays status 'ok'
+    (v0.9: no verdict output; status replaces 'Approved'), with no
+    'incomplete review' downgrade."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "f.py").write_text("x = 1\n")
@@ -514,8 +515,8 @@ def test_triage_skips_do_not_trigger_incomplete_downgrade(jr, tmp_path,
         "--label", "triage-clean-test", "--json", "--provider", "jev"])
     jr.main()
     out = capsys.readouterr().out
-    assert '"verdict": "Approved"' in out, out
-    assert "incomplete" not in out
+    assert '"base_verdict": "ok"' in out, out
+    assert "incomplete" not in out.lower()
 
 
 def test_jev_ask_4xx_costs_exactly_one_request(jr, monkeypatch):
@@ -551,22 +552,27 @@ def test_jev_ask_4xx_costs_exactly_one_request(jr, monkeypatch):
 
 
 def test_render_last_line_is_closed_set(jr):
-    """M2 (r11): the grep last line must be exactly one of the four
-    status values for EVERY verdict, including 'Changes requested
-    (incomplete ...)'."""
+    """M2 (r11)/v0.9: the grep last line must be exactly one of the
+    THREE honest-status values for every verdict main() can actually
+    construct — v0.9's fork resolution (A+C) removed "Approved"/"Changes
+    requested" from the verdict entirely, so the old 4-value set
+    (including those two) is retired along with the suffix-combination
+    shapes ("Approved (incomplete review...)") that only existed when
+    compose() still returned a verdict prefix."""
     f = {"hunk": {"file": "a.py", "line": 1, "header": "@@ -1 +1,2 @@",
                   "lines": ["+x = 2"]},
          "severity": 3.0, "is_real": True, "category": "correctness"}
     meta = {"repo": "r", "mode": "range", "head": "0" * 40, "provider": "jev",
             "model": None, "n_analyzed": 1,
             "total_latency_ms": 0.0, "jev_calls": 1, "fail_open": False}
-    allowed = {"Approved", "Changes requested", "Unavailable", "Incomplete"}
-    for verdict in ("Approved", "Changes requested",
-                    "Approved (incomplete review — 0 of 1 clusters judged)",
-                    "Changes requested (incomplete review — 0 of 2 clusters judged)",
-                    "Unavailable — provider failed (fail-open)"):
-        text = jr.render([f] if verdict.startswith(("Approved", "Changes"))
-                         else [], [], verdict, None, [], meta)
+    allowed = {"OK", "Unavailable", "Incomplete"}
+    for verdict in ("Judged 1 cluster; 1 finding above threshold",
+                    "Judged 0 clusters; 0 findings above threshold",
+                    "Incomplete review — 0 of 1 clusters judged",
+                    "Incomplete review — 0 of 2 clusters judged",
+                    "Unavailable — provider failed. (0 of 1 clusters judged)"):
+        text = jr.render([f] if verdict.startswith("Judged 1") else [],
+                        [], verdict, None, [], meta)
         last = text.splitlines()[-1]
         assert last in allowed, f"{verdict!r} -> last line {last!r}"
 
@@ -659,14 +665,15 @@ def _run_main_task7(jr, monkeypatch, tmp_path, capsys, diff):
     return out, judged_units, records
 
 
-def test_ledger_stamps_v08_ast_record_version(jr, monkeypatch, tmp_path,
-                                              capsys):
-    """Plan Task 7: PACKAGING_VERSION -> v08-ast, asserted on the LOGGED
-    ledger record of a real main()-level run (the record gate_run checks)."""
+def test_ledger_stamps_v09_record_version(jr, monkeypatch, tmp_path,
+                                          capsys):
+    """Plan Task 7 (v0.9 E1 rev): PACKAGING_VERSION -> v09, asserted on
+    the LOGGED ledger record of a real main()-level run (the record
+    gate_run checks)."""
     out, judged_units, records = _run_main_task7(jr, monkeypatch, tmp_path,
                                                  capsys, _TASK7_DIFF)
     assert len(records) == 1
-    assert records[0]["packaging_version"] == "v08-ast"
+    assert records[0]["packaging_version"] == "v09"
 
 
 def test_ledger_stamps_transport_and_record_version(jr, monkeypatch, tmp_path,
@@ -679,33 +686,36 @@ def test_ledger_stamps_transport_and_record_version(jr, monkeypatch, tmp_path,
                                                  capsys, _TASK7_DIFF)
     rec = records[0]
     assert rec["transport"] == "per-cluster"
-    assert rec["record_version"] == "v08-ast"
-    assert out["meta"]["record_version"] == "v08-ast"
+    assert rec["record_version"] == "v09"
+    assert out["meta"]["record_version"] == "v09"
 
 
-def test_wire_format_hunk_state_v1_when_no_ast_engaged(jr, monkeypatch,
-                                                       tmp_path, capsys):
-    """D7: no AST engagement (every unit a whole parent) -> wire_format
-    'hunk_state-v1'. Enrichment stays a SEPARATE axis (run-level stamp +
-    per-unit judged flags, Task 6) — a same-shaped state never masquerades
-    as a transport change."""
+def test_wire_format_hunk_when_no_ast_engaged(jr, monkeypatch,
+                                              tmp_path, capsys):
+    """D7/v0.9 E1: no AST engagement (every unit a whole parent) ->
+    wire_format 'hunk' (E1's revised enum: hunk/line-window/ast-units/
+    ts-units/sites, replacing the old 'hunk_state-v1'/'ast-units-v1'
+    pair). Enrichment stays a SEPARATE axis (run-level stamp + per-unit
+    judged flags, Task 6) — a same-shaped state never masquerades as a
+    transport change."""
     out, judged_units, records = _run_main_task7(jr, monkeypatch, tmp_path,
                                                  capsys, _TASK7_DIFF)
     rec = records[0]
     assert all("parent_cluster" not in u for u in judged_units)
-    assert rec["wire_format"] == "hunk_state-v1"
+    assert rec["wire_format"] == "hunk"
     assert rec["enrichment"] == "none"
 
 
 def test_stamp_wire_format_ast_units_only_when_ast_engaged(jr):
-    """D7: the wire-format stamp is 'ast-units-v1' exactly when any unit
-    CAME FROM AST (carries its parent cluster); whole parents and the
-    empty run stay 'hunk_state-v1'. Probed directly — driving a real
-    oversize AST split through main() is Task 8's corpus replay job."""
+    """D7/v0.9 E1: the wire-format stamp is 'ast-units' exactly when any
+    unit CAME FROM AST (carries its parent cluster, no explicit `cut`);
+    whole parents and the empty run stay 'hunk'. Probed directly —
+    driving a real oversize AST split through main() is Task 8's corpus
+    replay job."""
     parent = {"file": "m.py", "hunk_start": 1}
-    assert jr.stamp_wire_format([]) == "hunk_state-v1"
-    assert jr.stamp_wire_format([{"parent_cluster": parent}]) == "ast-units-v1"
+    assert jr.stamp_wire_format([]) == "hunk"
+    assert jr.stamp_wire_format([{"parent_cluster": parent}]) == "ast-units"
     assert jr.stamp_wire_format([{}, {"parent_cluster": parent}]) \
-        == "ast-units-v1"
+        == "ast-units"
     # a whole parent is NOT an AST unit (its parent_cluster key is absent)
-    assert jr.stamp_wire_format([{"parent_cluster": None}]) == "hunk_state-v1"
+    assert jr.stamp_wire_format([{"parent_cluster": None}]) == "hunk"

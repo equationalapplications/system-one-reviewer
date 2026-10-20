@@ -40,7 +40,23 @@ DELETION_SHIPPED = 0.70
 # new tag here if it still carries the fields (Opus r5 m5).
 # Task 7 (r5-m5): v08-ast EXTENDED IN — never overwritten. v03b stays so
 # the rewrap() guard keeps dying on malformed v03b judged entries.
-RUBRIC_VERSIONS = {"v03b", "v08-ast"}
+# v0.9 E1: v09 EXTENDED IN (per spec E1: "DEFAULT_PACKAGING_VERSION,
+# RUBRIC_VERSIONS ... update with the release") — v09's judged entries
+# still carry rubric/references_remaining (E1 only added the `cut`
+# field; the finding shape rewrap() reads is unchanged).
+RUBRIC_VERSIONS = {"v03b", "v08-ast", "v09"}
+
+# E1 (spec): "Sweep gates check packaging_version AND wire_format
+# (dropping either check would let stale v03b/v08-era runs into sweeps;
+# keeping only the old check defeats this item)." Each packaging era
+# stamped its OWN wire_format vocabulary; a record whose packaging_version
+# matches but whose wire_format belongs to a DIFFERENT era (hand-edited,
+# or written by a replay script that forgot to re-stamp it) is caught
+# here even though the packaging_version check alone would admit it.
+WIRE_FORMAT_BY_VERSION = {
+    "v09": {"hunk", "line-window", "ast-units", "ts-units", "sites"},
+    "v08-ast": {"hunk_state-v1", "ast-units-v1"},
+}
 
 # 0.30 + 0.05*k, k = 0..8 (top of grid: 0.70; 0.75+ excluded by the plateau rule).
 GRID = [round(0.30 + 0.05 * k, 2) for k in range(9)]
@@ -71,13 +87,13 @@ def threshold_grid():
     return list(GRID)
 
 
-# Task 7 (r8-m2): the sweep gates v08-ast by default — the packaging
-# version the tool has stamped since the AST-units cutover. Old-version
-# ledgers gate under an explicit --packaging-version v03b (the only
-# previously stamped value). The four default sites are gate_run,
-# select_runs, select_field_runs, and the argparse default below; each is
-# test-asserted (r8-m2: exactly four — RUBRIC_VERSIONS holds versions).
-DEFAULT_PACKAGING_VERSION = "v08-ast"
+# Task 7 (r8-m2)/v0.9 E1: the sweep gates v09 by default — the packaging
+# version the tool has stamped since the E1/E2/E5 cutover. Old-version
+# ledgers gate under an explicit --packaging-version v08-ast or v03b.
+# The four default sites are gate_run, select_runs, select_field_runs,
+# and the argparse default below; each is test-asserted (r8-m2: exactly
+# four — RUBRIC_VERSIONS holds versions).
+DEFAULT_PACKAGING_VERSION = "v09"
 
 
 def _add_packaging_version_arg(ap):
@@ -156,6 +172,17 @@ def gate_run(rec, expected,
         die(f"run {rec.get('label')!r}: packaging_version "
             f"{rec.get('packaging_version')!r} != {packaging_version!r} "
             "(stale or pre-E2 run)")
+    # E1: wire_format gate, defense-in-depth against the packaging_version
+    # check alone (a record whose packaging_version matches but whose
+    # wire_format belongs to a different era's vocabulary was hand-edited
+    # or mis-stamped by a replay script, never a real run of this version).
+    valid_wire_formats = WIRE_FORMAT_BY_VERSION.get(packaging_version)
+    if (valid_wire_formats is not None
+            and rec.get("wire_format") not in valid_wire_formats):
+        die(f"run {rec.get('label')!r}: wire_format "
+            f"{rec.get('wire_format')!r} does not match the "
+            f"{packaging_version!r} vocabulary {sorted(valid_wire_formats)} "
+            "(stale or mis-stamped run)")
     head = rec.get("fixture_head") or ""
     if not head:
         die(f"run {rec.get('label')!r}: no fixture_head logged")

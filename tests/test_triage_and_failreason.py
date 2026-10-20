@@ -37,6 +37,20 @@ def _oversize_py_src(n=3, chars=30_000):
     return "\n".join(_payload_fn(f"fn_{i}", chars) for i in range(n))
 
 
+def _many_trivial_clusters(n):
+    """v0.9 E2: n SEPARATE top-level clusters (distinct files, one trivial
+    line each) — exercises the --max-hunks ceiling at the TOP-LEVEL-CLUSTER
+    granularity the E2 behavior change now caps at (spec: truncation moves
+    AHEAD of expansion/site-cutting). Each file's single `x = 1` line is
+    neither a dict/call/ternary nor part of a same-file sibling-constant
+    run (one statement per file), so `site_units` no-ops on every one of
+    them — the fixture isolates ceiling bookkeeping from E2 site cutting."""
+    return "".join(
+        f"diff --git a/triv{i}.py b/triv{i}.py\n"
+        f"--- /dev/null\n+++ b/triv{i}.py\n@@ -0,0 +1,1 @@\n+x = 1\n"
+        for i in range(n))
+
+
 def _whole_file_add_diff(path, src):
     n = len(src.splitlines())
     lines = [f"diff --git a/{path} b/{path}",
@@ -144,9 +158,12 @@ def test_laya_legacy_suffix_byte_identical(jr, monkeypatch, tmp_path):
     assert rec["provider"] == "laya"
     assert rec["n_size_skipped_code"] == 1
     assert rec["n_analyzed"] == 0
-    assert rec["verdict"] == ("Approved (incomplete review — 0 of 1 "
-                              "clusters judged)")
-    assert rec["base_verdict"] == "Approved"
+    # v0.9 triage re-scope (accepted work, predates this E2 session): the
+    # "Approved (incomplete review — ...)" legacy suffix was retired with
+    # the verdict field itself; the honest-status carrier (condition 10)
+    # replaces it with "Incomplete review — ..." + base_verdict/status.
+    assert rec["verdict"] == "Incomplete review — 0 of 1 of 1 clusters judged"
+    assert rec["base_verdict"] == "incomplete review"
 
 
 # ---------- oversize routing through the Task 2/3 cutter ----------
@@ -199,7 +216,9 @@ def test_oversize_python_becomes_subclusters_via_main(jr, monkeypatch,
     assert len({u["line"] for u in judged_units}) == 3, "own anchor each"
     assert out["meta"]["n_analyzed"] == 3
     assert out["n_dropped"] == 0 and out["n_unjudged"] == 0
-    assert out["verdict"] == "Approved", "no incomplete suffix on a full split"
+    # v0.9 triage re-scope (accepted, predates E2): no "Approved" verdict.
+    assert out["verdict"] == "Judged 3 clusters; 0 findings above threshold", \
+        "no incomplete suffix on a full split"
 
 
 def test_oversize_fallback_judged_as_windows_via_main(jr, monkeypatch,
@@ -303,15 +322,22 @@ def test_unit_counters_stay_consistent(jr, monkeypatch, tmp_path, capsys):
     assert out["n_dropped"] == 0
     assert out["n_unjudged"] == 0
     assert out["meta"]["n_analyzed"] == 7
-    assert out["verdict"] == "Approved"
+    # v0.9 triage re-scope (accepted, predates E2): no "Approved" verdict.
+    assert out["verdict"] == "Judged 7 clusters; 0 findings above threshold"
     assert "(incomplete" not in out["verdict"]
 
 
 def test_n_dropped_non_negative_property(jr, monkeypatch, tmp_path, capsys):
     """Property assertion (r1-B1): n_dropped >= 0 across combinations
-    (split + skip + truncation in ONE run, 45 units over ceiling 40)."""
-    src = _oversize_py_src(n=45, chars=2_000)  # one parent -> 45 units
-    diff = (_whole_file_add_diff("big.py", src)
+    (skip + truncation in ONE run, 45 TOP-LEVEL CLUSTERS over ceiling 40).
+
+    v0.9 E2 BEHAVIOR CHANGE: the --max-hunks ceiling now caps TOP-LEVEL
+    CLUSTERS BEFORE any cutting (spec E2; Problem 6/OQ1) — this fixture
+    was rewritten from '1 oversize parent -> 45 AST units' (the OLD
+    post-expansion ceiling this property no longer exercises) to 45
+    SEPARATE top-level clusters, which the new ceiling placement caps
+    directly."""
+    diff = (_many_trivial_clusters(45)
             + "diff --git a/README.md b/README.md\n--- a/README.md\n"
               "+++ b/README.md\n@@ -1,1 +1,2 @@\n # docs\n+more\n")
     judged = []
@@ -331,14 +357,9 @@ def test_n_dropped_non_negative_property(jr, monkeypatch, tmp_path, capsys):
                          "latency_ms": 1.0})
     monkeypatch.setattr(jr, "resolve_diff",
                         lambda repo, args: (diff, "0" * 40, "staged"))
-    # serve the post-image to the cutter without git (offline test):
-    def _images(repo_, mode_, head_, path_, old_file=None):
-        _src = "\n".join(ln[1:] for ln in diff.splitlines()
-                       if ln.startswith("+") and not ln.startswith("+++"))
-        _pre = "\n".join(ln[1:] for ln in diff.splitlines()
-                       if ln.startswith("-") and not ln.startswith("---"))
-        return (_pre or None, _src or None)
-    monkeypatch.setattr(jr, "mode_file_images", _images)
+    monkeypatch.setattr(jr, "mode_file_images",
+                        lambda repo_, mode_, head_, path_, old_file=None:
+                        (None, "x = 1\n"))
     monkeypatch.setattr(jr, "log_run", lambda rec: None)
     monkeypatch.setattr(jr, "make_provider",
                         lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
@@ -349,7 +370,7 @@ def test_n_dropped_non_negative_property(jr, monkeypatch, tmp_path, capsys):
     jr.main()
     out = json.loads(capsys.readouterr().out)
     assert out["n_dropped"] >= 0
-    assert out["n_dropped"] == 5, "45 units - 40 kept = 5 ceiling drops"
+    assert out["n_dropped"] == 5, "45 top-level clusters - 40 kept = 5 ceiling drops"
     assert len(judged) == 40
 
 
@@ -380,7 +401,8 @@ def test_gate_run_accepts_v08_split_ledger():
               for n in range(1, 5)]
     rec = {"label": "v08-split", "fixture": "positive",
            "fixture_head": "a" * 40, "head": "a" * 10,
-           "packaging_version": "v08-ast", "provider": "jev", "model": None,
+           "packaging_version": "v08-ast", "wire_format": "ast-units-v1",
+           "provider": "jev", "model": None,
            "judged": judged, "base_verdict": "Approved",
            "n_dropped": 0, "n_unjudged": 0, "n_size_skipped_code": 0,
            "n_analyzed": 4, "verdict": "Approved"}
@@ -411,12 +433,18 @@ def test_gate_run_rejects_parse_error_ledger():
 # ---------- r12-m1/r13-m1: run-level ceiling truncation ----------
 
 def test_max_hunks_is_run_level(jr, monkeypatch, tmp_path, capsys):
-    """r12-m1/r13-m1: truncation keeps the first-40 units in traversal
-    order; the 5 dropped units become skipped entries with reason
+    """r12-m1/r13-m1: truncation keeps the first-40 CLUSTERS in traversal
+    order; the 5 dropped clusters become skipped entries with reason
     'max-hunks>ceiling' (NOT parse_error findings); n_unjudged excludes
-    them. Property: 45 units, ceiling 40 => n_dropped == 5."""
-    src = _oversize_py_src(n=45, chars=2_000)
-    diff = _whole_file_add_diff("big.py", src)
+    them. Property: 45 top-level clusters, ceiling 40 => n_dropped == 5.
+
+    v0.9 E2 BEHAVIOR CHANGE (spec E2; Problem 6/OQ1): rewritten from '1
+    oversize parent -> 45 AST units' to 45 separate top-level clusters —
+    the ceiling now caps TOP-LEVEL CLUSTERS BEFORE any cutting, so the
+    old fixture (whose 45 'units' were POST-expansion AST sub-clusters of
+    ONE admitted top-level cluster) no longer exercises a ceiling drop at
+    all under the new placement."""
+    diff = _many_trivial_clusters(45)
     judged = []
 
     def fake_judge(kept, ask, errors=None, split_unit=None):
@@ -434,14 +462,9 @@ def test_max_hunks_is_run_level(jr, monkeypatch, tmp_path, capsys):
                          "latency_ms": 1.0})
     monkeypatch.setattr(jr, "resolve_diff",
                         lambda repo, args: (diff, "0" * 40, "staged"))
-    # serve the post-image to the cutter without git (offline test):
-    def _images(repo_, mode_, head_, path_, old_file=None):
-        _src = "\n".join(ln[1:] for ln in diff.splitlines()
-                       if ln.startswith("+") and not ln.startswith("+++"))
-        _pre = "\n".join(ln[1:] for ln in diff.splitlines()
-                       if ln.startswith("-") and not ln.startswith("---"))
-        return (_pre or None, _src or None)
-    monkeypatch.setattr(jr, "mode_file_images", _images)
+    monkeypatch.setattr(jr, "mode_file_images",
+                        lambda repo_, mode_, head_, path_, old_file=None:
+                        (None, "x = 1\n"))
     monkeypatch.setattr(jr, "log_run", lambda rec: None)
     monkeypatch.setattr(jr, "make_provider",
                         lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
@@ -453,7 +476,7 @@ def test_max_hunks_is_run_level(jr, monkeypatch, tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["n_dropped"] == 5
     assert len(judged) == 40, "kept = first-40 in traversal order"
-    assert len({u["line"] for u in judged}) == 40
+    assert len({u["file"] for u in judged}) == 40, "own file each"
     trunc = [s for s in out["skipped"]
              if s.get("reason") == "max-hunks>ceiling"]
     assert len(trunc) == 5, "ceiling drops are skipped entries, not findings"
@@ -461,7 +484,7 @@ def test_max_hunks_is_run_level(jr, monkeypatch, tmp_path, capsys):
         "entries carry **_span(unit)"
     assert out["n_unjudged"] == 0, "ceiling entries never count as unjudged"
     assert out["n_size_skipped_code"] == 0, "never a hunk> record"
-    assert "(incomplete" in out["verdict"]
+    assert out["verdict"].startswith("Incomplete review")  # v0.9: no "(incomplete" parens
 
 
 def test_laya_never_emits_ceiling_entries(jr, monkeypatch, tmp_path):
@@ -730,7 +753,7 @@ def test_single_oversize_line_marks_incomplete(jr, monkeypatch, tmp_path,
     out = json.loads(capsys.readouterr().out)
     assert out["n_unjudged"] == 1
     assert out["n_dropped"] == 0
-    assert "(incomplete" in out["verdict"]
+    assert out["verdict"].startswith("Incomplete review")  # v0.9: no "(incomplete" parens
     # the leaf never reached the provider
     for h in sent:
         state = jr.hunk_state(h)
@@ -742,9 +765,12 @@ def test_single_oversize_line_marks_incomplete(jr, monkeypatch, tmp_path,
 def test_ceiling_dropped_units_in_pr_digest(jr, monkeypatch, tmp_path):
     """r14-m2: judge_pr_level receives the max-hunks>ceiling entries so a
     ceiling drop is visible to the PR-level model with the
-    'unjudged (skipped: max-hunks>ceiling)' label."""
-    src = _oversize_py_src(n=45, chars=2_000)
-    diff = _whole_file_add_diff("big.py", src)
+    'unjudged (skipped: max-hunks>ceiling)' label.
+
+    v0.9 E2 BEHAVIOR CHANGE (spec E2; Problem 6/OQ1): rewritten from '1
+    oversize parent -> 45 AST units' to 45 separate top-level clusters —
+    see test_max_hunks_is_run_level for the full rationale."""
+    diff = _many_trivial_clusters(45)
     seen = {}
 
     def fake_judge(kept, ask, errors=None, split_unit=None):
@@ -763,14 +789,9 @@ def test_ceiling_dropped_units_in_pr_digest(jr, monkeypatch, tmp_path):
     monkeypatch.setattr(jr, "judge_pr_level", fake_pr_level)
     monkeypatch.setattr(jr, "resolve_diff",
                         lambda repo, args: (diff, "0" * 40, "staged"))
-    # serve the post-image to the cutter without git (offline test):
-    def _images(repo_, mode_, head_, path_, old_file=None):
-        _src = "\n".join(ln[1:] for ln in diff.splitlines()
-                       if ln.startswith("+") and not ln.startswith("+++"))
-        _pre = "\n".join(ln[1:] for ln in diff.splitlines()
-                       if ln.startswith("-") and not ln.startswith("---"))
-        return (_pre or None, _src or None)
-    monkeypatch.setattr(jr, "mode_file_images", _images)
+    monkeypatch.setattr(jr, "mode_file_images",
+                        lambda repo_, mode_, head_, path_, old_file=None:
+                        (None, "x = 1\n"))
     monkeypatch.setattr(jr, "log_run", lambda rec: None)
     monkeypatch.setattr(jr, "make_provider",
                         lambda *a, **k: lambda s, q: ({"answers": {}}, 1.0))
@@ -1046,8 +1067,9 @@ def test_main_downgrades_on_size_skipped_code(jr, monkeypatch, tmp_path):
     assert len(pr_calls) == 1 and pr_calls[0], \
         "size skips must reach the PR-level digest"
     assert rec["n_size_skipped_code"] == 1
-    assert rec["base_verdict"] == "Approved"  # compose saw no findings
-    assert "(incomplete review — 0 of 1 clusters judged)" in rec["verdict"]
+    # v0.9 triage re-scope (accepted, predates E2): status replaces verdict.
+    assert rec["base_verdict"] == "incomplete review"
+    assert "Incomplete review — 0 of 1 of 1 clusters judged" in rec["verdict"]
 
 
 # ---------- report readability ----------
@@ -1108,7 +1130,9 @@ def test_empty_diff_makes_no_model_calls(jr, tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert calls == [], "an empty diff must not spend a model call"
     assert "empty diff" in out.lower()
-    assert out.rstrip().splitlines()[-1] == "Approved"
+    # v0.9 triage re-scope (accepted, predates E2): no verdict authority —
+    # the closed-set last line is now Unavailable/Incomplete/OK.
+    assert out.rstrip().splitlines()[-1] == "OK"
 
 
 def test_git_probe_timeout_is_a_clear_error(jr, tmp_path, monkeypatch):

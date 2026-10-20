@@ -1,0 +1,40 @@
+{
+  "initial_size_floor": 1,
+  "tightenings": [
+    {
+      "tightening": 0,
+      "size_floor": 1,
+      "n_clusters": 19,
+      "n_sites": 1667,
+      "median_expansion": 87.74,
+      "median_site_size_lines": 1
+    },
+    {
+      "tightening": 1,
+      "size_floor": 4,
+      "n_clusters": 19,
+      "n_sites": 490,
+      "median_expansion": 25.79,
+      "median_site_size_lines": 7
+    },
+    {
+      "tightening": 2,
+      "size_floor": 16,
+      "n_clusters": 19,
+      "n_sites": 183,
+      "median_expansion": 9.63,
+      "median_site_size_lines": 20
+    }
+  ],
+  "median_site_size_lines": 20,
+  "projected_wall_time_ms": 155550.0,
+  "call_multiple": 9.63,
+  "outcome": "fail",
+  "_meta": {
+    "range": "fb51dd6..d70d225",
+    "repo": "SynapseTree-login",
+    "model_calls": 0,
+    "measured": "2026-10-19",
+    "note": "V7 model-off census; real git-backed images, no network/model calls"
+  }
+}

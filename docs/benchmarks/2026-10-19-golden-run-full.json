@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "repo": "SynapseTree-login",
+    "mode": "range:fb51dd6...d70d225",
+    "head": "d70d225353776438b86b7c042e694f1ae90f9ee6",
+    "provider": "jev",
+    "model": null,
+    "n_hunks": 24,
+    "enrichment": "none",
+    "record_version": "v08-ast",
+    "n_analyzed": 46,
+    "total_latency_ms": 5225.680636969628,
+    "jev_calls": 46,
+    "fail_open": false,
+    "fail_reason": null
+  },
+  "pr_level": {
+    "overall_risk": 3.0,
+    "needs_human_review": 0.95,
+    "latency_ms": 140.1
+  },
+  "findings": [
+    {
+      "file": "infra/stack.ts",
+      "line": 429,
+      "line_start": 426,
+      "line_end": 493,
+      "severity": 1.82,
+      "is_real": 0.58,
+      "category": "security",
+      "header": "@@ infra/stack.ts around line 429 (65 changed lines) @@"
+    },
+    {
+      "file": "infra/stack.ts",
+      "line": 751,
+      "line_start": 748,
+      "line_end": 846,
+      "severity": 1.58,
+      "is_real": 0.56,
+      "category": "other",
+      "header": "@@ infra/stack.ts around line 751 (96 changed lines) @@"
+    },
+    {
+      "file": "src/control-plane/custody-envelope.ts",
+      "line": 336,
+      "line_start": 336,
+      "line_end": 409,
+      "severity": 1.27,
+      "is_real": 0.53,
+      "category": "security",
+      "header": "@@ src/control-plane/custody-envelope.ts around line 336 (74 changed lines) @@"
+    },
+    {
+      "file": "tests/unit/custody-registration.test.ts",
+      "line": 114,
+      "line_start": 114,
+      "line_end": 221,
+      "severity": 1.59,
+      "is_real": 0.6,
+      "category": "bug-risk",
+      "header": "@@ tests/unit/custody-registration.test.ts around line 114 (108 changed lines) @@"
+    },
+    {
+      "file": "tests/unit/infra.test.ts",
+      "line": 316,
+      "line_start": 313,
+      "line_end": 326,
+      "severity": 1.66,
+      "is_real": 0.55,
+      "category": "security",
+      "header": "@@ tests/unit/infra.test.ts around line 316 (9 changed lines) @@"
+    }
+  ],
+  "skipped": [
+    {
+      "file": ".gitignore",
+      "reason": "docs/generated/lockfile",
+      "line_start": 13,
+      "line_end": 18
+    },
+    {
+      "file": "docs/superpowers/plans/2026-10-16-byok-implementation.md",
+      "reason": "docs/generated/lockfile",
+      "line_start": 1,
+      "line_end": 402
+    },
+    {
+      "file": "docs/superpowers/specs/2026-10-16-roadmap-step3-byok-design.md",
+      "reason": "docs/generated/lockfile",
+      "line_start": 132,
+      "line_end": 147
+    },
+    {
+      "file": "docs/superpowers/specs/2026-10-16-roadmap-step3-byok-design.md",
+      "reason": "docs/generated/lockfile",
+      "line_start": 183,
+      "line_end": 196
+    },
+    {
+      "file": "docs/superpowers/specs/2026-10-16-roadmap-step3-byok-design.md",
+      "reason": "docs/generated/lockfile",
+      "line_start": 205,
+      "line_end": 213
+    }
+  ],
+  "jitter": [
+    {
+      "file": "src/control-plane/custody-envelope.ts",
+      "is_real": 0.48
+    },
+    {
+      "file": "src/control-plane/provider-options.ts",
+      "is_real": 0.48
+    },
+    {
+      "file": "src/control-plane/provider-options.ts",
+      "is_real": 0.49
+    }
+  ],
+  "verdict": "Changes requested",
+  "base_verdict": "Changes requested",
+  "n_dropped": 0,
+  "n_unjudged": 0,
+  "n_size_skipped_code": 0,
+  "golden_eval": {
+    "golden_issues": 8,
+    "reported": 5,
+    "true_positives": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": null,
+    "tp_severities": [],
+    "matched": [],
+    "matched_reported": [],
+    "missed": [
+      [
+        "src/control-plane/custody-tables.ts",
+        64,
+        "B1: decrypt condition uses single-valued StringEquals on multivalued kms:EncryptionContextKeys (fails closed, denies every Decrypt)"
+      ],
+      [
+        "infra/stack.ts",
+        791,
+        "B2: CloudTrail advancedEventSelectors select DATA events for KMS; KMS crypto calls are management events, so trail misses them"
+      ],
+      [
+        "infra/stack.ts",
+        854,
+        "M1: metric filter uses $.resources[0].arn lowercase; CloudTrail field is ARN (case-sensitive), filter never matches"
+      ],
+      [
+        "infra/stack.ts",
+        789,
+        "M2: cloudWatchLogsLogGroupArn carries unmodified logGroupArn `:*` suffix (must be the bare logGroupArn)"
+      ],
+      [
+        "src/control-plane/custody-envelope.ts",
+        157,
+        "M3: KMS error mapping inverted \u2014 unavailability fragments map to integrity error and vice versa (transient KMS trouble reads as tampering)"
+      ],
+      [
+        "src/control-plane/custody-tables.ts",
+        31,
+        "N1: dead VerifyMac/GenerateMac grants on symmetric ENCRYPT_DECRYPT CMK (MAC ops valid only on HMAC keys)"
+      ],
+      [
+        "src/control-plane/custody-envelope.ts",
+        322,
+        "N3: openCustodyBlob lacks envelopeVersion gate \u2014 unsupported version accepted past KMS/AEAD use"
+      ],
+      [
+        "tests/unit/custody-stack.test.ts",
+        200,
+        "N4: placeholder test (Match.objectLike typeof check) exists only to justify an import"
+      ]
+    ]
+  }
+}

@@ -3,3 +3,4 @@
 # The build scripts assert their output against these; the sweep gates on them.
 positive=3346ca1aa31942ad7808352faf77ab28d5f13bc1
 negative=5ca6f0137d25da5180adcbc97bbcafbb4313bdc3
+positive_ts=c710e8f64efcd1c8b82502e61e3936f8be26dfb7
