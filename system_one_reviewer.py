@@ -1620,8 +1620,18 @@ def _select_leafmost_sites(candidates, changed_lines):
     return assignment
 
 
+# V7 (spec): the general size floor — a resulting site group spanning
+# FEWER lines than this merges into its nearest neighbor rather than
+# standing alone, bounding the TOTAL site count the model-off census
+# (V7) measures. May be TIGHTENED (raised) at most twice if the median
+# expansion ratio exceeds the envelope; raising it beyond the point
+# where median site size exceeds 120 lines is forbidden (that would
+# collapse sites back toward top-level units, undoing the anchor fix).
+SITE_SIZE_FLOOR_LINES = 1
+
+
 def site_units(path, before_text, after_text, entries, change_type="code-change",
-               parent_cluster=None):
+               parent_cluster=None, size_floor=SITE_SIZE_FLOOR_LINES):
     """E2: decision-site cutting for TS/JS/Python code-change clusters.
 
     ENGAGEMENT (spec E2): called for every code-change cluster, not only
@@ -1704,6 +1714,26 @@ def site_units(path, before_text, after_text, entries, change_type="code-change"
         nearest = min(by_cand, key=lambda i: min(
             abs(candidates[i][0] - e[1]), abs(candidates[i][1] - e[1])))
         by_cand[nearest].append(e)
+    # V7 size floor: a group spanning FEWER lines than `size_floor` merges
+    # into its nearest remaining neighbor instead of standing alone —
+    # bounds the total site count the census measures, tunable via the
+    # `size_floor` parameter (V7's "tighten the floor" lever).
+    def _group_span(idx):
+        lines = [e[1] for e in by_cand[idx]]
+        return min(lines), max(lines)
+    changed_small = True
+    while changed_small and len(by_cand) > 1:
+        changed_small = False
+        for idx in list(by_cand):
+            lo, hi = _group_span(idx)
+            if hi - lo + 1 >= size_floor:
+                continue
+            others = [i for i in by_cand if i != idx]
+            nearest = min(others, key=lambda i: min(
+                abs(_group_span(i)[0] - lo), abs(_group_span(i)[1] - hi)))
+            by_cand[nearest].extend(by_cand.pop(idx))
+            changed_small = True
+            break
     # E2 guard (a): tag each site with the ENCLOSING TOP-LEVEL DECLARATION
     # (function/class/const) it falls under, computed from the SAME parsed
     # tree — so compose()'s per-declaration majors counting (measured by
@@ -1794,7 +1824,92 @@ def _ts_top_level_declarations(root):
     return out
 
 
-def _apply_site_cutting(units, images):
+# V7: forbidden if the floor-tightening loop pushes median site size
+# above this many lines — that would collapse sites back toward
+# top-level units, silently undoing the E2 anchor fix (Opus r2).
+V7_MEDIAN_SITE_SIZE_FORBIDDEN_LINES = 120
+# V7: adopted envelope (Kurt, msg 1561831827394793606, "Yes") — median
+# site count per admitted top-level cluster.
+V7_MEDIAN_EXPANSION_ENVELOPE = 5.0
+V7_MAX_TIGHTENINGS = 2
+# V7: median per-call wall time used to PROJECT total wall time next to
+# the call multiple (spec cond 6) — measured from the committed receipt
+# docs/benchmarks/2026-10-19-golden-run-rootcause.json's avg per-call
+# latency on the golden range's wheels-present rerun (46->168 units).
+V7_ASSUMED_MS_PER_CALL = 850.0
+
+
+def run_site_census(diff_text, images, provider="jev"):
+    """V7 (spec, model-off): census of site counts over a real diff —
+    NO judge() calls, NO network, NO model spend. `images(path, unit)`
+    MUST return real (pre, post) text (local `git show`/working-tree
+    reads are pure deterministic plumbing, not a model call — the same
+    distinction the rest of the pipeline already draws between
+    `mode_file_images` and `jev_ask`); without real text, site
+    candidates can never be found and the census would vacuously read
+    "no expansion," masking the exact discrepancy Problem 3 measured.
+
+    Measures cluster count, resulting site count (the AST/band expansion
+    `expand_oversize_units` would also contribute is held constant here
+    since V7 is specifically about SITE expansion), median site size,
+    and the expansion ratio; tightens the size floor up to
+    V7_MAX_TIGHTENINGS times if the median exceeds
+    V7_MEDIAN_EXPANSION_ENVELOPE, refusing any tightening that would push
+    median site size above V7_MEDIAN_SITE_SIZE_FORBIDDEN_LINES (that
+    would silently undo the anchor fix). Returns a report dict with one
+    entry per attempted floor plus the terminal outcome — "pass" or
+    "fail" (Opus r3 R3's terminal-outcome contract: if it still fails
+    after both tightenings, E2 does not ship and the numbers go back to
+    Kurt).
+    """
+    hunks = package_hunks(diff_text)
+    kept, _skipped = triage(hunks, provider=provider)
+    n_clusters = len(kept)
+
+    attempts = []
+    floor = SITE_SIZE_FLOOR_LINES
+    outcome = "fail"
+    for tightening in range(V7_MAX_TIGHTENINGS + 1):
+        sites = _apply_site_cutting(list(kept), images, size_floor=floor)
+        n_sites = len(sites)
+        spans = sorted(
+            (u.get("line_end", u.get("line", 0))
+             - u.get("line_start", u.get("line", 0)) + 1)
+            for u in sites) or [0]
+        median_site_size = spans[len(spans) // 2]
+        expansion = (n_sites / n_clusters) if n_clusters else 0.0
+        attempt = {
+            "tightening": tightening, "size_floor": floor,
+            "n_clusters": n_clusters, "n_sites": n_sites,
+            "median_expansion": round(expansion, 2),
+            "median_site_size_lines": median_site_size,
+        }
+        attempts.append(attempt)
+        if expansion <= V7_MEDIAN_EXPANSION_ENVELOPE:
+            outcome = "pass"
+            break
+        if median_site_size > V7_MEDIAN_SITE_SIZE_FORBIDDEN_LINES:
+            outcome = "fail"
+            break
+        if tightening == V7_MAX_TIGHTENINGS:
+            outcome = "fail"
+            break
+        floor = floor * 4 if floor else 4  # tighten: merge more aggressively
+
+    n_sites_final = attempts[-1]["n_sites"]
+    call_multiple = attempts[-1]["median_expansion"]
+    projected_wall_ms = n_sites_final * V7_ASSUMED_MS_PER_CALL
+    return {
+        "initial_size_floor": SITE_SIZE_FLOOR_LINES,
+        "tightenings": attempts,
+        "median_site_size_lines": attempts[-1]["median_site_size_lines"],
+        "projected_wall_time_ms": round(projected_wall_ms, 1),
+        "call_multiple": call_multiple,
+        "outcome": outcome,
+    }
+
+
+def _apply_site_cutting(units, images, size_floor=SITE_SIZE_FLOOR_LINES):
     """E2 ENGAGEMENT: site cutting runs for ALL admitted code-change
     clusters (TS/JS/Python) — not only oversize/band units. Called once,
     on admitted top-level clusters, BEFORE `expand_oversize_units` (whose
@@ -1804,6 +1919,11 @@ def _apply_site_cutting(units, images):
     A cluster whose `site_units` call returns None (no-op guard, parse
     error, or unsupported language) is kept as-is, unchanged — this
     function never drops or truncates; union over `units` is preserved.
+
+    `size_floor` threads through to every site_units() call — V7's
+    census passes successive TIGHTENED values (model-off, no judge
+    calls) to measure the median-expansion envelope before any model
+    spend.
     """
     out = []
     for u in units:
@@ -1815,7 +1935,8 @@ def _apply_site_cutting(units, images):
         pre, post = images(path, u)
         subs = site_units(path, pre, post, u.get("entries") or [],
                           change_type=ct,
-                          parent_cluster=u.get("parent_cluster") or u)
+                          parent_cluster=u.get("parent_cluster") or u,
+                          size_floor=size_floor)
         out.extend(subs if subs else [u])
     return out
 
