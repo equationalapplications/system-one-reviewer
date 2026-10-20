@@ -14,17 +14,19 @@ real cost: run it deliberately, a handful of ranges at a time.)
 VACUITY GUARD. The 2026-10-02 enrichment A/B compared two unenriched arms.
 After every on-arm run this aborts (exit 2) unless the run-level
 `enrichment` stamp contains --expect, the wheels needed for it are
-available, the run did not fail open, and every golden file has at least
-one unit stamped with --expect (a file with none never engaged, e.g. a
-parse failure). Partial enrichment is NOT an abort: the over-cap context
+available, the run status is ok (no fail-open, no incomplete review: partial
+coverage would confound enrichment), and every file listed in --golden or
+--negative-golden has at least one unit stamped with --expect (a file with
+none never engaged, e.g. a parse failure). Partial enrichment is NOT an abort: the over-cap context
 drop legitimately turns some units to "none", so the per-file enriched
 share is reported as `golden_file_enriched_share` (mean over repeats).
 
-COUNTS. Reported findings are the ledger `judged` entries with
-is_real >= REFLEX_GATE (the tool's constant, 0.80), not the `--out`
-`findings` list, which is capped at 5 and saturates on large goldens.
-False positives are reported - true positives (true positives still come
-from golden_eval); on a clean sample every reported finding is one.
+COUNTS. The tool caps `--out` `findings` and `golden_eval` at the top 5,
+which saturates on large goldens. So the surfaced list is rebuilt, uncapped,
+from the ledger `judged` entries by the tool's own compose() at REFLEX_GATE
+(rubric threshold, severity >= 1), and scored with the tool's
+eval_against_golden. False positives are surfaced - true positives; on a
+clean sample (no golden) every surfaced finding is one.
 
 `decide` encodes the pre-registered rules: precision first (the on-arm may
 not surface more findings than the off-arm on a clean sample in any
@@ -53,28 +55,43 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = [sys.executable, os.path.join(REPO_ROOT, "system_one_reviewer.py")]
 
 
-_GATE: float | None = None
+_TOOL_MOD: Any = None
 
 
-def reflex_gate() -> float:
-    """REFLEX_GATE from the tool module (0.80), loaded lazily and once."""
-    global _GATE
-    if _GATE is None:
+def load_tool() -> Any:
+    """The reviewer module, loaded lazily and once."""
+    global _TOOL_MOD
+    if _TOOL_MOD is None:
         spec = importlib.util.spec_from_file_location(
             "system_one_reviewer", TOOL[1])
         assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
-        _GATE = float(mod.REFLEX_GATE)
-    return _GATE
+        _TOOL_MOD = mod
+    return _TOOL_MOD
 
 
-def reported_count(judged: list[dict]) -> int:
-    """Judged units crossing the reflex gate: what a reader would be shown."""
-    gate = reflex_gate()
-    return sum(1 for j in judged
-               if j.get("is_real") is not None and j["is_real"] >= gate)
+def surfaced(judged: list[dict]) -> list[dict]:
+    """Findings the tool would surface from these ledger entries, uncapped:
+    the tool's own compose() at REFLEX_GATE (rubric threshold and
+    severity >= 1), so the harness never re-implements the rule."""
+    tool = load_tool()
+    findings = [{"rubric": j.get("rubric", "code-change"),
+                 "is_real": j.get("is_real"), "severity": j.get("severity"),
+                 "hunk": {"file": j["file"], "line": j["line"]}}
+                for j in judged]
+    reported, _jitter, _ = tool.compose(findings, [], None,
+                                        threshold=tool.REFLEX_GATE)
+    return list(reported)
+
+
+def golden_tp(surfaced_findings: list[dict], golden: str | None) -> int:
+    """True positives of the uncapped surfaced list; 0 without a golden."""
+    if not golden:
+        return 0
+    return int(load_tool().eval_against_golden(
+        surfaced_findings, golden)["true_positives"])
 
 
 def label_for(arm: str, sample: str, k: int) -> str:
@@ -107,10 +124,13 @@ def run_one(args: argparse.Namespace, arm: str, k: int) -> dict:
 def guard(result: dict, arm: str, expect: str) -> str | None:
     """Reason the run must not be scored, or None when it is valid."""
     meta = result.get("meta", {})
+    status = meta.get("status", "ok")
     # a fail-open run (provider outage) still carries its enrichment stamp
     # but reports zero findings, which decide() would score as a real result
     if meta.get("fail_open") or meta.get("status") == "fail-open":
         return f"{arm}-arm failed open: {meta.get('fail_reason')!r}"
+    if status != "ok":
+        return f"{arm}-arm status {status!r}, not 'ok' (incomplete coverage)"
     stamp = meta.get("enrichment", "none")
     if arm == "off":
         return None if stamp == "none" else f"off-arm stamped {stamp!r}"
@@ -287,11 +307,12 @@ def main(argv: list[str] | None = None) -> int:
             bad = guard(res, arm, args.expect)
             if not bad and not clean and res.get("golden_eval") is None:
                 bad = "no golden_eval in the result"
-            if not bad and arm == "on" and args.golden:
+            gpath = args.golden or args.negative_golden
+            if not bad and arm == "on" and gpath:
                 judged = read_ledger(os.path.join(
                     args.outdir, "metrics.jsonl")).get(
                         label_for(arm, args.sample, k), [])
-                gfiles = golden_files(args.golden)
+                gfiles = golden_files(gpath)
                 bad = guard_files(judged, gfiles, args.expect)
                 if not bad:
                     shares.append(golden_file_shares(judged, gfiles, args.expect))
@@ -308,12 +329,14 @@ def main(argv: list[str] | None = None) -> int:
                       f"{label_for(arm, args.sample, k)}", file=sys.stderr)
                 return 2
     rows = []
-    for k, (on, off) in enumerate(zip(runs["on"], runs["off"], strict=True), 1):
-        tp = lambda r: (r.get("golden_eval") or {}).get("true_positives", 0)  # noqa: E731
+    tp_golden = None if clean else args.golden
+    for k in range(1, args.repeats + 1):
+        on_s = surfaced(ledger[label_for("on", args.sample, k)])
+        off_s = surfaced(ledger[label_for("off", args.sample, k)])
         rows.append({
-            "on_reported": reported_count(ledger[label_for("on", args.sample, k)]),
-            "off_reported": reported_count(ledger[label_for("off", args.sample, k)]),
-            "on_tp": tp(on), "off_tp": tp(off),
+            "on_reported": len(on_s), "off_reported": len(off_s),
+            "on_tp": golden_tp(on_s, tp_golden),
+            "off_tp": golden_tp(off_s, tp_golden),
             "deltas": paired_is_real_deltas(
                 ledger.get(label_for("on", args.sample, k), []),
                 ledger.get(label_for("off", args.sample, k), []))})

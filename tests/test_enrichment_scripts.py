@@ -148,9 +148,12 @@ def test_combine_cli(tmp_path, capsys):
 
 
 def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
-                     n_findings=0):
+                     n_findings=0, tp_out=0, severity=2, rubric="code-change",
+                     off_surface=8, golden_lines=(10,), status="ok"):
     """Stand in for the reviewer CLI: write the --out file and append a
-    ledger record for the requested label, like the real tool does."""
+    ledger record for the requested label, like the real tool does. Eight
+    units at lines 0, 10, ..., 70; the off-arm puts `off_surface` of them at
+    0.9 and the rest at 0.1. `tp_out` is the (capped) golden_eval value."""
     import json as _json
     import types
 
@@ -159,14 +162,15 @@ def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
         out = cmd[cmd.index("--out") + 1]
         arm = "off" if "--no-enrichment" in cmd else "on"
         enr = "none" if arm == "off" else stamp_on
-        res = {"meta": {"enrichment": enr, "status": "ok", "fail_open": False,
+        res = {"meta": {"enrichment": enr, "status": status, "fail_open": False,
                         "wheels": {"ts": {"available": True}}},
-               "findings": [{}] * n_findings, "golden_eval": {"true_positives": 0}}
+               "findings": [{}] * n_findings, "golden_eval": {"true_positives": tp_out}}
         with open(out, "w") as f:
             _json.dump(res, f)
-        judged = [{"file": "g.ts", "line": i, "line_end": i + 2,
-                   "enrichment": enr,
-                   "is_real": on_is_real if arm == "on" else 0.9}
+        judged = [{"file": "g.ts", "line": i * 10, "line_end": i * 10 + 2,
+                   "enrichment": enr, "severity": severity, "rubric": rubric,
+                   "is_real": on_is_real if arm == "on"
+                   else (0.9 if i < off_surface else 0.1)}
                   for i in range(8)]
         with open(env["JEV_REVIEW_METRICS"], "a") as f:
             f.write(_json.dumps({"label": label, "judged": judged}) + "\n")
@@ -174,7 +178,7 @@ def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
 
     monkeypatch.setattr(ab.subprocess, "run", fake_run)
     golden = tmp_path / "g.tsv"
-    golden.write_text("g.ts\t1\tdesc\n")
+    golden.write_text("".join(f"g.ts\t{n}\tdesc\n" for n in golden_lines))
     return str(golden)
 
 
@@ -274,6 +278,108 @@ def test_main_refuses_a_run_with_neither_golden_nor_clean(tmp_path):
     with pytest.raises(SystemExit):
         ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
                  "--expect", "ts-ast", "--outdir", str(tmp_path / "o")])
+
+
+def _run_main(tmp_path, golden, *extra, sample="s", flag="--golden"):
+    return ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", sample,
+                    "--expect", "ts-ast", flag, golden, "--repeats", "1",
+                    "--outdir", str(tmp_path / f"o-{sample}"), *extra])
+
+
+def test_main_scores_true_positives_uncapped_from_the_ledger(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    # the tool caps findings and golden_eval at 5; the ledger holds 8 real hits
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9,
+                              n_findings=5, tp_out=5, off_surface=5,
+                              golden_lines=tuple(range(0, 80, 10)))
+    assert _run_main(tmp_path, golden) == 0
+    out = _json.loads(capsys.readouterr().out)
+    row = out["repeats"][0]
+    assert (row["on_reported"], row["on_tp"]) == (8, 8)
+    assert (row["off_reported"], row["off_tp"]) == (5, 5)
+    assert out["verdict"] == "SIGNAL" and out["precision_ok"]
+
+
+def _on_reported(monkeypatch, tmp_path, capsys, sample, **kw):
+    import json as _json
+    golden = _fake_subprocess(monkeypatch, tmp_path, **kw)
+    assert _run_main(tmp_path, golden, sample=sample) == 0
+    return _json.loads(capsys.readouterr().out)["repeats"][0]["on_reported"]
+
+
+def test_main_does_not_count_a_severity_zero_unit(monkeypatch, tmp_path, capsys):
+    assert _on_reported(monkeypatch, tmp_path, capsys, "a",
+                        on_is_real=0.9, severity=0) == 0
+    assert _on_reported(monkeypatch, tmp_path, capsys, "b",
+                        on_is_real=0.9, severity=1) == 8
+
+
+def test_main_uses_the_deletion_threshold_for_deletion_units(
+        monkeypatch, tmp_path, capsys):
+    kw = {"rubric": "deletion"}
+    assert _on_reported(monkeypatch, tmp_path, capsys, "a",
+                        on_is_real=0.75, **kw) == 8
+    assert _on_reported(monkeypatch, tmp_path, capsys, "b",
+                        on_is_real=0.65, **kw) == 0
+    assert _on_reported(monkeypatch, tmp_path, capsys, "c",
+                        on_is_real=0.75) == 0
+
+
+def test_main_gate_is_inclusive(monkeypatch, tmp_path, capsys):
+    assert _on_reported(monkeypatch, tmp_path, capsys, "a", on_is_real=0.80) == 8
+    assert _on_reported(monkeypatch, tmp_path, capsys, "b",
+                        on_is_real=0.7999) == 0
+
+
+def test_main_aborts_on_a_non_ok_status(monkeypatch, tmp_path, capsys):
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9,
+                              status="incomplete review")
+    assert _run_main(tmp_path, golden) == 2
+    err = capsys.readouterr().err
+    assert "on-arm" in err and "incomplete review" in err
+
+
+def test_guard_rejects_a_non_ok_status_on_either_arm():
+    for arm, stamp in (("on", "ts-ast"), ("off", "none")):
+        res = _res(stamp)
+        res["meta"]["status"] = "incomplete review"
+        msg = ab.guard(res, arm, "ts-ast")
+        assert msg and f"{arm}-arm" in msg and "incomplete review" in msg
+    assert ab.guard(_res("ts-ast"), "on", "ts-ast") is None
+
+
+def _unstamp_on_arm(monkeypatch):
+    import json as _json
+    real_run = ab.subprocess.run
+
+    def run(cmd, **kw):
+        r = real_run(cmd, **kw)
+        if "--no-enrichment" not in cmd:
+            p = kw["env"]["JEV_REVIEW_METRICS"]
+            lines = open(p).read().splitlines()
+            rec = _json.loads(lines[-1])
+            for j in rec["judged"]:
+                j["enrichment"] = "none"
+            lines[-1] = _json.dumps(rec)
+            open(p, "w").write("\n".join(lines) + "\n")
+        return r
+
+    monkeypatch.setattr(ab.subprocess, "run", run)
+
+
+def test_main_guards_files_of_a_negative_golden_sample(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9)
+    assert _run_main(tmp_path, golden, flag="--negative-golden") == 0
+    out = _json.loads(capsys.readouterr().out)
+    assert out["golden"] is False
+    assert out["golden_file_enriched_share"] == {"g.ts": 1.0}
+    assert out["repeats"][0]["on_tp"] == 0 and out["repeats"][0]["on_reported"] == 8
+    _unstamp_on_arm(monkeypatch)
+    assert _run_main(tmp_path, golden, flag="--negative-golden", sample="t") == 2
+    assert "parse error" in capsys.readouterr().err
 
 
 # ---------- census ----------

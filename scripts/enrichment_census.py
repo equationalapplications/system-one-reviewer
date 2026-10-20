@@ -131,10 +131,13 @@ def main(argv: list[str] | None = None) -> int:
         # interpreter gotcha)
         for mod in ("tree_sitter", "tree_sitter_typescript",
                     "tree_sitter_javascript"):
-            if importlib.util.find_spec(mod) is None:
+            try:
+                importlib.import_module(mod)
+            except Exception as e:  # a present-but-broken wheel raises anything
                 print(f"enrichment_census: {mod} not importable under "
-                      f"{sys.executable}; install the wheels into the "
-                      f"interpreter that runs the reviewer", file=sys.stderr)
+                      f"{sys.executable} ({type(e).__name__}: {e}); install "
+                      f"the wheels into the interpreter that runs the "
+                      f"reviewer", file=sys.stderr)
                 return 3
     tool = load_tool()
     recs = census(tool, args.repo, args.head, rows)

@@ -79,7 +79,7 @@ envelope moves and by how much.
 *Why:* the cheap tier is only worth having if using it always is cheaper
 than thinking about whether to use it.
 
-**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.) TS/JS enrichment adds no model calls but adds input tokens per unit: model-off, a median of about 139 tokens (max about 247) per enriched unit on the TS fixtures (`docs/benchmarks/2026-10-20-ts-enrichment-envelope.json`). Its latency is not yet measured; it is watched after release, and leaving the seconds/cents envelope would by itself turn the default off (`docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`, Cost envelope).
+**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.) TS/JS enrichment adds no model calls but adds input tokens per unit: model-off, a median of about 139 tokens (max about 247) per enriched unit on the small TS fixtures (`docs/benchmarks/2026-10-20-ts-enrichment-envelope.json`), and the TS symbol table is bounded in characters so a module with many long signatures cannot blow that up. Its latency is not yet measured; it is watched after release, and leaving the seconds/cents envelope would by itself turn the default off (`docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`, Cost envelope).
 
 ### 2. Deterministic code prepares; the model only judges
 
@@ -188,8 +188,9 @@ without re-deriving it.
 
 All runs append to one metrics ledger. Recall claims need a golden;
 precision claims need adjudicated outcomes; threshold changes need a
-sweep. A change that moves judgments must ship with before/after numbers
-on the same receipts.
+sweep. A change that moves judgments should say what it moved and, where the
+author has them, ship before/after numbers on the same receipts (item 4 under
+"How changes are made" sets what is required before release).
 
 *Why:* SOR is experimental — measurement is how an experiment stays
 honest.

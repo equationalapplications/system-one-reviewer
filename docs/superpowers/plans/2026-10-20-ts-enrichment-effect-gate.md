@@ -56,7 +56,8 @@ tests only; do not touch the census test).
 1. Count reported findings and false positives from the ledger `judged`
    entries with `is_real >= REFLEX_GATE` (0.80; read the constant from the
    tool module), not from `--out` `findings` (capped at 5). True positives
-   still come from `golden_eval`.
+   were first read from `golden_eval`, which the second review showed is
+   capped at 5; see T14.
 2. `guard_files`: abort only when a golden file has NO unit stamped with the
    expected value (never engaged / parse failure). When some units are
    stamped and some are not (over-cap context drop), do not abort; return
@@ -74,6 +75,18 @@ Drive `main()` offline (pattern: `tests/test_enrichment.py::_run_main`) with a
 fake judge that returns a finding crossing the 0.80 gate so it is reported,
 write `--out`, and assert `findings[0]["lines"]` equals the unit's lines and
 is a list of strings. Include a case with no reported findings (empty list).
+
+### T14 Second-review fixes (done in the follow-up commit)
+Findings from the second independent review, applied after T9 to T11:
+- A/B counts rebuilt from the uncapped ledger via the tool's own `compose()`
+  and `eval_against_golden()` (the `--out` list and its `golden_eval` are
+  capped at 5, which capped true positives and could fake a KILL); guard
+  covers negative-golden files and rejects a non-`ok` status; the census
+  wheel check imports the modules instead of `find_spec`.
+- TS symbol table gets a character budget and per-line truncation; Python
+  `splitlines()` line drift fixed with a form-feed test; tie-break test.
+- Docs: INTENT rule 8 sentence aligned with item 4, "small fixtures"
+  wording, unsupported claim removed, spec rules updated.
 
 ### T12 Gates (controller)
 `ruff check .`, `mypy`, pytest with and without wheels; re-run the vacuity

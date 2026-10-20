@@ -57,3 +57,18 @@ def test_summarize_without_enrichment_adds_no_tokens():
     recs = [{"enriched": False, "missing": True, "covered": False, "window": 0,
              "ctx_chars": 0}]
     assert census.summarize(recs)["added_tokens"] == 0
+
+
+def test_main_exits_3_when_a_wheel_import_raises(tmp_path, monkeypatch, capsys):
+    golden = tmp_path / "g.tsv"
+    golden.write_text("a.ts\t2\tdesc\n")
+
+    def broken(name, package=None):
+        raise ImportError(f"broken wheel {name}")
+
+    monkeypatch.setattr(census.importlib, "import_module", broken)
+    rc = census.main(["--repo", str(tmp_path), "--head", "HEAD",
+                      "--golden", str(golden)])
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "tree_sitter" in err and "ImportError" in err

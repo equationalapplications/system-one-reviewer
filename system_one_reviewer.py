@@ -859,6 +859,15 @@ def _qualified_matches(pre_units, post_units):
 
 ENRICHMENT_MAX_SYMBOLS = 40        # file top-level symbol table cap
 ENRICHMENT_MAX_CONTEXT_LINES = 20  # enclosing-symbol context-window cap
+ENRICHMENT_MAX_TABLE_CHARS = 2000  # TS symbol table cap: sum of name + signature
+ENRICHMENT_MAX_LINE_CHARS = 160    # TS per-line cap (table signatures, window lines)
+
+
+def _source_lines(src):
+    """Source lines the way ast and tree-sitter rows and diff line numbers
+    count them: by "\n" only. str.splitlines() also splits on U+2028, form
+    feed and friends, which would shift every later line."""
+    return [ln.rstrip("\r") for ln in src.split("\n")]
 
 
 def _signature_line(node, src_lines):
@@ -877,7 +886,7 @@ def _file_symbol_table(src):
     units = _top_level_units(src)
     if not units:
         return None
-    src_lines = src.splitlines()
+    src_lines = _source_lines(src)
     try:
         tree = ast.parse(src)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
@@ -945,7 +954,7 @@ def _symbol_context_window(src, lineno):
         tree = ast.parse(src)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return []
-    src_lines = src.splitlines()
+    src_lines = _source_lines(src)
     best = None
     for node, _chain in _walk_with_parents(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -1023,23 +1032,36 @@ def _ts_parse(src, ext, loader=None):
 
 
 def _ts_lines(src):
-    """Source lines the way tree-sitter rows and diff line numbers count
-    them: by "\n" only. str.splitlines() also splits on U+2028, form feed
-    and friends, which would shift every later line."""
-    return [ln.rstrip("\r") for ln in src.split("\n")]
+    """TS-side name for `_source_lines`."""
+    return _source_lines(src)
+
+
+def _ts_clip(line):
+    """`line` right-stripped and cut to ENRICHMENT_MAX_LINE_CHARS, ending
+    in an ellipsis when cut, so a minified or generated line cannot blow
+    the per-unit token budget."""
+    line = line.rstrip()
+    if len(line) > ENRICHMENT_MAX_LINE_CHARS:
+        return line[:ENRICHMENT_MAX_LINE_CHARS - 1] + "\u2026"
+    return line
 
 
 def _ts_symbol_table(root, src):
     """{name: signature line} for the file's top-level function/class/const
-    declarations (head of ENRICHMENT_MAX_SYMBOLS, source order)."""
+    declarations (head of ENRICHMENT_MAX_SYMBOLS, source order, bounded by
+    ENRICHMENT_MAX_TABLE_CHARS of name + clipped signature)."""
     src_lines = _ts_lines(src)
     table: dict[str, str] = {}
+    used = 0
     for ident, st, _en in _ts_top_level_declarations(root):
         name = ident.split(":", 1)[1].rsplit(":", 1)[0]
         if name[:1] in ("{", "["):  # destructuring is not a symbol name
             continue
-        table[name] = (src_lines[st - 1].rstrip()
-                       if 1 <= st <= len(src_lines) else "")
+        sig = _ts_clip(src_lines[st - 1]) if 1 <= st <= len(src_lines) else ""
+        if used + len(name) + len(sig) > ENRICHMENT_MAX_TABLE_CHARS:
+            break  # head-first, like the count cap
+        table[name] = sig
+        used += len(name) + len(sig)
         if len(table) >= ENRICHMENT_MAX_SYMBOLS:
             break
     return table
@@ -1116,7 +1138,7 @@ def _ts_ast_context(src, ext, lineno, loader=None):
         src_lines = _ts_lines(src)
         lo = max(1, min(best[0], len(src_lines)))
         hi = min(len(src_lines), best[1])
-        window = [src_lines[i - 1].rstrip()
+        window = [_ts_clip(src_lines[i - 1])
                   for i in range(lo, hi + 1)][:ENRICHMENT_MAX_CONTEXT_LINES]
     return {"symbols": dict(table),
             "enclosing": ".".join(best[2]) if best else None,

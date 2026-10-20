@@ -252,3 +252,70 @@ def test_parse_is_cached_per_image(jr):
     first = jr._ts_parse(src, "ts")
     jr._ts_ast_context(src, "ts", 8)
     assert jr._ts_parse(src, "ts") is first
+
+
+# ---------- character budget ----------
+
+def _table_chars(symbols):
+    return sum(len(k) + len(v) for k, v in symbols.items())
+
+
+def test_symbol_table_char_budget_keeps_head_in_order(jr):
+    _ts()
+    pad = "a" * 90
+    names = [f"fn{i:02d}" for i in range(40)]
+    src = "".join(f"export function {n}(x: number, {pad}: string): number {{}}\n"
+            for n in names)
+    assert all(len(ln) > 120 for ln in src.splitlines())
+    ctx = jr._ts_ast_context(src, "ts", 1)
+    got = list(ctx["symbols"])
+    assert 0 < len(got) < 40
+    assert _table_chars(ctx["symbols"]) <= jr.ENRICHMENT_MAX_TABLE_CHARS
+    assert got == names[:len(got)]
+    # the next entry is what would not fit
+    nxt = len(names[len(got)]) + len(src.splitlines()[len(got)])
+    assert _table_chars(ctx["symbols"]) + nxt > jr.ENRICHMENT_MAX_TABLE_CHARS
+
+
+def test_very_long_line_is_clipped_in_table_and_window(jr):
+    _ts()
+    lim = jr.ENRICHMENT_MAX_LINE_CHARS
+    src = "export function f(" + "a, " * 1700 + "b) {\n  return 1;\n}\n"
+    assert len(src.splitlines()[0]) > 5000
+    ctx = jr._ts_ast_context(src, "ts", 2)
+    assert len(ctx["symbols"]["f"]) == lim
+    assert ctx["symbols"]["f"].endswith("\u2026")
+    assert ctx["symbols"]["f"].startswith("export function f(a, a,")
+    assert len(ctx["context"][0]) == lim and ctx["context"][0].endswith("\u2026")
+    assert ctx["context"][1:] == ["  return 1;", "}"]
+
+
+def test_short_lines_are_not_clipped(jr):
+    _ts()
+    line = "export function f(" + "a" * 100 + "): void {"
+    assert len(line) < jr.ENRICHMENT_MAX_LINE_CHARS
+    ctx = jr._ts_ast_context(line + "\n}\n", "ts", 1)
+    assert ctx["symbols"]["f"] == line and ctx["context"][0] == line
+
+
+# ---------- enclosing-span tie-break ----------
+
+def test_enclosing_span_tie_goes_to_deeper_chain(jr):
+    """Identical start and end: the longer chain wins (it encloses less)."""
+    spans = [(3, 5, ["A"]), (3, 5, ["A", "m"]), (3, 5, ["B"])]
+    assert jr._ts_enclosing_span(spans, 4)[2] == ["A", "m"]
+    assert jr._ts_enclosing_span(list(reversed(spans)), 4)[2] == ["A", "m"]
+    # narrower span still beats a deeper chain; later start breaks ties first
+    assert jr._ts_enclosing_span([(1, 9, ["X", "y", "z"]), (2, 8, ["Q"])],
+                                 4)[2] == ["Q"]
+    assert jr._ts_enclosing_span([(1, 5, ["P"]), (2, 6, ["Q"])], 3)[2] == ["Q"]
+
+
+def test_real_parse_same_span_symbols_resolve_to_deeper(jr):
+    """One-line class expression and nested namespaces produce two symbol
+    nodes with the same span; the inner symbol must win."""
+    _ts()
+    cls = "const C = class { m() { return 1; } };\n"
+    assert jr._ts_ast_context(cls, "ts", 1)["enclosing"] == "C.m"
+    ns = "namespace A { namespace B { const x = 1; } }\n"
+    assert jr._ts_ast_context(ns, "ts", 1)["enclosing"] == "A.B"

@@ -87,14 +87,21 @@ afterwards whether it stays default-on.
 
 Enrichment adds input tokens per unit; it adds no model calls.
 
-- **Model-off size.** Measured on the TS fixtures
+- **Model-off size.** Measured on the small TS fixtures
   (`tests/data/ts-enrich/sample.ts` and `component.tsx`, 83 rows, every row
   enriched): `ast_context` adds a median of 416 characters (maximum 740)
-  per unit, about 139 (maximum 247) tokens at `CHARS_PER_TOKEN = 3.0`,
-  against about 220 characters for a bare five-line unit. The receipt
+  per unit, about 139 (maximum 247) tokens at `CHARS_PER_TOKEN = 3.0`. These
+  are fixture figures, not a bound; a larger real module is the next
+  measurement. The receipt
   `docs/benchmarks/2026-10-20-ts-enrichment-envelope.json` is authoritative
   and reproducible with `scripts/enrichment_census.py --json`, which
   reports `ctx_chars` per row and the summed `added_tokens`.
+- **Bound.** The TS symbol table is capped by characters as well as count
+  (`ENRICHMENT_MAX_TABLE_CHARS`, name plus signature per entry, head-first
+  in source order), each signature and each window line is truncated to
+  `ENRICHMENT_MAX_LINE_CHARS`, and the window stays at 20 lines. Without
+  the character cap 40 long exported signatures gave about 6,300 characters
+  (about 2,100 tokens) per unit. The Python path is unchanged.
 - **Multiplier.** Each E2 site unit carries its own copy, and the V7 census
   measured 9.63x site expansion on the Stage A range (INTENT rule 2 status),
   so added tokens per run scale with units, not files. The parse is cached;
@@ -141,13 +148,18 @@ release.
    run the same way on `examples/fixture-golden.tsv` and the corpus py rows
    to give Python its first valid measurement. Rules, read at the 0.80
    reflex gate:
-   - **Counts** come from the ledger `judged` entries that cross the gate
-     (`is_real >= 0.80`), not from `--out` `findings`, which is capped at 5
-     per the ROADMAP standing rule and would saturate on Stage A.
+   - **Counts** are rebuilt from the uncapped ledger `judged` entries by the
+     tool's own `compose()` (rubric threshold, `REFLEX_GATE`, severity >= 1),
+     and true positives by the tool's own `eval_against_golden()` on that
+     list. Neither `--out` `findings` nor its `golden_eval` is used: both
+     are cut to the top 5 (ROADMAP standing rule), so true positives could
+     never exceed 5 and an on-arm with 8 real findings would read as 3 false
+     positives.
    - **Vacuity guard:** abort (exit 2) unless the on-arm run stamp contains
-     the expected value, the TS wheels are available, the run did not fail
-     open, and every golden file has at least one unit stamped with the
-     expected value. A golden file with none enriched means it failed to
+     the expected value, the TS wheels are available, both arms completed
+     (`status` is `ok`: a fail-open or incomplete-review run confounds
+     enrichment with coverage), and every file named in the golden or
+     negative-golden has at least one unit stamped with the expected value. A golden file with none enriched means it failed to
      parse; partial enrichment is reported as an enriched share, not an
      abort, because over-cap context drop (above) legitimately turns some
      units to `none` on long constructors.
