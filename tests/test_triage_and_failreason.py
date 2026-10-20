@@ -162,7 +162,7 @@ def test_laya_legacy_suffix_byte_identical(jr, monkeypatch, tmp_path):
     # "Approved (incomplete review — ...)" legacy suffix was retired with
     # the verdict field itself; the honest-status carrier (condition 10)
     # replaces it with "Incomplete review — ..." + base_verdict/status.
-    assert rec["verdict"] == "Incomplete review — 0 of 1 clusters judged"
+    assert rec["verdict"] == "Incomplete review — 0 of 1 of 1 clusters judged"
     assert rec["base_verdict"] == "incomplete review"
 
 
@@ -1069,7 +1069,7 @@ def test_main_downgrades_on_size_skipped_code(jr, monkeypatch, tmp_path):
     assert rec["n_size_skipped_code"] == 1
     # v0.9 triage re-scope (accepted, predates E2): status replaces verdict.
     assert rec["base_verdict"] == "incomplete review"
-    assert "Incomplete review — 0 of 1 clusters judged" in rec["verdict"]
+    assert "Incomplete review — 0 of 1 of 1 clusters judged" in rec["verdict"]
 
 
 # ---------- report readability ----------
