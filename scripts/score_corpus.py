@@ -28,7 +28,7 @@ SWEEP_PATH = os.path.join(REPO_ROOT, "scripts", "sweep-thresholds.py")
 # r13-m1 (AST-units Task 4): `truncated` covers ceiling-dropped units —
 # a ceiling drop is not triage, so it gets its own bucket.
 MISS_BUCKETS = ("anchor-offset", "judged-below-threshold", "judged-low-severity",
-                "skipped-triage", "truncated", "not-judged")
+                "held-test", "skipped-triage", "truncated", "not-judged")
 
 
 def load_sweep():
@@ -69,7 +69,7 @@ def replay_indices(jr, sw, rec, t, dt, include_test=False):
     return [i for i, w in enumerate(wrapped) if id(w) in ids], reported, verdict
 
 
-def classify_miss(file, line, judged, idx, skipped, t, dt):
+def classify_miss(file, line, judged, idx, skipped, t, dt, include_test=False):
     covering = [i for i, j in enumerate(judged) if _covers(j, file, line)]
     if any(i in idx for i in covering):
         return "anchor-offset"
@@ -77,6 +77,14 @@ def classify_miss(file, line, judged, idx, skipped, t, dt):
         best = max(covering, key=lambda i: judged[i].get("is_real") or 0)
         j = judged[best]
         thr = dt if j.get("rubric") == "deletion" else t
+        # compose's gate (rubric threshold, severity >= 1) passed, but the
+        # stamped test class was held back: not a judgment miss
+        if not include_test and any(
+                judged[i].get("reflex_class") == "test"
+                and (judged[i].get("is_real") or 0) >= (
+                    dt if judged[i].get("rubric") == "deletion" else t)
+                and (judged[i].get("severity") or 0) >= 1 for i in covering):
+            return "held-test"
         return ("judged-low-severity" if (j.get("is_real") or 0) >= thr
                 else "judged-below-threshold")
     # r13-m1 (Task 4): ceiling-dropped units are classified BEFORE the
@@ -119,7 +127,8 @@ def score_sample(jr, sw, sample, goldens, dismissed, rec, out, t, dt, tmpdir,
                 res["cluster_matched"] += 1
             if (gf, gl) in missed:
                 res["misses"][classify_miss(gf, gl, judged, idx_set,
-                                            (out or {}).get("skipped", []), t, dt)] += 1
+                                            (out or {}).get("skipped", []), t, dt,
+                                            include_test)] += 1
     if sample["kind"] == "clean":
         counts = jr.eval_negative(reported)
         res["clean_fp"] = counts["blocker_major"] + counts["other_fp"]
@@ -272,7 +281,9 @@ def render_markdown(res, grid=None):
                        ("fail-open runs", "fail_open"), ("avg latency ms", "avg_latency_ms")):
         val = f"{a['positive']} / {a['clean']}" if key is None else _fmt(a[key])
         lines.append(f"| {label} | {val} |")
-    lines += ["", "misses: " + ", ".join(f"{k} {v}" for k, v in a["misses"].items()),
+    # held-test is shown only when non-zero, so runs without test units read as before
+    lines += ["", "misses: " + ", ".join(f"{k} {v}" for k, v in a["misses"].items()
+                                        if v or k != "held-test"),
               "", "variance: " + ", ".join(f"{k} {_fmt(v)}"
                                            for k, v in res["variance"].items())]
     if res["missing"]:

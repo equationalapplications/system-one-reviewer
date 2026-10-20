@@ -743,3 +743,39 @@ def test_main_without_the_flag_holds_test_entries_and_omits_it(
     assert not any("--include-test-findings" in c for c in cmds)
     row = _json.loads(capsys.readouterr().out)["repeats"][0]
     assert (row["on_reported"], row["off_reported"]) == (0, 0)
+
+
+def _forbid_runs(monkeypatch):
+    def must_not_run(*a, **k):
+        raise AssertionError("the golden check must abort before any run")
+
+    monkeypatch.setattr(ab.subprocess, "run", must_not_run)
+
+
+def test_main_aborts_on_a_test_file_golden_row_without_the_flag(
+        monkeypatch, tmp_path, capsys):
+    _forbid_runs(monkeypatch)
+    g = tmp_path / "g.tsv"
+    g.write_text("src/a.ts\t3\tdesc\ntests/x.test.ts\t7\tdesc\n")
+    assert _run_main(tmp_path, str(g)) == 2
+    err = capsys.readouterr().err
+    assert ("golden row tests/x.test.ts:7 is in a test file and would be held back; "
+            "pass --include-test-findings") in err
+
+
+def test_main_runs_a_test_file_golden_with_the_flag(monkeypatch, tmp_path, capsys):
+    cmds: list = []
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9, cmds=cmds)
+    with open(golden, "a") as f:
+        f.write("tests/x.test.ts\t7\tdesc\n")
+    # the fake judges g.ts only; a run reaching its first command proves no abort
+    _run_main(tmp_path, golden, "--include-test-findings")
+    assert cmds and "--include-test-findings" in cmds[0]
+    capsys.readouterr()
+
+
+def test_main_code_only_golden_is_unaffected_by_the_test_row_check(
+        monkeypatch, tmp_path, capsys):
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9)
+    assert _run_main(tmp_path, golden) == 0
+    assert "is in a test file" not in capsys.readouterr().err

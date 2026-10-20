@@ -116,8 +116,16 @@ Test-file units (path rule in ROADMAP S3) are judged and logged with
 `reflex_class: "test"`, but their findings are held out of the surfaced
 findings by default. A run that holds any prints
 `N test-file finding(s) held back; --include-test-findings shows them` and
-records the count in `meta.n_test_held`. Held findings are not listed in
-`--json`; hosts that need them read the ledger. Each surfaced finding carries
+records the count in `meta.n_test_held`; the no-findings line and the
+verdict string mention it too. Held findings are not listed in `--json`, and
+the ledger holds their scores and class but no text: to adjudicate one, re-run
+with `--include-test-findings --out FILE`. The PR-level risk still covers all
+judged units, held ones included. Golden, negative-golden and replay runs
+exclude held findings too: pass `--include-test-findings` to
+`system-one-reviewer`, `scripts/enrichment_ab.py`,
+`scripts/sweep-thresholds.py` and `scripts/score_corpus.py` when a golden has
+a test-file row (a golden run that holds findings warns on stderr). Each
+surfaced finding carries
 `where: {symbol, line}`: a locator only, never a claim. `symbol` is the
 dotted enclosing symbol (or `null`), and `line` is the hunk's anchor line.
 Ledger records written before `reflex_class` existed read as `code`.

@@ -16,6 +16,9 @@ import pytest
     ("pkg/__mocks__/fs.js", "test"),
     ("spec/models/user_spec.rb", "test"),
     ("web/e2e/login.ts", "test"),
+    ("pkg/specs/models/user.rb", "test"),
+    ("specs/user.rb", "test"),
+    ("spec/user.rb", "test"),
     # filename patterns
     ("src/foo.test.ts", "test"),
     ("src/foo.spec.js", "test"),

@@ -173,14 +173,36 @@ Post-release evaluation (does not block the release):
 
 ## Known limits
 
-- Path heuristics: a test helper outside the listed directories or names is
-  `code`; a product file that happens to live under `test/` is held. Both are
-  visible in the ledger by class.
+- Path heuristics (the approved list is kept; these are known and visible in
+  the ledger by class). Over-matches, so product code is held: a `spec/` or
+  `specs/` directory used for API specs or docs (`packages/spec/src/index.ts`,
+  `docs/superpowers/specs/*.md`; docs are triaged out anyway), and
+  `test_*.*` product utilities such as `src/test_runner.py`. Under-matches,
+  so some test findings still surface: Django `tests.py`, Java
+  `FooTest.java`, C# `FooTests.cs` and `Foo.Tests/` projects, Android
+  `androidTest/`, and `*_spec.rb` outside `spec/`. Extend the list with a
+  table test when the ledger shows a class mis-sorted.
+- A held test unit that scores above the gate does not make the run read as
+  flagged: the report and verdict say how many were held, `pr_level` still
+  covers them, and the last line stays `OK`. A clean run is never merge
+  evidence regardless.
+- Golden, negative-golden and replay scoring exclude held findings unless
+  `--include-test-findings` is passed. A golden run that holds findings warns
+  on stderr and records `n_test_held` in `golden_eval`; the A/B harness
+  refuses a golden with a test-file row unless the flag is given; the corpus
+  scorer buckets a held unit as `held-test`, not as a low-severity miss.
+- The jitter list is built before the hold, so a held test file whose score
+  is within 0.03 of the gate still appears under "Jitter-zone scores".
 - The Stage A golden row `custody-stack.test.ts:200` is unscored by default.
   Use `--include-test-findings` for golden runs and for replays against it
   (A/B harness, sweep, corpus scorer).
 - The locator names a place, not a problem. A unit with no resolvable symbol
-  (module level, wrapped callbacks such as `memo(...)`) gets `symbol: null`.
+  (module level, wrapped callbacks such as `memo(...)`) gets `symbol: null`. A
+  change on a Python decorator line resolves to the enclosing class, not the
+  decorated method; a TS symbol or chain over 200 characters is clipped; TS
+  files over 256 K characters or with a parse error give `null`; a
+  deletion-only unit pairs a pre-image symbol with the head-side anchor line,
+  so the symbol may not exist at head.
 
 ## Open questions (resolved)
 

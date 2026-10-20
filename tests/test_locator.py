@@ -40,6 +40,16 @@ def test_deletion_only_uses_the_pre_image(jr):
     assert jr.locate("m.py", pre, post, unit)["symbol"] == "gone"
 
 
+def test_deletion_only_uses_the_old_line_not_the_anchor(jr):
+    pre = "".join(f"# {i}\n" for i in range(1, 10)) + (
+        "def beta():\n    a = 1\n    b = 2\n    c = 3\n    return a\n") + (
+        "".join(f"# {i}\n" for i in range(15, 21)))
+    assert len(pre.splitlines()) == 20
+    unit = {"file": "m.py", "line": 18, "change_type": "deletion-only",
+            "entries": [("-", 10, "def beta():", 10)]}
+    assert jr.locate("m.py", pre, "x = 1\n", unit) == {"symbol": "beta", "line": 18}
+
+
 def test_whole_file_deleted_gives_none(jr):
     unit = {"file": "m.py", "line": 2, "change_type": "whole-file-deleted",
             "entries": [("-", 2, "    return 1", 2)]}

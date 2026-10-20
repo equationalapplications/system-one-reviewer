@@ -403,6 +403,15 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("give --golden (a sample with known defects) or --clean / "
                  "--negative-golden (a clean sample); otherwise every "
                  "finding would be scored as a false positive")
+    if args.golden and not args.include_test_findings:
+        # held test findings would score every such row as missed, silently
+        tool = load_tool()
+        for fpath, line in golden_rows(args.golden):
+            if tool.reflex_class(fpath) == "test":
+                print(f"enrichment_ab: golden row {fpath}:{line} is in a test file "
+                      f"and would be held back; pass --include-test-findings",
+                      file=sys.stderr)
+                return 2
     os.makedirs(args.outdir, exist_ok=True)
     runs: dict[str, list[Any]] = {"on": [], "off": []}
     shares: list[dict[str, float]] = []

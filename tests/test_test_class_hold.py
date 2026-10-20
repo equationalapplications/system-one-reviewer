@@ -39,8 +39,9 @@ def test_compose_jitter_is_unchanged_by_the_hold(jr):
     assert reported == [] and jitter and jitter[0]["file"] == "a.test.ts"
 
 
-def _run(jr, monkeypatch, tmp_path, capsys, path, extra=(), is_real=0.95):
-    diff = _add_file_diff(path, ["def f():", "    return 1"])
+def _run(jr, monkeypatch, tmp_path, capsys, path, extra=(), is_real=0.95, split_err=False):
+    paths = [path] if isinstance(path, str) else list(path)
+    diff = "".join(_add_file_diff(p, ["def f():", "    return 1"]) for p in paths)
     records: list = []
     monkeypatch.setattr(jr, "judge", lambda kept, ask, errors=None, split_unit=None: (
         [{"hunk": h, "severity": 3.0, "is_real": is_real, "category": "bug-risk",
@@ -59,7 +60,10 @@ def _run(jr, monkeypatch, tmp_path, capsys, path, extra=(), is_real=0.95):
     monkeypatch.setattr(jr.sys, "argv", ["system-one-reviewer", "--repo", str(tmp_path),
                                          "--staged", "--provider", "jev", "--json", *extra])
     jr.main()
-    return json.loads(capsys.readouterr().out), records
+    cap = capsys.readouterr()
+    if split_err:
+        return json.loads(cap.out), records, cap.err
+    return json.loads(cap.out), records
 
 
 def test_main_judges_stamps_and_holds_a_test_file_unit(jr, monkeypatch, tmp_path, capsys):
@@ -126,3 +130,93 @@ def test_cap_applies_after_the_hold(jr, monkeypatch, tmp_path, capsys):
     assert len(out["findings"]) == 5
     assert all(f["file"].startswith("src/") for f in out["findings"])
     assert out["meta"]["n_test_held"] == 2
+
+
+def test_held_count_is_not_capped_at_five(jr, monkeypatch, tmp_path, capsys):
+    paths = [f"tests/test_{i}.py" for i in range(7)]
+    out, _ = _run(jr, monkeypatch, tmp_path, capsys, paths)
+    assert out["findings"] == [] and out["meta"]["n_test_held"] == 7
+
+
+def test_json_findings_carry_reflex_class(jr, monkeypatch, tmp_path, capsys):
+    out, _ = _run(jr, monkeypatch, tmp_path, capsys, ["src/m.py", "tests/test_m.py"],
+                  extra=("--include-test-findings",))
+    got = {f["file"]: f["reflex_class"] for f in out["findings"]}
+    assert got == {"src/m.py": "code", "tests/test_m.py": "test"}
+
+
+def test_out_findings_carry_reflex_class(jr, monkeypatch, tmp_path, capsys):
+    dest = tmp_path / "r.json"
+    _run(jr, monkeypatch, tmp_path, capsys, "tests/test_m.py",
+         extra=("--include-test-findings", "--out", str(dest)))
+    assert json.loads(dest.read_text())["findings"][0]["reflex_class"] == "test"
+
+
+def test_test_only_pr_report_and_verdict_are_honest(jr, monkeypatch, tmp_path, capsys):
+    out, records = _run(jr, monkeypatch, tmp_path, capsys, "tests/test_m.py")
+    want = "Judged 1 cluster; 0 findings above threshold; 1 test-file finding(s) held back"
+    assert out["verdict"] == want and records[0]["verdict"] == want
+    assert out["base_verdict"] == "ok"
+
+
+def test_test_only_pr_text_report(jr, monkeypatch, tmp_path, capsys):
+    _run(jr, monkeypatch, tmp_path, capsys, "tests/test_m.py")
+    argv = [a for a in jr.sys.argv if a != "--json"]
+    monkeypatch.setattr(jr.sys, "argv", argv)
+    jr.main()
+    text = capsys.readouterr().out
+    assert "No findings above threshold (1 test-file finding(s) held back)." in text
+    assert "1 test-file finding(s) held back; --include-test-findings shows them" in text
+
+
+def test_code_only_pr_strings_are_unchanged(jr, monkeypatch, tmp_path, capsys):
+    out, records = _run(jr, monkeypatch, tmp_path, capsys, "src/m.py")
+    assert out["verdict"] == "Judged 1 cluster; 1 finding above threshold"
+    meta = {"repo": "r", "mode": "staged", "head": "0" * 40, "provider": "jev",
+            "n_hunks": 1, "n_test_held": 0, "latencies": [1.0],
+            "n_analyzed": 1, "jev_calls": 1, "total_latency_ms": 1.0}
+    assert "No findings above threshold.\n" in jr.render([], [], "OK", None, [], meta) + "\n"
+
+
+def test_render_no_findings_line_mentions_held(jr):
+    meta = {"repo": "r", "mode": "staged", "head": "0" * 40, "provider": "jev",
+            "n_hunks": 1, "n_test_held": 3, "latencies": [1.0],
+            "n_analyzed": 1, "jev_calls": 1, "total_latency_ms": 1.0}
+    text = jr.render([], [], "OK", None, [], meta)
+    assert "No findings above threshold (3 test-file finding(s) held back)." in text
+
+
+WARN = ("warning: 1 test-file finding(s) held back; golden/negative scoring excludes "
+        "them (pass --include-test-findings)")
+
+
+def _golden(tmp_path):
+    g = tmp_path / "golden.tsv"
+    g.write_text("tests/test_a.py\t2\tx\n")
+    return str(g)
+
+
+def test_golden_warns_on_stderr_and_records_held(jr, monkeypatch, tmp_path, capsys):
+    out, _, err = _run(jr, monkeypatch, tmp_path, capsys, "tests/test_a.py",
+                       extra=("--golden", _golden(tmp_path)), split_err=True)
+    assert err.count(WARN) == 1
+    assert out["golden_eval"]["n_test_held"] == 1
+
+
+def test_negative_golden_warns_and_records_held(jr, monkeypatch, tmp_path, capsys):
+    out, _, err = _run(jr, monkeypatch, tmp_path, capsys, "tests/test_a.py",
+                       extra=("--negative-golden", _golden(tmp_path)), split_err=True)
+    assert err.count(WARN) == 1
+    assert out["golden_eval"]["negative_eval"]["n_test_held"] == 1
+
+
+def test_no_warning_without_golden(jr, monkeypatch, tmp_path, capsys):
+    _, _, err = _run(jr, monkeypatch, tmp_path, capsys, "tests/test_a.py", split_err=True)
+    assert "held back" not in err
+
+
+def test_no_warning_with_the_flag(jr, monkeypatch, tmp_path, capsys):
+    out, _, err = _run(jr, monkeypatch, tmp_path, capsys, "tests/test_a.py",
+                       extra=("--golden", _golden(tmp_path), "--include-test-findings"),
+                       split_err=True)
+    assert "held back" not in err and "n_test_held" not in out["golden_eval"]

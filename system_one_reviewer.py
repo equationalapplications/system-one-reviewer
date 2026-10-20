@@ -3916,7 +3916,9 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
     if meta.get("n_hunks") == 0:
         out.append("Empty diff — nothing to review (check the range/mode).")
     elif not reported:
-        out.append("No findings above threshold.")
+        held = meta.get("n_test_held")
+        out.append(f"No findings above threshold ({held} test-file finding(s) "
+                   "held back)." if held else "No findings above threshold.")
     # Most severe first; stable, so equal severities keep compose() order.
     for f in sorted(reported, key=lambda f: -(f.get("severity") or 0)):
         sev = SEV_NAME.get(sev_level(f.get("severity")), "?")
@@ -4239,6 +4241,8 @@ def main():
         status = "ok"
         verdict = (f"Judged {n_analyzed} cluster{'s' if n_analyzed != 1 else ''}; "
                    f"{len(reported)} finding{'s' if len(reported) != 1 else ''} above threshold")
+        if n_test_held:
+            verdict += f"; {n_test_held} test-file finding(s) held back"
     # Step 0′: the status field is the honest signal. Downstream
     # structured consumers read THIS, not verdict strings.
     base_verdict = status
@@ -4311,12 +4315,24 @@ def main():
               "n_dropped": n_dropped, "n_unjudged": n_unjudged,
               "n_size_skipped_code": n_size_skipped_code}
 
+    # Golden scoring reads only what is surfaced, so held test findings
+    # would silently count as misses: say so (stderr keeps --json clean).
+    held_unscored = bool((args.golden or args.negative_golden)
+                         and not args.include_test_findings and n_test_held)
+    if held_unscored:
+        print(f"warning: {n_test_held} test-file finding(s) held back; "
+              "golden/negative scoring excludes them (pass --include-test-findings)",
+              file=sys.stderr)
     golden_eval = None
     if args.golden:
         golden_eval = eval_against_golden(reported, args.golden)
+        if held_unscored:
+            golden_eval["n_test_held"] = n_test_held
         result["golden_eval"] = golden_eval
     if args.negative_golden:
         neg = eval_negative(reported)
+        if held_unscored:
+            neg["n_test_held"] = n_test_held
         if golden_eval is None:
             golden_eval = {}
         golden_eval["negative_eval"] = neg
