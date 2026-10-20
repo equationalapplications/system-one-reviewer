@@ -29,6 +29,7 @@ Usage:
 
 import argparse
 import ast
+import fnmatch
 import importlib
 import json
 import math
@@ -1211,6 +1212,34 @@ def build_ast_context(path, pre, post, unit, loader=None):
     return {"symbols": symbols or {},
             "enclosing": enclosing,
             "context": _symbol_context_window(src, lineno)}
+
+
+def locate(path, pre, post, unit):
+    """Where to look for a surfaced finding: the dotted enclosing symbol at the
+    anchor line (None if none resolves) and the anchor line. Deterministic, no
+    claim, no source text, and independent of ast_context so --no-enrichment,
+    missing wheels or a context dropped at re-expansion do not change it.
+    Deletion-only units use the pre-image; whole-file-deleted has no symbol.
+    Fails open."""
+    line = unit["line"]
+    src, lineno = post, line
+    if unit.get("change_type") == "whole-file-deleted":
+        src = None
+    elif unit.get("change_type") == "deletion-only" and pre:
+        first = next((e for e in unit.get("entries", []) if e[0] == "-"), None)
+        src, lineno = pre, (first[1] if first is not None else line)
+    symbol = None
+    if src:
+        ext = os.path.splitext(path or "")[1].lower().lstrip(".")
+        try:
+            if ext in TS_LANGUAGE_BY_EXT:
+                ctx = _ts_ast_context(src, ext, lineno)
+                symbol = ctx["enclosing"] if ctx else None
+            elif ext == "py":
+                symbol = _enclosing_chain(src, lineno)
+        except Exception:
+            symbol = None
+    return {"symbol": symbol, "line": line}
 
 
 def attach_ast_context(units, images, loader=None):
@@ -3563,8 +3592,31 @@ def near(v, t, zone=0.03):
     return v is not None and abs(v - t) <= zone
 
 
+TEST_DIRS = frozenset({"tests", "test", "__tests__", "__mocks__",
+                       "spec", "specs", "e2e"})
+TEST_NAME_PATTERNS = ("*.test.*", "*.spec.*", "test_*.*", "*_test.*")
+
+
+def reflex_class(path):
+    """"test" for test files, else "code", from the path alone (INTENT
+    rule 2: deterministic preparation). A DIRECTORY segment in TEST_DIRS or a
+    filename matching TEST_NAME_PATTERNS (or conftest.py) is a test. testing/,
+    test-utils/ and fixtures/ are deliberately not matched: they are often
+    product or infrastructure code."""
+    parts = [s for s in (path or "").replace("\\", "/").lower().split("/") if s]
+    if not parts:
+        return "code"
+    if any(seg in TEST_DIRS for seg in parts[:-1]):
+        return "test"
+    name = parts[-1]
+    if name == "conftest.py" or any(fnmatch.fnmatchcase(name, pat)
+                                    for pat in TEST_NAME_PATTERNS):
+        return "test"
+    return "code"
+
+
 def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
-            deletion_threshold=DELETION_REAL_THRESHOLD):
+            deletion_threshold=DELETION_REAL_THRESHOLD, hold_classes=("test",)):
     """Thresholds in code. Plateau rule: 0.50 sits >=0.05 from 0.80/0.90.
 
     v0.3b (Kurt review, implements the F1 corroboration proposal; M2 fix
@@ -3581,6 +3633,9 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
     deletion-rubric thresholds; without this parameter the 0.70 knob is a
     hardcoded module constant no external caller can move. Default keeps
     the shipped behavior byte-identical.
+
+    hold_classes: findings whose reflex_class (missing = "code") is listed
+    are judged and logged but not surfaced; jitter accounting is unchanged.
     """
     reported, jitter = [], []
     for f in findings:
@@ -3592,6 +3647,8 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
         if near(r, t):
             jitter.append({"file": f["hunk"]["file"], "is_real": r})
         if r is not None and r >= t and (f.get("severity") or 0) >= 1:
+            if f.get("reflex_class", "code") in hold_classes:
+                continue
             reported.append(f)
     # v0.9 FORK RESOLUTION (A+C): no verdict output. Findings are ranked
     # triage pointers; the coverage banner provides honest status. The
@@ -3859,15 +3916,23 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
     if meta.get("n_hunks") == 0:
         out.append("Empty diff — nothing to review (check the range/mode).")
     elif not reported:
-        out.append("No findings above threshold.")
+        held = meta.get("n_test_held")
+        out.append(f"No findings above threshold ({held} test-file finding(s) "
+                   "held back)." if held else "No findings above threshold.")
     # Most severe first; stable, so equal severities keep compose() order.
     for f in sorted(reported, key=lambda f: -(f.get("severity") or 0)):
         sev = SEV_NAME.get(sev_level(f.get("severity")), "?")
         out.append(f"[{sev}] {f['hunk']['file']}:{f['hunk']['line']} "
                    f"({f.get('category')}, is_real={f.get('is_real')})")
+        if (f.get("where") or {}).get("symbol"):
+            out.append(f"  in {f['where']['symbol']}")
         out.append(f"  hunk: {f['hunk']['header']}")
         for line in f["hunk"]["lines"][:6]:
             out.append("    " + line)
+        out.append("")
+    if meta.get("n_test_held"):
+        out.append(f"{meta['n_test_held']} test-file finding(s) held back; "
+                   "--include-test-findings shows them")
         out.append("")
     if jitter:
         out.append("Jitter-zone scores (within 0.03 of threshold — do not trust):")
@@ -3934,6 +3999,10 @@ def main():
                     help="model/checkpoint for the laya provider "
                          f"(default {LAYA_DEFAULT_MODEL})")
     ap.add_argument("--json", action="store_true", help="JSON-only stdout")
+    ap.add_argument("--include-test-findings", dest="include_test_findings",
+                    action="store_true",
+                    help="surface test-file findings too (measurement; default "
+                         "holds them back, they are still judged and logged)")
     # Task 6 (r5-m2): a MEASUREMENT knob for Task 8's mandatory
     # enrichment-off arm, not a user feature — it skips the
     # ast_context attachment entirely.
@@ -4099,9 +4168,23 @@ def main():
     # Status field carries honest signal instead (ok / fail-open / incomplete review).
     # M2 (r9): on a non-fail-open run, unjudged clusters (parse errors or
     # dropped over max-hunks) mark the review as incomplete.
+    # Stamp the path-only class on every judged unit (leaves carry
+    # parse_error and are never surfaced; fail-open left findings == []).
+    for f in findings:
+        if not f.get("parse_error"):
+            f["reflex_class"] = reflex_class(f["hunk"]["file"])
+    hold = () if args.include_test_findings else ("test",)
     reported, jitter, _ = compose(findings, skipped,
                                   pr_level if not fail_open else None,
-                                  threshold=REFLEX_GATE)
+                                  threshold=REFLEX_GATE, hold_classes=hold)
+    # Findings the hold kept back: surfaced with nothing held, absent now.
+    # Judged and logged either way (compose() decides what is surfaced).
+    n_test_held = 0
+    if hold:
+        surfaced_all, _, _ = compose(findings, skipped,
+                                     pr_level if not fail_open else None,
+                                     threshold=REFLEX_GATE, hold_classes=())
+        n_test_held = sum(1 for f in surfaced_all if f not in reported)
     # v0.9 (condition 3): ranking key for triage pointers, THEN the
     # 5-findings cap (ROADMAP standing rule) — severity descending, then
     # is_real descending as a tiebreak, so the cap drops the WEAKEST
@@ -4110,6 +4193,15 @@ def main():
     # truncated away while a weaker early one survives.
     reported = sorted(reported, key=lambda f: (
         -(f.get("severity") or 0), -(f.get("is_real") or 0)))[:5]
+    # Locator for the (at most five) surfaced findings, from the file image
+    # (not ast_context), so it also works for laya and under --no-enrichment.
+    for f in reported:
+        try:
+            pre, post = mode_file_images(args.repo, mode, head, f["hunk"]["file"],
+                                         old_file=f["hunk"].get("old_file"))
+        except Exception:
+            pre = post = None
+        f["where"] = locate(f["hunk"]["file"], pre, post, f["hunk"])
     # r15-M1: leaves now join BEFORE judge_pr_level/compose (see the
     # amended insertion window above); the old post-compose insert is
     # gone. n_unjudged counts them unchanged.
@@ -4149,6 +4241,8 @@ def main():
         status = "ok"
         verdict = (f"Judged {n_analyzed} cluster{'s' if n_analyzed != 1 else ''}; "
                    f"{len(reported)} finding{'s' if len(reported) != 1 else ''} above threshold")
+        if n_test_held:
+            verdict += f"; {n_test_held} test-file finding(s) held back"
     # Step 0′: the status field is the honest signal. Downstream
     # structured consumers read THIS, not verdict strings.
     base_verdict = status
@@ -4169,6 +4263,7 @@ def main():
          # state (r12-M1: a dropped unit logs "none" — the flag records
          # presence in the judged state, never the attempt).
          "enrichment": _enrichment_stamp(f["hunk"]),
+         "reflex_class": f.get("reflex_class", "code"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
     meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
@@ -4196,6 +4291,7 @@ def main():
             "n_analyzed": n_analyzed,
             "total_latency_ms": total, "jev_calls": len(latencies),
             "fail_open": fail_open, "fail_reason": fail_reason,
+            "n_test_held": n_test_held,
             "status": status}  # v0.9: honest-status signal carrier (cond 10)
 
     result = {"meta": meta, "pr_level": pr_level if not fail_open else None,
@@ -4208,7 +4304,9 @@ def main():
                    # self-contained for REAL/FP adjudication (stdout shows
                    # only the first few)
                    "lines": list(f["hunk"].get("lines", [])),
-                   "cut": f.get("cut")}  # E1: per-unit cutting path
+                   "cut": f.get("cut"),  # E1: per-unit cutting path
+                   "reflex_class": f.get("reflex_class", "code"),
+                   "where": f.get("where")}
                   for f in reported],
               "skipped": skipped, "jitter": jitter, "verdict": verdict,
               # Step 0′: structured verdict for downstream consumers —
@@ -4217,12 +4315,24 @@ def main():
               "n_dropped": n_dropped, "n_unjudged": n_unjudged,
               "n_size_skipped_code": n_size_skipped_code}
 
+    # Golden scoring reads only what is surfaced, so held test findings
+    # would silently count as misses: say so (stderr keeps --json clean).
+    held_unscored = bool((args.golden or args.negative_golden)
+                         and not args.include_test_findings and n_test_held)
+    if held_unscored:
+        print(f"warning: {n_test_held} test-file finding(s) held back; "
+              "golden/negative scoring excludes them (pass --include-test-findings)",
+              file=sys.stderr)
     golden_eval = None
     if args.golden:
         golden_eval = eval_against_golden(reported, args.golden)
+        if held_unscored:
+            golden_eval["n_test_held"] = n_test_held
         result["golden_eval"] = golden_eval
     if args.negative_golden:
         neg = eval_negative(reported)
+        if held_unscored:
+            neg["n_test_held"] = n_test_held
         if golden_eval is None:
             golden_eval = {}
         golden_eval["negative_eval"] = neg

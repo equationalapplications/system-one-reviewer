@@ -54,6 +54,16 @@ range (docs-only, lockfile, generated, rename-only, whitespace-only,
 test-only); join against sustained findings. Gate: zero sustained findings
 in a class across the ledger → Kurt rules whether the ladder may skip the
 Haiku low rungs on that class.
+**Shipped: test-file class (first S3 class; judged-and-held).** Path rule,
+matched case-insensitively on `/`-normalised paths: a directory segment
+exactly one of `tests`, `test`, `__tests__`, `__mocks__`, `spec`, `specs`,
+`e2e`; or a filename matching `*.test.*`, `*.spec.*`, `test_*.*`, `*_test.*`,
+or equal to `conftest.py`. Test-file units are still judged and logged, with
+a `reflex_class: "test"` stamp; they are held out of surfaced findings by
+default. `--include-test-findings` restores surfacing. Spec:
+`docs/superpowers/specs/2026-10-20-test-file-class-and-locator.md`. The other
+S3 classes (docs-only, lockfile, generated, rename-only, whitespace-only)
+remain planned.
 
 **S4 — Guard-removal reflex (three-arm ablation)** [PLANNED]
 Why here: extends the only reflex with measured zero false positives

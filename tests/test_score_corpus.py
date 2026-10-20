@@ -101,8 +101,8 @@ def test_miss_decomposition(tmp_path, jr, sw, split):
     # r13-m1 (Task 4): MISS_BUCKETS gains `truncated`; the :97 fossil above
     # is OLD-LEDGER FIXTURE DATA (intentional, do not update).
     assert agg["misses"] == {"anchor-offset": 1, "judged-below-threshold": 1,
-                             "judged-low-severity": 1, "skipped-triage": 1,
-                             "truncated": 0, "not-judged": 1}
+                             "judged-low-severity": 1, "held-test": 0,
+                             "skipped-triage": 1, "truncated": 0, "not-judged": 1}
     assert agg["recall_strict"] == 0.0 and agg["recall_cluster"] == 0.2
 
 
@@ -163,3 +163,127 @@ def test_render_markdown_mentions_primary_metrics(tmp_path, jr, sw, split):
     md = sc.render_markdown(sc.score(root, "base", split=split, jr=jr, sw=sw))
     for key in ("recall (strict)", "FPs per clean PR", "verdict accuracy", "misses"):
         assert key in md
+
+
+def test_replay_indices_holds_test_class_entries(jr, sw):
+    # replay_indices goes through sw.rewrap, so the stamp decides what surfaces
+    held = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    kept = _j("a.py", 20, 16, 24, 2.6, 0.9)  # no key: an older ledger entry
+    rec = {"judged": [held, kept], "packaging_version": "v03b"}
+    idx, reported, _ = sc.replay_indices(jr, sw, rec, 0.5, 0.7)
+    assert idx == [1] and [f["hunk"]["file"] for f in reported] == ["a.py"]
+
+
+def test_replay_indices_include_test_surfaces_test_entries(jr, sw):
+    held = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    rec = {"judged": [held], "packaging_version": "v03b"}
+    assert sc.replay_indices(jr, sw, rec, 0.5, 0.7)[0] == []
+    idx, reported, _ = sc.replay_indices(jr, sw, rec, 0.5, 0.7, include_test=True)
+    assert idx == [0] and [f["hunk"]["file"] for f in reported] == ["a.test.ts"]
+
+
+def _test_class_corpus(root):
+    _write_corpus(root, [("a.test.ts", 10, "major")])
+    _write_run(root, "base", PRE, 1,
+               [{**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}])
+    _write_run(root, "base", FIN, 1, [])
+
+
+def test_score_and_replay_grid_forward_include_test(tmp_path, jr, sw, split):
+    root = str(tmp_path)
+    _test_class_corpus(root)
+    held = sc.score(root, "base", split=split, jr=jr, sw=sw)
+    assert held["aggregate"]["recall_strict"] == 0.0
+    assert "include_test_findings" not in held
+    inc = sc.score(root, "base", split=split, jr=jr, sw=sw, include_test=True)
+    assert inc["aggregate"]["recall_strict"] == 1.0 and inc["include_test_findings"] is True
+    assert "test findings: included" in sc.render_markdown(inc)
+    assert "test findings" not in sc.render_markdown(held)
+    by_t = lambda g: {x["threshold"]: x["recall_strict"] for x in g}  # noqa: E731
+    assert by_t(sc.replay_grid(root, "base", split=split, jr=jr, sw=sw))[0.5] == 0.0
+    assert by_t(sc.replay_grid(root, "base", split=split, jr=jr, sw=sw,
+                               include_test=True))[0.5] == 1.0
+
+
+def test_main_include_test_flag_reaches_scoring(tmp_path, capsys):
+    root = str(tmp_path)
+    _test_class_corpus(root)
+    base = ["--config", "base", "--split", "all", "--corpus", root, "--json", "--replay-grid"]
+    assert sc.main(base) == 0
+    held = json.loads(capsys.readouterr().out)
+    assert sc.main([*base, "--include-test-findings"]) == 0
+    inc = json.loads(capsys.readouterr().out)
+    assert held["result"]["aggregate"]["recall_strict"] == 0.0
+    assert inc["result"]["aggregate"]["recall_strict"] == 1.0
+    assert all(g["recall_strict"] == 1.0 for g in inc["grid"] if g["threshold"] <= 0.7)
+    assert all(g["recall_strict"] == 0.0 for g in held["grid"])
+
+
+def _held_test_corpus(root, unit):
+    _write_corpus(root, [("a.test.ts", 10, "major")])
+    _write_run(root, "base", PRE, 1, [unit])
+    _write_run(root, "base", FIN, 1, [])
+
+
+def test_held_test_unit_above_the_gate_is_bucketed_held_test(tmp_path, jr, sw, split):
+    root = str(tmp_path)
+    unit = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    _held_test_corpus(root, unit)
+    m = sc.score(root, "base", split=split, jr=jr, sw=sw)["aggregate"]["misses"]
+    assert m["held-test"] == 1 and m["judged-low-severity"] == 0
+    # include_test surfaces it: found, so not in any miss bucket
+    res = sc.score(root, "base", split=split, jr=jr, sw=sw, include_test=True)
+    assert sum(res["aggregate"]["misses"].values()) == 0
+    assert res["aggregate"]["recall_strict"] == 1.0
+
+
+def test_held_test_needs_the_stamp_and_the_gate(tmp_path, jr, sw, split):
+    root = str(tmp_path)
+    # old-style entry (no reflex_class) keeps its old bucket
+    _held_test_corpus(root, _j("a.test.ts", 10, 6, 14, 0.4, 0.9))
+    m = sc.score(root, "base", split=split, jr=jr, sw=sw)["aggregate"]["misses"]
+    assert m["judged-low-severity"] == 1 and m["held-test"] == 0
+    # stamped but severity < 1: compose would not surface it anyway
+    root2 = str(tmp_path / "b")
+    unit = {**_j("a.test.ts", 10, 6, 14, 0.4, 0.9), "reflex_class": "test"}
+    _held_test_corpus(root2, unit)
+    m = sc.score(root2, "base", split=split, jr=jr, sw=sw)["aggregate"]["misses"]
+    assert m["judged-low-severity"] == 1 and m["held-test"] == 0
+    # stamped but below the threshold
+    root3 = str(tmp_path / "c")
+    unit = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.3), "reflex_class": "test"}
+    _held_test_corpus(root3, unit)
+    m = sc.score(root3, "base", split=split, jr=jr, sw=sw)["aggregate"]["misses"]
+    assert m["judged-below-threshold"] == 1 and m["held-test"] == 0
+
+
+def test_markdown_shows_held_test_only_when_nonzero(tmp_path, jr, sw, split):
+    root = str(tmp_path)
+    unit = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    _held_test_corpus(root, unit)
+    md = sc.render_markdown(sc.score(root, "base", split=split, jr=jr, sw=sw))
+    assert "held-test 1" in md
+    root2 = str(tmp_path / "b")
+    _write_corpus(root2, [("a.py", 10, "major")])
+    _write_run(root2, "base", PRE, 1, [_j("a.py", 10, 6, 14, 2.6, 0.8)])
+    _write_run(root2, "base", FIN, 1, [])
+    assert "held-test" not in sc.render_markdown(
+        sc.score(root2, "base", split=split, jr=jr, sw=sw))
+
+
+def test_classify_miss_held_test_only_when_not_included():
+    unit = {**_j("a.test.ts", 10, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    assert sc.classify_miss("a.test.ts", 10, [unit], set(), [], 0.5, 0.7) == "held-test"
+    assert sc.classify_miss("a.test.ts", 10, [unit], set(), [], 0.5, 0.7,
+                            include_test=True) == "judged-low-severity"
+
+
+def test_score_forwards_include_test_to_classify_miss(tmp_path, jr, sw, split):
+    root = str(tmp_path)
+    # anchor 3 lines from the golden row: a miss either way, bucketed by include_test
+    unit = {**_j("a.test.ts", 13, 6, 14, 2.6, 0.9), "reflex_class": "test"}
+    _held_test_corpus(root, unit)
+    held = sc.score(root, "base", split=split, jr=jr, sw=sw)["aggregate"]["misses"]
+    inc = sc.score(root, "base", split=split, jr=jr, sw=sw,
+                   include_test=True)["aggregate"]["misses"]
+    assert held["held-test"] == 1 and inc["held-test"] == 0 and inc["anchor-offset"] == 1

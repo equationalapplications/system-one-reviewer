@@ -192,6 +192,18 @@ def test_replay_reuses_compose_threshold(jr, sw):
     assert sw.replay(jr, run, 0.95) == []
 
 
+def test_rewrap_carries_reflex_class_and_defaults_to_code(sw):
+    assert sw.rewrap({**_judged(10, 0.9), "reflex_class": "test"})["reflex_class"] == "test"
+    assert sw.rewrap(_judged(10, 0.9))["reflex_class"] == "code"
+
+
+def test_replay_holds_test_entries_but_not_old_style_ones(jr, sw):
+    held = _run("r", "positive", [{**_judged(10, 0.90), "reflex_class": "test"}])
+    assert sw.replay(jr, held, 0.50) == []
+    old = _run("r", "positive", [_judged(10, 0.90)])  # no reflex_class key
+    assert len(sw.replay(jr, old, 0.50)) == 1
+
+
 # ---------- negative FP census on replayed data ----------
 
 def test_negative_fp_counts_blocker_major(jr, sw):
@@ -524,3 +536,95 @@ def test_field_select_default_admits_v09_field_runs(sw):
     runs = sw.select_field_runs(recs, {43: PR43_08, 44: PR44_08,
                                        45: PR45_08}, "v09cj-")
     assert set(runs) == {43, 44, 45}
+
+
+# ---------- --include-test-findings: every replay path forwards it ----------
+
+def test_replay_include_test_surfaces_test_entries(jr, sw):
+    run = _run("r", "positive", [{**_judged(10, 0.90), "reflex_class": "test"}])
+    assert sw.replay(jr, run, 0.50) == []
+    assert sw.replay(jr, run, 0.50, include_test=False) == []
+    assert len(sw.replay(jr, run, 0.50, include_test=True)) == 1
+
+
+def _spy_replay(sw, monkeypatch):
+    seen = []
+    real = sw.replay
+
+    def spy(jr, run, t, deletion_threshold=None, include_test=False):
+        seen.append(include_test)
+        return real(jr, run, t, deletion_threshold, include_test)
+
+    monkeypatch.setattr(sw, "replay", spy)
+    return seen
+
+
+def test_negative_fp_and_field_fp_forward_include_test(jr, sw, monkeypatch):
+    seen = _spy_replay(sw, monkeypatch)
+    judged = [{**_judged(10, 0.90), "reflex_class": "test"}]
+    run = _run("r", "negative", judged)
+    assert sw.negative_fp(jr, run, 0.50) == 0
+    assert sw.negative_fp(jr, run, 0.50, include_test=True) == 1
+    assert sw.field_fp(jr, run, 0.50, 0.70) == (0, 0)
+    assert sw.field_fp(jr, run, 0.50, 0.70, include_test=True) == (1, 0)
+    assert seen == [False, True, False, True]
+
+
+def test_sweep_and_sweep_field_forward_include_test(jr, sw, tmp_path, monkeypatch):
+    seen = _spy_replay(sw, monkeypatch)
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    judged = [{**_judged(10, 0.90), "reflex_class": "test"}]
+    pos, neg = _pos_runs(judged), _neg_runs([])
+    held = sw.sweep(jr, pos, neg, golden)
+    assert held["rows"][4]["tp"] == (0, 0) and not seen.count(True)
+    seen.clear()
+    inc = sw.sweep(jr, pos, neg, golden, include_test=True)
+    assert inc["rows"][4]["tp"] == (1, 1) and set(seen) == {True}
+    seen.clear()
+    sw.sweep_field(jr, {43: _run("f", "negative", judged)})
+    assert set(seen) == {False}
+    seen.clear()
+    res = sw.sweep_field(jr, {43: _run("f", "negative", judged)}, include_test=True)
+    assert set(seen) == {True} and res["code_total_at_shipped"] == 1
+
+
+def test_main_flag_reaches_replay_and_header_says_which(jr, sw, tmp_path, capsys):
+    golden = _golden(tmp_path, [("a.py", 10, "x")])
+    judged = [{**_judged(10, 0.9), "reflex_class": "test"}]
+    metrics = tmp_path / "metrics.jsonl"
+    metrics.write_text("".join(__import__("json").dumps(r) + "\n"
+                               for r in _pos_runs(judged) + _neg_runs([])))
+    shas = tmp_path / "shas.txt"
+    shas.write_text(f"positive={POS_SHA}\nnegative={NEG_SHA}\n")
+    argv = ["--metrics", str(metrics), "--label", "v03b-test-", "--golden", golden,
+            "--negative-golden", golden, "--shas", str(shas),
+            "--packaging-version", "v03b"]
+    assert sw.main(argv) == 0
+    held = capsys.readouterr().out
+    assert sw.main([*argv, "--include-test-findings"]) == 0
+    inc = capsys.readouterr().out
+    assert "test findings" not in held
+    assert inc.splitlines()[1] == "test findings: included"
+    assert "0.50 | 0-0 |" in held and "0.50 | 1-1 |" in inc
+
+
+def test_main_field_mode_flag_reaches_replay(jr, sw, tmp_path, capsys):
+    import json
+    heads = {43: "8" * 40, 44: "9" * 40, 45: "7" * 40}
+    judged = [{**_judged(1, 0.9, sev=2.0, file="a.test.ts"), "reflex_class": "test"}]
+    recs = [{**_run(f"v09cj-pr{pr}", "negative", judged if pr == 43 else [], pv="v09"),
+             "fixture": None, "fixture_head": head, "verdict": "Approved",
+             "fail_open": False, "n_analyzed": 1 if pr == 43 else 0}
+            for pr, head in heads.items()]
+    metrics = tmp_path / "metrics.jsonl"
+    metrics.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    fg = tmp_path / "fg.tsv"
+    fg.write_text("".join(f"{pr}\t{h}\t0\n" for pr, h in heads.items()))
+    argv = ["--metrics", str(metrics), "--label", "v09cj-", "--field",
+            "--field-goldens", str(fg)]
+    assert sw.main(argv) == 0
+    held = capsys.readouterr().out
+    assert sw.main([*argv, "--include-test-findings"]) == 0
+    inc = capsys.readouterr().out
+    assert "test findings" not in held and "note:" not in held
+    assert inc.splitlines()[1] == "test findings: included" and "note: 1 code-rubric" in inc

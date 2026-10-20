@@ -32,7 +32,9 @@ which saturates on large goldens. So the surfaced list is rebuilt, uncapped,
 from the ledger `judged` entries by the tool's own compose() at REFLEX_GATE
 (rubric threshold, severity >= 1), and scored with the tool's
 eval_against_golden. False positives are surfaced - true positives; on a
-clean sample (no golden) every surfaced finding is one.
+clean sample (no golden) every surfaced finding is one. Test-file findings
+are held, as in the tool; --include-test-findings is forwarded to both arms
+and counts them.
 
 `decide` encodes the pre-registered rules: precision first (false
 positives POOLED over the repeats may exceed the off-arm's by at most
@@ -87,17 +89,20 @@ def load_tool() -> Any:
     return _TOOL_MOD
 
 
-def surfaced(judged: list[dict]) -> list[dict]:
+def surfaced(judged: list[dict], include_test: bool = False) -> list[dict]:
     """Findings the tool would surface from these ledger entries, uncapped:
     the tool's own compose() at REFLEX_GATE (rubric threshold and
-    severity >= 1), so the harness never re-implements the rule."""
+    severity >= 1), so the harness never re-implements the rule. Test-class
+    entries are held unless include_test, like the tool's default."""
     tool = load_tool()
     findings = [{"rubric": j.get("rubric", "code-change"),
                  "is_real": j.get("is_real"), "severity": j.get("severity"),
+                 "reflex_class": j.get("reflex_class", "code"),
                  "hunk": {"file": j["file"], "line": j["line"]}}
                 for j in judged]
     reported, _jitter, _ = tool.compose(findings, [], None,
-                                        threshold=tool.REFLEX_GATE)
+                                        threshold=tool.REFLEX_GATE,
+                                        hold_classes=() if include_test else ("test",))
     return list(reported)
 
 
@@ -122,6 +127,8 @@ def run_one(args: argparse.Namespace, arm: str, k: int) -> dict:
         cmd += ["--golden", args.golden]
     if args.negative_golden:
         cmd += ["--negative-golden", args.negative_golden]
+    if args.include_test_findings:
+        cmd.append("--include-test-findings")
     if arm == "off":
         cmd.append("--no-enrichment")
     env = dict(os.environ,
@@ -367,6 +374,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sample", required=True)
     ap.add_argument("--expect", required=True, choices=["ast", "ts-ast"],
                     help="stamp the on-arm must carry")
+    ap.add_argument("--include-test-findings", dest="include_test_findings",
+                    action="store_true",
+                    help="forwarded to both arms; test-file findings count as surfaced")
     ap.add_argument("--golden")
     ap.add_argument("--negative-golden", dest="negative_golden")
     ap.add_argument("--must-enrich", dest="must_enrich", nargs="+", metavar="FILE",
@@ -393,6 +403,15 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("give --golden (a sample with known defects) or --clean / "
                  "--negative-golden (a clean sample); otherwise every "
                  "finding would be scored as a false positive")
+    if args.golden and not args.include_test_findings:
+        # held test findings would score every such row as missed, silently
+        tool = load_tool()
+        for fpath, line in golden_rows(args.golden):
+            if tool.reflex_class(fpath) == "test":
+                print(f"enrichment_ab: golden row {fpath}:{line} is in a test file "
+                      f"and would be held back; pass --include-test-findings",
+                      file=sys.stderr)
+                return 2
     os.makedirs(args.outdir, exist_ok=True)
     runs: dict[str, list[Any]] = {"on": [], "off": []}
     shares: list[dict[str, float]] = []
@@ -428,8 +447,10 @@ def main(argv: list[str] | None = None) -> int:
     rows = []
     tp_golden = None if clean else args.golden
     for k in range(1, args.repeats + 1):
-        on_s = surfaced(ledger[label_for("on", args.sample, k)])
-        off_s = surfaced(ledger[label_for("off", args.sample, k)])
+        on_s = surfaced(ledger[label_for("on", args.sample, k)],
+                      args.include_test_findings)
+        off_s = surfaced(ledger[label_for("off", args.sample, k)],
+                       args.include_test_findings)
         rows.append({
             "on_reported": len(on_s), "off_reported": len(off_s),
             "on_tp": golden_tp(on_s, tp_golden),
