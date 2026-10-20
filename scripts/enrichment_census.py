@@ -86,7 +86,7 @@ def census(tool: Any, repo: str, rev: str,
         src = git_show(repo, rev, path)
         rec: dict = {"file": path, "line": line, "enriched": False,
                      "enclosing": None, "window": 0, "covered": False,
-                     "missing": src is None}
+                     "missing": src is None, "ctx_chars": 0}
         if src is not None:
             unit = {"file": path, "line": line, "change_type": "code-change",
                     "entries": []}
@@ -95,18 +95,22 @@ def census(tool: Any, repo: str, rev: str,
                 start = window_start(tool, path, src, line)
                 rec.update(enriched=True, enclosing=ctx["enclosing"],
                            window=len(ctx["context"]),
+                           ctx_chars=len(json.dumps(ctx)),
                            covered=start is not None
                            and start <= line < start + len(ctx["context"]))
         out.append(rec)
     return out
 
 
-def summarize(recs: list[dict]) -> dict:
+def summarize(recs: list[dict], tool: Any = None) -> dict:
+    tool = tool or load_tool()
     n = len(recs)
     enriched = [r for r in recs if r["enriched"]]
     return {"rows": n, "missing": sum(r["missing"] for r in recs),
             "enriched": len(enriched),
             "covered": sum(r["covered"] for r in recs),
+            "added_tokens": sum(r["ctx_chars"] for r in recs)
+            / tool.CHARS_PER_TOKEN,
             "median_window": statistics.median([r["window"] for r in enriched])
             if enriched else 0}
 
@@ -132,8 +136,9 @@ def main(argv: list[str] | None = None) -> int:
                       f"{sys.executable}; install the wheels into the "
                       f"interpreter that runs the reviewer", file=sys.stderr)
                 return 3
-    recs = census(load_tool(), args.repo, args.head, rows)
-    summ = summarize(recs)
+    tool = load_tool()
+    recs = census(tool, args.repo, args.head, rows)
+    summ = summarize(recs, tool)
     if args.json:
         print(json.dumps({"summary": summ, "rows": recs}, indent=2))
     else:
@@ -145,7 +150,8 @@ def main(argv: list[str] | None = None) -> int:
                   f"\t{r['enclosing']}")
         print(f"enriched {summ['enriched']}/{summ['rows']}, window covers the "
               f"golden line in {summ['covered']}/{summ['rows']}, "
-              f"median window {summ['median_window']} lines")
+              f"median window {summ['median_window']} lines, "
+              f"~{summ['added_tokens']:.0f} added tokens")
         if summ["missing"]:
             print(f"{summ['missing']} row(s) could not be read at "
                   f"{args.head}: wrong repo or revision?", file=sys.stderr)

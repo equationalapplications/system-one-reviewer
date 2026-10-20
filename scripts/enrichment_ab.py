@@ -9,19 +9,38 @@ Runs the reviewer on the same range with enrichment on and with
 always with --out, ledger isolated under --outdir. (Real model calls and
 real cost: run it deliberately, a handful of ranges at a time.)
 
+    enrichment_ab.py --combine SAMPLE1.json [SAMPLE2.json ...]
+
 VACUITY GUARD. The 2026-10-02 enrichment A/B compared two unenriched arms.
 After every on-arm run this aborts (exit 2) unless the run-level
-`enrichment` stamp contains --expect and the wheels needed for it are
-available, so an arm that never engaged can never be scored.
+`enrichment` stamp contains --expect, the wheels needed for it are
+available, the run did not fail open, and every golden file has at least
+one unit stamped with --expect (a file with none never engaged, e.g. a
+parse failure). Partial enrichment is NOT an abort: the over-cap context
+drop legitimately turns some units to "none", so the per-file enriched
+share is reported as `golden_file_enriched_share` (mean over repeats).
+
+COUNTS. Reported findings are the ledger `judged` entries with
+is_real >= REFLEX_GATE (the tool's constant, 0.80), not the `--out`
+`findings` list, which is capped at 5 and saturates on large goldens.
+False positives are reported - true positives (true positives still come
+from golden_eval); on a clean sample every reported finding is one.
 
 `decide` encodes the pre-registered rules: precision first (the on-arm may
 not surface more findings than the off-arm on a clean sample in any
 repeat), recall only counts as signal if on beats off by >= 2 true
 positives in every repeat, and a systematic is_real drop on identical
 units (paired by file:line:line_end) is a kill even if both pass.
+
+`combine_verdicts` merges the per-sample results (the JSON this prints,
+which carries `golden`): any KILL kills; SIGNAL only if every golden
+sample is SIGNAL and none KILL; otherwise NO-DETECTABLE-EFFECT. Clean
+samples can only veto (KILL), never be required to signal. `--combine
+FILE...` reads those JSON outputs and prints the combined verdict.
 """
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -32,6 +51,30 @@ from typing import Any
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = [sys.executable, os.path.join(REPO_ROOT, "system_one_reviewer.py")]
+
+
+_GATE: float | None = None
+
+
+def reflex_gate() -> float:
+    """REFLEX_GATE from the tool module (0.80), loaded lazily and once."""
+    global _GATE
+    if _GATE is None:
+        spec = importlib.util.spec_from_file_location(
+            "system_one_reviewer", TOOL[1])
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        _GATE = float(mod.REFLEX_GATE)
+    return _GATE
+
+
+def reported_count(judged: list[dict]) -> int:
+    """Judged units crossing the reflex gate: what a reader would be shown."""
+    gate = reflex_gate()
+    return sum(1 for j in judged
+               if j.get("is_real") is not None and j["is_real"] >= gate)
 
 
 def label_for(arm: str, sample: str, k: int) -> str:
@@ -110,20 +153,31 @@ def golden_files(path: str) -> set[str]:
     return out
 
 
+def golden_file_shares(judged: list[dict], files: set[str],
+                       expect: str) -> dict[str, float]:
+    """Per golden file, the share of its judged units stamped `expect`
+    (0.0 when the file was not judged at all)."""
+    shares: dict[str, float] = {}
+    for fpath in sorted(files):
+        units = [j for j in judged if j.get("file") == fpath]
+        shares[fpath] = (sum(j.get("enrichment") == expect for j in units)
+                         / len(units)) if units else 0.0
+    return shares
+
+
 def guard_files(judged: list[dict], files: set[str], expect: str) -> str | None:
     """The run-level stamp reads `ts-ast` as soon as ANY unit is enriched, so
     a golden file that failed to parse would run unenriched in both arms
-    and the A/B would report "no effect". Require every judged unit of
-    every golden file to carry the expected stamp."""
+    and the A/B would report "no effect". Abort when a golden file has no
+    unit stamped with the expected value. Some-but-not-all is fine (the
+    over-cap context drop); see golden_file_shares for the reported share."""
     for fpath in sorted(files):
         units = [j for j in judged if j.get("file") == fpath]
         if not units:
             return f"golden file {fpath} was not judged"
-        bad = [j for j in units if j.get("enrichment") != expect]
-        if bad:
-            return (f"golden file {fpath}: {len(bad)}/{len(units)} unit(s) "
-                    f"stamped {bad[0].get('enrichment')!r}, expected "
-                    f"{expect!r} (parse error or oversize file?)")
+        if not any(j.get("enrichment") == expect for j in units):
+            return (f"golden file {fpath}: 0/{len(units)} unit(s) stamped "
+                    f"{expect!r} (parse error or never engaged?)")
     return None
 
 
@@ -175,7 +229,29 @@ def decide(rows: list[dict], clean: bool = False) -> dict:
             "softening_test_underpowered": underpowered}
 
 
+def combine_verdicts(results: list[dict]) -> str:
+    """Spec rule over per-sample outputs (each has `verdict` and `golden`)."""
+    verdicts = [r["verdict"] for r in results]
+    if "KILL" in verdicts:
+        return "KILL"
+    golden = [r["verdict"] for r in results if r["golden"]]
+    if golden and all(v == "SIGNAL" for v in golden):
+        return "SIGNAL"
+    return "NO-DETECTABLE-EFFECT"
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "--combine":
+        results = []
+        for path in argv[1:]:
+            with open(path) as f:
+                results.append(json.load(f))
+        print(json.dumps({"combined_verdict": combine_verdicts(results),
+                          "samples": [r.get("sample") for r in results]},
+                         indent=2))
+        return 0
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", required=True)
@@ -204,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                  "finding would be scored as a false positive")
     os.makedirs(args.outdir, exist_ok=True)
     runs: dict[str, list[Any]] = {"on": [], "off": []}
+    shares: list[dict[str, float]] = []
     for k in range(1, args.repeats + 1):
         for arm in ("on", "off"):
             res = run_one(args, arm, k)
@@ -214,23 +291,36 @@ def main(argv: list[str] | None = None) -> int:
                 judged = read_ledger(os.path.join(
                     args.outdir, "metrics.jsonl")).get(
                         label_for(arm, args.sample, k), [])
-                bad = guard_files(judged, golden_files(args.golden), args.expect)
+                gfiles = golden_files(args.golden)
+                bad = guard_files(judged, gfiles, args.expect)
+                if not bad:
+                    shares.append(golden_file_shares(judged, gfiles, args.expect))
             if bad:
                 print(f"enrichment_ab: ABORT, vacuous {arm}-arm r{k}: {bad}",
                       file=sys.stderr)
                 return 2
             runs[arm].append(res)
     ledger = read_ledger(os.path.join(args.outdir, "metrics.jsonl"))
+    for k in range(1, args.repeats + 1):
+        for arm in ("on", "off"):
+            if label_for(arm, args.sample, k) not in ledger:
+                print(f"enrichment_ab: ABORT, no ledger record for "
+                      f"{label_for(arm, args.sample, k)}", file=sys.stderr)
+                return 2
     rows = []
     for k, (on, off) in enumerate(zip(runs["on"], runs["off"], strict=True), 1):
         tp = lambda r: (r.get("golden_eval") or {}).get("true_positives", 0)  # noqa: E731
         rows.append({
-            "on_reported": len(on["findings"]), "off_reported": len(off["findings"]),
+            "on_reported": reported_count(ledger[label_for("on", args.sample, k)]),
+            "off_reported": reported_count(ledger[label_for("off", args.sample, k)]),
             "on_tp": tp(on), "off_tp": tp(off),
             "deltas": paired_is_real_deltas(
                 ledger.get(label_for("on", args.sample, k), []),
                 ledger.get(label_for("off", args.sample, k), []))})
-    print(json.dumps({"sample": args.sample, "repeats": rows,
+    share = {f: sum(s[f] for s in shares) / len(shares)
+             for f in sorted(shares[0])} if shares else {}
+    print(json.dumps({"sample": args.sample, "golden": not clean, "repeats": rows,
+                      "golden_file_enriched_share": share,
                       **decide(rows, clean=clean)}, indent=2))
     return 0
 

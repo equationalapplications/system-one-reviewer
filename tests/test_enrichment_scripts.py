@@ -108,17 +108,47 @@ def test_paired_deltas_pair_by_unit():
     assert list(got) == ["a.ts:1:3"] and got["a.ts:1:3"] == pytest.approx(-0.2)
 
 
-def test_guard_files_requires_every_golden_unit_enriched():
+def test_guard_files_aborts_only_when_no_unit_is_enriched():
+    # (modified: previously required EVERY golden unit enriched; the over-cap
+    # context drop legitimately leaves some units "none")
     judged = [{"file": "g.ts", "enrichment": "ts-ast"},
               {"file": "g.ts", "enrichment": "ts-ast"},
               {"file": "other.ts", "enrichment": "none"}]
     assert ab.guard_files(judged, {"g.ts"}, "ts-ast") is None
-    judged[1]["enrichment"] = "none"
+    judged[1]["enrichment"] = "none"  # partial: no abort, share reported
+    assert ab.guard_files(judged, {"g.ts"}, "ts-ast") is None
+    assert ab.golden_file_shares(judged, {"g.ts"}, "ts-ast") == {"g.ts": 0.5}
+    judged[0]["enrichment"] = "none"  # none enriched: abort
     assert "parse error" in ab.guard_files(judged, {"g.ts"}, "ts-ast")
     assert "not judged" in ab.guard_files(judged, {"missing.ts"}, "ts-ast")
+    assert ab.golden_file_shares(judged, {"missing.ts"}, "ts-ast") == {
+        "missing.ts": 0.0}
 
 
-def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast"):
+def test_combine_verdicts():
+    g = lambda v: {"verdict": v, "golden": True}  # noqa: E731
+    c = lambda v: {"verdict": v, "golden": False}  # noqa: E731
+    assert ab.combine_verdicts([g("SIGNAL"), g("SIGNAL"), c("NO-DETECTABLE-EFFECT")]) == "SIGNAL"
+    assert ab.combine_verdicts([g("SIGNAL"), g("NO-DETECTABLE-EFFECT")]) == "NO-DETECTABLE-EFFECT"
+    assert ab.combine_verdicts([g("SIGNAL"), c("KILL")]) == "KILL"
+    assert ab.combine_verdicts([g("KILL"), g("SIGNAL")]) == "KILL"
+    assert ab.combine_verdicts([c("NO-DETECTABLE-EFFECT")]) == "NO-DETECTABLE-EFFECT"
+    assert ab.combine_verdicts([]) == "NO-DETECTABLE-EFFECT"
+
+
+def test_combine_cli(tmp_path, capsys):
+    import json as _json
+    paths = []
+    for i, v in enumerate(("SIGNAL", "KILL")):
+        p = tmp_path / f"{i}.json"
+        p.write_text(_json.dumps({"sample": f"s{i}", "verdict": v, "golden": True}))
+        paths.append(str(p))
+    assert ab.main(["--combine", *paths]) == 0
+    assert _json.loads(capsys.readouterr().out)["combined_verdict"] == "KILL"
+
+
+def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast",
+                     n_findings=0):
     """Stand in for the reviewer CLI: write the --out file and append a
     ledger record for the requested label, like the real tool does."""
     import json as _json
@@ -131,7 +161,7 @@ def _fake_subprocess(monkeypatch, tmp_path, *, on_is_real, stamp_on="ts-ast"):
         enr = "none" if arm == "off" else stamp_on
         res = {"meta": {"enrichment": enr, "status": "ok", "fail_open": False,
                         "wheels": {"ts": {"available": True}}},
-               "findings": [], "golden_eval": {"true_positives": 0}}
+               "findings": [{}] * n_findings, "golden_eval": {"true_positives": 0}}
         with open(out, "w") as f:
             _json.dump(res, f)
         judged = [{"file": "g.ts", "line": i, "line_end": i + 2,
@@ -161,6 +191,57 @@ def test_main_wires_labels_so_the_softening_kill_can_fire(
     assert out["mean_is_real_delta"] == pytest.approx(-0.4)
 
 
+def test_main_counts_reported_from_the_ledger_not_the_capped_findings(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    # --out findings are capped at 5; the ledger has 8 units above the gate
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.85,
+                              n_findings=5)
+    rc = ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
+                  "--expect", "ts-ast", "--golden", golden, "--repeats", "1",
+                  "--outdir", str(tmp_path / "o")])
+    out = _json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["repeats"][0]["on_reported"] == 8
+    assert out["repeats"][0]["off_reported"] == 8
+    assert out["golden_file_enriched_share"] == {"g.ts": 1.0}
+    assert out["golden"] is True
+    # below the gate nothing is reported
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.79,
+                              n_findings=5)
+    ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "t",
+             "--expect", "ts-ast", "--golden", golden, "--repeats", "1",
+             "--outdir", str(tmp_path / "o2")])
+    assert _json.loads(capsys.readouterr().out)["repeats"][0]["on_reported"] == 0
+
+
+def test_main_reports_partial_enrichment_without_aborting(
+        monkeypatch, tmp_path, capsys):
+    import json as _json
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9)
+    real_run = ab.subprocess.run
+
+    def half_stamped(cmd, **kw):
+        r = real_run(cmd, **kw)
+        if "--no-enrichment" not in cmd:
+            p = kw["env"]["JEV_REVIEW_METRICS"]
+            lines = open(p).read().splitlines()
+            rec = _json.loads(lines[-1])
+            for j in rec["judged"][:2]:
+                j["enrichment"] = "none"
+            lines[-1] = _json.dumps(rec)
+            open(p, "w").write("\n".join(lines) + "\n")
+        return r
+
+    monkeypatch.setattr(ab.subprocess, "run", half_stamped)
+    rc = ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
+                  "--expect", "ts-ast", "--golden", golden, "--repeats", "1",
+                  "--outdir", str(tmp_path / "o")])
+    assert rc == 0
+    assert _json.loads(capsys.readouterr().out)[
+        "golden_file_enriched_share"] == {"g.ts": 0.75}
+
+
 def test_main_aborts_when_a_golden_file_never_enriched(
         monkeypatch, tmp_path, capsys):
     golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9)
@@ -175,7 +256,8 @@ def test_main_aborts_when_a_golden_file_never_enriched(
             lines = open(p).read().splitlines()
             import json as _json
             rec = _json.loads(lines[-1])
-            rec["judged"][0]["enrichment"] = "none"
+            for j in rec["judged"]:  # (modified: ALL units, not just one)
+                j["enrichment"] = "none"
             lines[-1] = _json.dumps(rec)
             open(p, "w").write("\n".join(lines) + "\n")
         return r

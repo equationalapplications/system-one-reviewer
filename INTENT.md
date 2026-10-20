@@ -79,7 +79,7 @@ envelope moves and by how much.
 *Why:* the cheap tier is only worth having if using it always is cheaper
 than thinking about whether to use it.
 
-**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.)
+**Status: Built.** (v0.8.0: 0.3–4.6 s per run on real ranges. v0.9: E1 wire_format stamp and status field added; no verdict output.) TS/JS enrichment adds no model calls but adds input tokens per unit: model-off, a median of about 139 tokens (max about 247) per enriched unit on the TS fixtures (`docs/benchmarks/2026-10-20-ts-enrichment-envelope.json`). Its latency is not yet measured; it is watched after release, and leaving the seconds/cents envelope would by itself turn the default off (`docs/superpowers/specs/2026-10-20-ts-enrichment-effect-gate.md`, Cost envelope).
 
 ### 2. Deterministic code prepares; the model only judges
 

@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-20",
+  "purpose": "Model-off cost envelope for ast_context enrichment (spec: Cost envelope, INTENT rule 1)",
+  "command": "scripts/enrichment_census.py --repo <throwaway git repo containing tests/data/ts-enrich/sample.ts and component.tsx, one commit> --head HEAD --golden <TSV with one row per line of both files, 83 rows> --json",
+  "chars_per_token": 3.0,
+  "ctx_chars_definition": "len(json.dumps(ast_context)) per golden line",
+  "census_summary": {
+    "rows": 83,
+    "missing": 0,
+    "enriched": 83,
+    "covered": 59,
+    "added_tokens": 11219.666666666666,
+    "median_window": 3
+  },
+  "per_file": {
+    "sample.ts": {
+      "rows": 73,
+      "enriched": 73,
+      "ctx_chars_median": 417,
+      "ctx_chars_max": 740,
+      "ctx_chars_min": 359,
+      "tokens_median": 139.0,
+      "tokens_max": 246.7,
+      "added_tokens": 10370.7
+    },
+    "component.tsx": {
+      "rows": 10,
+      "enriched": 10,
+      "ctx_chars_median": 259.0,
+      "ctx_chars_max": 343,
+      "ctx_chars_min": 171,
+      "tokens_median": 86.3,
+      "tokens_max": 114.3,
+      "added_tokens": 849.0
+    }
+  },
+  "all_rows": {
+    "rows": 83,
+    "enriched": 83,
+    "ctx_chars_median": 416,
+    "ctx_chars_max": 740,
+    "ctx_chars_min": 171,
+    "tokens_median": 138.7,
+    "tokens_max": 246.7,
+    "added_tokens": 11219.7
+  }
+}
