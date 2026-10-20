@@ -90,7 +90,9 @@ cutter).
   `str.splitlines()` treats as a line boundary: the control rule below plus
   U+0085, U+2028 and U+2029. The packager splits the diff with `splitlines()`,
   so such a character in a path forges a `+++` header (reproduced in review:
-  a source file's findings were routed to a test path and held back). Paths
+  a source file's findings were routed to a test path and held back). The
+  same applies to file CONTENT, closed at the root in the packager (see Known
+  limits); this rule is defense in depth. Paths
   are limited to 1,024 characters (`INPUT_MAX_PATH_CHARS`).
 - `old_path` is kept only for a real rename (both sides non-null and different
   from `path`); for an added or deleted file it is normalised to null (the
@@ -319,9 +321,18 @@ issue #26's per-class sustained rate. No new gate is introduced here.
   git modes a rename's pre-image is `None` today, while input mode carries
   `before`.
 - Binary and very large files are skipped, not partially reviewed.
-- The packager splits the diff text with `str.splitlines()`, so U+2028, form
-  feed or a lone CR inside CONTENT shifts line numbers in every mode, input
-  included. This is a pre-existing limit shared with the git modes.
+- Diff parsing and file content (fixed in this change, all modes): the
+  packager used to split the diff with `str.splitlines()`, and the git modes
+  read git's output with universal newlines. File CONTENT is attacker-
+  controlled, so a changed line containing a lone CR, U+2028, U+2029, U+0085,
+  VT, FF or FS/GS/RS followed by a forged `diff --git` / `---` / `+++` / `@@`
+  block made the packager attribute the following lines to another file (for
+  example a test path, where `reflex_class` then held the findings back).
+  This affected the released git modes as well as `--input`. The packager now
+  splits the diff on `"\n"` only (stripping a trailing `\r`, so CRLF diffs are
+  unchanged), `run_git` reads bytes and decodes them without newline
+  translation, and file images already used the same line model. The
+  path/label line-boundary rejection above remains as defense in depth.
 - The host must supply full file texts; see the contract on empty strings.
 
 ## Open questions

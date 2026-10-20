@@ -459,12 +459,16 @@ def run_git(repo, *args):
         args = ("diff", "--no-color", "--no-ext-diff", "--src-prefix=a/",
                 "--dst-prefix=b/") + tuple(args[1:])
         r = subprocess.run(["git", "-C", repo, "-c", "core.quotePath=false",
-                            *args], capture_output=True, text=True)
+                            *args], capture_output=True)
     else:
-        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True)
     if r.returncode != 0:
-        sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{r.stderr}")
-    return r.stdout
+        err = r.stderr.decode("utf-8", "replace")
+        sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{err}")
+    # Bytes, not text=True: universal newlines would turn a lone "\r" in a
+    # changed line (attacker-controlled file content) into "\n" and let it
+    # forge a diff header for package_hunks. Git counts lines by "\n" only.
+    return r.stdout.decode("utf-8", "replace")
 
 
 class InputError(Exception):
@@ -1015,7 +1019,14 @@ def package_hunks(diff):
     awaiting_hunk = True  # m2 (r6): plain unified diffs start at `--- `
                           # with no `diff --git` line before them
     old_left = new_left = 0  # m1 (r7): remaining hunk content counts
-    for line in diff.splitlines():
+    # Split on "\n" only, never str.splitlines(): file content is attacker-
+    # controlled, and U+2028, U+0085, \x0b, \x0c, \x1c-\x1e or a lone "\r"
+    # inside a changed line must not forge a "diff --git" header. Git counts
+    # lines by "\n"; a CRLF diff keeps its old shape via the rstrip.
+    lines = diff.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for line in (ln.rstrip("\r") for ln in lines):
         if line.startswith("diff --git "):
             # M3 (r4): the `diff --git a/X b/X` header names the NEXT file —
             # flush the previous file here so no header lines (index/,
