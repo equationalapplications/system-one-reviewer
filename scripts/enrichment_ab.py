@@ -60,6 +60,10 @@ def run_one(args: argparse.Namespace, arm: str, k: int) -> dict:
 def guard(result: dict, arm: str, expect: str) -> str | None:
     """Reason the run must not be scored, or None when it is valid."""
     meta = result.get("meta", {})
+    # a fail-open run (provider outage) still carries its enrichment stamp
+    # but reports zero findings, which decide() would score as a real result
+    if meta.get("fail_open") or meta.get("status") == "fail-open":
+        return f"{arm}-arm failed open: {meta.get('fail_reason')!r}"
     stamp = meta.get("enrichment", "none")
     if arm == "off":
         return None if stamp == "none" else f"off-arm stamped {stamp!r}"

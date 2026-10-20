@@ -42,6 +42,17 @@ def test_guard_rejects_an_arm_that_never_engaged():
     assert "off-arm" in ab.guard(_res("ts-ast"), "off", "ts-ast")
 
 
+def test_guard_rejects_a_fail_open_run():
+    for arm, stamp in (("on", "ts-ast"), ("off", "none")):
+        res = _res(stamp)
+        res["meta"].update(fail_open=True, status="fail-open",
+                           fail_reason="HTTP 503")
+        assert "failed open" in ab.guard(res, arm, "ts-ast")
+    res = _res("ts-ast")
+    res["meta"]["status"] = "fail-open"
+    assert "failed open" in ab.guard(res, "on", "ts-ast")
+
+
 def test_sign_test():
     assert ab.sign_test_p([]) == 1.0
     assert ab.sign_test_p([0, 0]) == 1.0
