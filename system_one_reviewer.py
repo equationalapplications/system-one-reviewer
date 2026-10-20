@@ -2753,8 +2753,10 @@ def compose(findings, skipped, pr_level, threshold=REAL_THRESHOLD,
                                 for c in corroboration_pool)):
                 continue  # uncorroborated deletion finding: report, not verdict
             (blockers if lvl == 3 else majors).append(f)
-    verdict = "Changes requested" if (blockers or len(majors) >= 2) else "Approved"
-    return reported, jitter, verdict
+    # v0.9 FORK RESOLUTION (A+C): no verdict output. Findings are ranked triage
+    # pointers; coverage banner provides honest status. Return empty string status
+    # field; main() will set specific status (ok / fail-open / incomplete review).
+    return reported, jitter, ""
 
 
 # ---------- measurement ----------
@@ -2933,14 +2935,15 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
                    ", ".join(items[:10]) + more)
     out.append("Verdict: " + verdict)
     # m3 (r10)/M2 (r11): the last line is a CLOSED SET for grep-ledgering —
-    # detail lives on the Verdict: line above, never here. The incomplete
-    # suffix can ride on "Changes requested" too, so match it anywhere.
+    # detail lives on the Verdict: line above, never here. v0.9: status field
+    # provides the structured signal; last line is now triage-oriented.
     if verdict.startswith("Unavailable"):
         out.append("Unavailable")
-    elif "(incomplete" in verdict:
+    elif verdict.startswith("Incomplete"):
         out.append("Incomplete")
     else:
-        out.append(verdict)  # "Approved" / "Changes requested"
+        # v0.9: no verdict ("Approved"/"Changes requested") — triage pointers only
+        out.append("OK")
     return "\n".join(out)
 
 
@@ -3095,13 +3098,14 @@ def main():
             size_skipped_code=size_skipped_code(skipped)
             + [s for s in skipped if s.get("reason") == "max-hunks>ceiling"])
     # M1 (r9): a fail-open run must never carry a clean "Approved" — the
-    # verdict is forced to "Unavailable" and flows into JSON/metrics/last
-    # line, so nothing downstream reads it as a pass.
+    # v0.9: compose() returns empty verdict string (fork resolution A+C, no verdict output).
+    # Status field carries honest signal instead (ok / fail-open / incomplete review).
     # M2 (r9): on a non-fail-open run, unjudged clusters (parse errors or
-    # dropped over max-hunks) downgrade the verdict so partial reviews are
-    # never mistaken for complete ones.
-    reported, jitter, verdict = compose(findings, skipped,
-                                        pr_level if not fail_open else None)
+    # dropped over max-hunks) mark the review as incomplete.
+    reported, jitter, _ = compose(findings, skipped,
+                                  pr_level if not fail_open else None)
+    # v0.9: apply 5-findings cap per ROADMAP standing rule
+    reported = reported[:5]
     # r15-M1: leaves now join BEFORE judge_pr_level/compose (see the
     # amended insertion window above); the old post-compose insert is
     # gone. n_unjudged counts them unchanged.
@@ -3124,18 +3128,25 @@ def main():
     added_units = judge_meta["added_units"] if judge_meta else 0
     n_units_total = n_units_pre + added_units
     n_analyzed = len(kept) + added_units + n_leaf_unjudged
+    # v0.9: status field (honest signal, not verdict) + coverage banner message
     if fail_open:
-        verdict = "Unavailable — provider failed (fail-open)"
+        status = "fail-open"
+        verdict = ("Unavailable — provider failed. "
+                   f"({n_analyzed - n_unjudged} of "
+                   f"{n_units_total + n_size_skipped_code} clusters judged)")
     elif n_unjudged or n_dropped or n_size_skipped_code:
-        verdict += (f" (incomplete review — "
-                    f"{n_analyzed - n_unjudged} of "
-                    f"{n_units_total + n_size_skipped_code} "
-                    f"clusters judged)")
-    # Step 0′: the raw compose() verdict, before any suffix. Downstream
-    # structured consumers (sweep gate_run, shadow tally) read THIS, not
-    # the suffixed string — the suffix retires as an API.
-    base_verdict = verdict.split(" (incomplete review")[0] \
-        if not fail_open else verdict
+        status = "incomplete review"
+        verdict = (f"Incomplete review — "
+                   f"{n_analyzed - n_unjudged} of "
+                   f"{n_units_total + n_size_skipped_code} "
+                   f"clusters judged")
+    else:
+        status = "ok"
+        verdict = (f"Judged {n_analyzed} cluster{'s' if n_analyzed != 1 else ''}; "
+                   f"{len(reported)} finding{'s' if len(reported) != 1 else ''} above threshold")
+    # Step 0′: the status field is the honest signal. Downstream
+    # structured consumers read THIS, not verdict strings.
+    base_verdict = status
 
     total = sum(latencies)
     judged = [
@@ -3177,7 +3188,8 @@ def main():
             # (Task 5 injects); n_leaf_unjudged is 0 unless leaves exist.
             "n_analyzed": n_analyzed,
             "total_latency_ms": total, "jev_calls": len(latencies),
-            "fail_open": fail_open, "fail_reason": fail_reason}
+            "fail_open": fail_open, "fail_reason": fail_reason,
+            "status": status}  # v0.9: honest-status signal carrier (cond 10)
 
     result = {"meta": meta, "pr_level": pr_level if not fail_open else None,
               "findings": [
@@ -3244,6 +3256,7 @@ def main():
              "enrichment": meta["enrichment"],
              "record_version": PACKAGING_VERSION,
              "packaging_version": PACKAGING_VERSION,
+             "status": status,  # v0.9: honest-status signal (cond 10)
              "tool_version": __version__,
              "provider": provider, "model": model,
              "fixture": args.fixture,
