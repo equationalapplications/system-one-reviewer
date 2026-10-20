@@ -412,3 +412,64 @@ def test_census_on_a_throwaway_repo(tmp_path):
     summ = census.summarize(recs)
     assert summ["rows"] == 4 and summ["enriched"] == 3 and summ["covered"] == 2
     assert summ["missing"] == 1 and by[("gone.ts", 1)]["missing"]
+
+
+# ---------- golden rows must be judged; --clean conflicts with --golden ----------
+
+def test_guard_rows_requires_every_golden_row_to_be_covered():
+    judged = [{"file": "g.ts", "line": 10, "line_end": 12},
+              {"file": "g.ts", "line": 40, "line_start": 38, "line_end": 44},
+              {"file": "other.ts", "line": 90, "line_end": 95}]
+    assert ab.guard_rows(judged, [("g.ts", 11), ("g.ts", 9), ("g.ts", 13)]) is None
+    assert ab.guard_rows(judged, [("g.ts", 37), ("g.ts", 45)]) is None
+    # same file, no unit near the row: the file-level guard would pass this
+    assert "g.ts:25" in ab.guard_rows(judged, [("g.ts", 11), ("g.ts", 25)])
+    # right line, wrong file
+    assert "g.ts:90" in ab.guard_rows(judged, [("g.ts", 90)])
+
+
+def test_main_aborts_when_a_golden_row_was_never_judged(
+        monkeypatch, tmp_path, capsys):
+    # units sit at lines 0..70 step 10; a golden row at 25 falls in no unit
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9,
+                              golden_lines=(10, 25))
+    assert _run_main(tmp_path, golden) == 2
+    assert "golden row g.ts:25" in capsys.readouterr().err
+
+
+def test_main_aborts_when_the_off_arm_never_judged_a_golden_row(
+        monkeypatch, tmp_path, capsys):
+    """Both arms must have judged every golden row, or the comparison scores
+    a never-shown defect as missed."""
+    import json as _json
+    golden = _fake_subprocess(monkeypatch, tmp_path, on_is_real=0.9)
+    real_run = ab.subprocess.run
+
+    def drop_off_arm_units(cmd, **kw):
+        r = real_run(cmd, **kw)
+        if "--no-enrichment" in cmd:
+            p = kw["env"]["JEV_REVIEW_METRICS"]
+            lines = open(p).read().splitlines()
+            rec = _json.loads(lines[-1])
+            rec["judged"] = [j for j in rec["judged"] if j["line"] != 10]
+            lines[-1] = _json.dumps(rec)
+            open(p, "w").write("\n".join(lines) + "\n")
+        return r
+
+    monkeypatch.setattr(ab.subprocess, "run", drop_off_arm_units)
+    assert _run_main(tmp_path, golden) == 2
+    err = capsys.readouterr().err
+    assert "off-arm" in err and "golden row g.ts:10" in err
+
+
+def test_main_rejects_clean_together_with_golden(monkeypatch, tmp_path):
+    def must_not_run(*a, **k):
+        raise AssertionError("argument validation must fail before any run")
+
+    monkeypatch.setattr(ab.subprocess, "run", must_not_run)
+    g = tmp_path / "g.tsv"
+    g.write_text("g.ts\t1\tdesc\n")
+    with pytest.raises(SystemExit):
+        ab.main(["--repo", str(tmp_path), "--range", "a..b", "--sample", "s",
+                 "--expect", "ts-ast", "--golden", str(g), "--clean",
+                 "--outdir", str(tmp_path / "o")])

@@ -158,8 +158,12 @@ release.
    - **Vacuity guard:** abort (exit 2) unless the on-arm run stamp contains
      the expected value, the TS wheels are available, both arms completed
      (`status` is `ok`: a fail-open or incomplete-review run confounds
-     enrichment with coverage), and every file named in the golden or
-     negative-golden has at least one unit stamped with the expected value. A golden file with none enriched means it failed to
+     enrichment with coverage), every file named in the golden or
+     negative-golden has at least one unit stamped with the expected value,
+     and, in BOTH arms, every golden row falls inside a judged unit (a row
+     no unit covers would be scored as a missed defect it was never shown).
+     `--clean` and `--golden` together are rejected, since a golden sample's
+     true positives would be scored as false positives. A golden file with none enriched means it failed to
      parse; partial enrichment is reported as an enriched share, not an
      abort, because over-cap context drop (above) legitimately turns some
      units to `none` on long constructors.

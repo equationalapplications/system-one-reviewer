@@ -164,13 +164,31 @@ def paired_is_real_deltas(on: list[dict], off: list[dict]) -> dict[str, float]:
             and off_by.get(unit_key(j)) is not None}
 
 
-def golden_files(path: str) -> set[str]:
-    out: set[str] = set()
+def golden_rows(path: str) -> list[tuple[str, int]]:
+    rows: list[tuple[str, int]] = []
     with open(path) as f:
         for ln in f:
             if ln.strip() and not ln.startswith("#"):
-                out.add(ln.split("\t")[0])
-    return out
+                parts = ln.split("\t")
+                rows.append((parts[0], int(parts[1])))
+    return rows
+
+
+def golden_files(path: str) -> set[str]:
+    return {fpath for fpath, _ in golden_rows(path)}
+
+
+def guard_rows(judged: list[dict], rows: list[tuple[str, int]]) -> str | None:
+    """Every golden row must fall inside a judged unit (the +-1 line slack
+    eval_against_golden uses). A row no unit covers would otherwise be scored
+    as a missed defect when it was simply never shown to the model, in either
+    arm."""
+    for fpath, line in rows:
+        if not any(j.get("file") == fpath
+                   and j.get("line_start", j["line"]) - 1 <= line
+                   <= j.get("line_end", j["line"]) + 1 for j in judged):
+            return f"golden row {fpath}:{line} was not covered by any judged unit"
+    return None
 
 
 def golden_file_shares(judged: list[dict], files: set[str],
@@ -293,6 +311,10 @@ def main(argv: list[str] | None = None) -> int:
                                    f"{args.sample}-{int(time.time())}")
     if args.repeats < 1:
         ap.error("--repeats must be >= 1")
+    if args.clean and args.golden:
+        ap.error("--clean and --golden conflict: a golden sample has known "
+                 "defects, so its true positives would be scored as false "
+                 "positives")
     clean = args.clean or bool(args.negative_golden and not args.golden)
     if not (clean or args.golden):
         ap.error("give --golden (a sample with known defects) or --clean / "
@@ -308,14 +330,18 @@ def main(argv: list[str] | None = None) -> int:
             if not bad and not clean and res.get("golden_eval") is None:
                 bad = "no golden_eval in the result"
             gpath = args.golden or args.negative_golden
-            if not bad and arm == "on" and gpath:
+            if not bad and gpath:
                 judged = read_ledger(os.path.join(
                     args.outdir, "metrics.jsonl")).get(
                         label_for(arm, args.sample, k), [])
-                gfiles = golden_files(gpath)
-                bad = guard_files(judged, gfiles, args.expect)
-                if not bad:
-                    shares.append(golden_file_shares(judged, gfiles, args.expect))
+                if args.golden:
+                    bad = guard_rows(judged, golden_rows(args.golden))
+                if not bad and arm == "on":
+                    gfiles = golden_files(gpath)
+                    bad = guard_files(judged, gfiles, args.expect)
+                    if not bad:
+                        shares.append(
+                            golden_file_shares(judged, gfiles, args.expect))
             if bad:
                 print(f"enrichment_ab: ABORT, vacuous {arm}-arm r{k}: {bad}",
                       file=sys.stderr)
