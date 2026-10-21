@@ -23,12 +23,15 @@ Fail-open: repeated provider failures -> report ships with an
 
 Usage:
   system-one-reviewer --repo <path> (--range A..B | --pr N | --staged | --uncommitted)
+  system-one-reviewer --input FILE|-   (before/after texts as JSON, no git)
              [--out f.json] [--max-hunks N] [--golden f] [--label s] [--json]
              [--negative-golden f] [--fixture NAME]
 """
 
 import argparse
 import ast
+import bisect
+import difflib
 import fnmatch
 import importlib
 import json
@@ -90,6 +93,18 @@ REAL_THRESHOLD = 0.50           # code-change rubric (calibrated, v02 sweep)
 DELETION_REAL_THRESHOLD = 0.70  # deletion rubric surfacing threshold (v0.9: stated per
 # Fable gate cond 2)
 KNOWN_FIXTURES = {"positive", "negative"}
+# --input mode (docs/superpowers/specs/2026-10-20-input-mode.md): caps that keep a
+# caller-supplied document inside the seconds envelope and bounded memory.
+INPUT_MAX_BYTES = 64 * 1024 * 1024    # the JSON document itself
+INPUT_MAX_FILES = 2000
+INPUT_MAX_TOTAL_LINES = 1_000_000     # across all files and both sides
+INPUT_MAX_FILE_CHARS = 2 * 1024 * 1024  # per side; over -> hunk>input-oversize
+INPUT_MAX_FILE_LINES = 20_000           # per side; over -> hunk>input-oversize
+INPUT_MATCH_LINES = 400                 # above this core size: anchored fallback
+INPUT_MATCH_BUDGET = 400_000            # per run: sum of len(a) * len(b) matched exactly
+INPUT_MAX_LINE_CHARS = 100_000          # any single line longer: hunk>input-oversize
+INPUT_MAX_LABEL_CHARS = 200             # head / repo labels
+INPUT_MAX_PATH_CHARS = 1024             # path / old_path
 # v03b (field evals, 2026-09-28, Kurt review round): model input changed
 # AGAIN — references_remaining in state, three-valued change_type,
 # rewritten deletion rubric, per-rubric thresholds, corroboration gate in
@@ -444,12 +459,430 @@ def run_git(repo, *args):
         args = ("diff", "--no-color", "--no-ext-diff", "--src-prefix=a/",
                 "--dst-prefix=b/") + tuple(args[1:])
         r = subprocess.run(["git", "-C", repo, "-c", "core.quotePath=false",
-                            *args], capture_output=True, text=True)
+                            *args], capture_output=True)
     else:
-        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True)
     if r.returncode != 0:
-        sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{r.stderr}")
-    return r.stdout
+        err = r.stderr.decode("utf-8", "replace")
+        sys.exit(f"system-one-reviewer: git {' '.join(args)} failed:\n{err}")
+    # Bytes, not text=True: universal newlines would turn a lone "\r" in a
+    # changed line (attacker-controlled file content) into "\n" and let it
+    # forge a diff header for package_hunks. Git counts lines by "\n" only.
+    return r.stdout.decode("utf-8", "replace")
+
+
+class InputError(Exception):
+    """A rejected --input document: str(e) is the reason, `where` (optional) says
+    which key, for example files[3].path. Never carries file contents."""
+
+    def __init__(self, reason, where=None):
+        super().__init__(reason)
+        self.where = where
+
+
+def _input_repr(s):
+    """A path for an error message: repr(), truncated, never the contents."""
+    r = repr(s)
+    return r if len(r) <= 120 else r[:117] + "..."
+
+
+def _input_has_control(v):
+    """True for a control character or any str.splitlines() line boundary
+    (U+0085, U+2028, U+2029): package_hunks splits the synthesized diff with
+    splitlines(), so such a character in a path could forge a diff header."""
+    return any(ord(c) < 0x20 or ord(c) in (0x7F, 0x85, 0x2028, 0x2029) for c in v)
+
+
+def input_head_warning(head):
+    """The stderr warning for a head that is not a 40-hex SHA, else None."""
+    if re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
+    return ("system-one-reviewer: warning: --input head is not a 40-hex commit SHA; "
+            "runs cannot be mapped to PRs")
+
+
+def _input_nonfinite(name):
+    raise InputError(f"not JSON (non-finite number {name})")
+
+
+def load_input(source):
+    """Read and parse the --input document: a file path, or "-" for stdin.
+    Reads at most INPUT_MAX_BYTES + 1 bytes (more is rejected) and strips a
+    leading BOM. Shape is validate_input's job."""
+    cap = INPUT_MAX_BYTES
+    try:
+        if source == "-":
+            if sys.stdin is None:
+                raise InputError("stdin is closed")
+            raw = getattr(sys.stdin, "buffer", None)
+            raw = raw.read(cap + 1) if raw is not None else sys.stdin.read(cap + 1)
+        else:
+            with open(source, "rb") as f:
+                raw = f.read(cap + 1)
+    except OSError as e:
+        raise InputError(f"cannot read {_input_repr(source)}: "
+                         f"{e.strerror or type(e).__name__}") from None
+    if len(raw) > cap:
+        raise InputError(f"input exceeds {cap} bytes")
+    try:
+        text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw.lstrip("\ufeff")
+        return json.loads(text, parse_constant=_input_nonfinite)
+    except json.JSONDecodeError as e:
+        raise InputError(f"not JSON ({e.msg})", f"line {e.lineno} column {e.colno}") from None
+    except (RecursionError, ValueError):
+        raise InputError("not JSON") from None
+
+
+def _input_text(v, where, nullable=False):
+    """A string key that must round-trip UTF-8 (json.loads accepts lone
+    surrogates, which later crash print() after the model calls are paid for)."""
+    if v is None and nullable:
+        return None
+    if not isinstance(v, str):
+        raise InputError("must be a string" + (" or null" if nullable else ""), where)
+    try:
+        v.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InputError("contains a lone surrogate", where) from None
+    return v
+
+
+def _input_path(v, where, nullable=False):
+    v = _input_text(v, where, nullable)
+    if v is None:
+        return None
+    if not v:
+        raise InputError("must not be empty", where)
+    if len(v) > INPUT_MAX_PATH_CHARS:
+        raise InputError(f"longer than {INPUT_MAX_PATH_CHARS} characters", where)
+    if _input_has_control(v):
+        raise InputError("path contains a control character", where)
+    v = v.replace("\\", "/")
+    if v == "/dev/null":
+        raise InputError("path must not be /dev/null", where)
+    return v
+
+
+def _input_label(doc, key, default):
+    if key not in doc:
+        if default is None:
+            raise InputError("missing", key)
+        return default
+    v = _input_text(doc[key], key)
+    if default is None and not v:
+        raise InputError("must not be empty", key)
+    if len(v) > INPUT_MAX_LABEL_CHARS:
+        raise InputError(f"longer than {INPUT_MAX_LABEL_CHARS} characters", key)
+    if _input_has_control(v):
+        raise InputError("contains a control character", key)
+    return v
+
+
+def validate_input(doc):
+    """Validate a parsed --input document and return
+    {"head", "repo", "files": [{"path", "old_path", "before", "after"}]} with
+    normalised paths. Files with before == after and no rename are dropped.
+    Raises InputError for every rejection; unknown keys are ignored."""
+    if not isinstance(doc, dict):
+        raise InputError("top level must be a JSON object")
+    head = _input_label(doc, "head", None)
+    repo = _input_label(doc, "repo", "input")
+    files = doc.get("files")
+    if not isinstance(files, list):
+        raise InputError("must be an array", "files")
+    if len(files) > INPUT_MAX_FILES:
+        raise InputError(f"more than {INPUT_MAX_FILES} files", "files")
+    out, seen, total = [], set(), 0
+    for i, f in enumerate(files):
+        at = f"files[{i}]"
+        if not isinstance(f, dict):
+            raise InputError("must be an object", at)
+        if "path" not in f:
+            raise InputError("missing", f"{at}.path")
+        path = _input_path(f["path"], f"{at}.path")
+        old_path = _input_path(f.get("old_path"), f"{at}.old_path", nullable=True)
+        if path in seen:
+            raise InputError(f"duplicate path {_input_repr(path)}", f"{at}.path")
+        seen.add(path)
+        sides = []
+        for key in ("before", "after"):
+            if key not in f:
+                raise InputError("missing", f"{at}.{key}")
+            sides.append(_input_text(f[key], f"{at}.{key}", nullable=True))
+        before, after = sides
+        if before is None and after is None:
+            raise InputError("before and after are both null", at)
+        for t in sides:
+            total += len(split_lines(t)) if t else 0
+        if total > INPUT_MAX_TOTAL_LINES:
+            raise InputError(f"more than {INPUT_MAX_TOTAL_LINES} lines in total", at)
+        # old_path only means something for a real rename of an existing file
+        renamed = (old_path is not None and old_path != path
+                   and before is not None and after is not None)
+        if before == after and not renamed:
+            continue
+        out.append({"path": path, "old_path": old_path if renamed else None,
+                    "before": before, "after": after})
+    return {"head": head, "repo": repo, "files": out}
+
+
+def split_lines(text):
+    """Split on "\\n" only (never str.splitlines(), which also splits on U+2028
+    and form feed). Each element keeps its terminator; a final element without
+    one is the no-newline line, so a change that only adds or removes the final
+    newline stays visible. "" gives []."""
+    if not text:
+        return []
+    parts = text.split("\n")
+    last = parts.pop()
+    lines = [p + "\n" for p in parts]
+    if last:
+        lines.append(last)
+    return lines
+
+
+def _unique_anchors(a, b):
+    """Longest increasing run of lines that occur exactly once on each side, as
+    (i, j) pairs (patience diff's anchors)."""
+    ca, cb = {}, {}
+    for i, ln in enumerate(a):
+        ca[ln] = -1 if ln in ca else i
+    for j, ln in enumerate(b):
+        cb[ln] = -1 if ln in cb else j
+    pairs = [(i, cb[ln]) for ln, i in ca.items() if i >= 0 and cb.get(ln, -1) >= 0]
+    pairs.sort()
+    tails: list[int] = []
+    tail_at: list[int] = []
+    prev = [-1] * len(pairs)
+    for k, (_, j) in enumerate(pairs):
+        pos = bisect.bisect_left(tails, j)
+        if pos:
+            prev[k] = tail_at[pos - 1]
+        if pos == len(tails):
+            tails.append(j)
+            tail_at.append(k)
+        else:
+            tails[pos] = j
+            tail_at[pos] = k
+    chain, k = [], tail_at[-1] if tail_at else -1
+    while k >= 0:
+        chain.append(pairs[k])
+        k = prev[k]
+    return chain[::-1]
+
+
+def _section_opcodes(a, b, i0, j0, budget):
+    """Opcodes for one stretch between anchors (indices shifted by i0, j0): the
+    common ends are stripped, a small remainder is matched with autojunk=True
+    while the budget lasts, anything else becomes one replacement."""
+    lo = 0
+    n = min(len(a), len(b))
+    while lo < n and a[lo] == b[lo]:
+        lo += 1
+    hi = 0
+    while hi < n - lo and a[len(a) - 1 - hi] == b[len(b) - 1 - hi]:
+        hi += 1
+    ca, cb = a[lo:len(a) - hi], b[lo:len(b) - hi]
+    ops = [("equal", i0, i0 + lo, j0, j0 + lo)] if lo else []
+    cost = len(ca) * len(cb)
+    if cost and cost <= INPUT_MATCH_LINES ** 2 and cost <= budget[0]:
+        budget[0] -= cost
+        sm = difflib.SequenceMatcher(None, ca, cb, autojunk=True)
+        ops += [(t, i1 + i0 + lo, i2 + i0 + lo, j1 + j0 + lo, j2 + j0 + lo)
+                for t, i1, i2, j1, j2 in sm.get_opcodes()]
+    elif ca or cb:
+        t = "replace" if ca and cb else "delete" if ca else "insert"
+        ops.append((t, i0 + lo, i0 + lo + len(ca), j0 + lo, j0 + lo + len(cb)))
+    if hi:
+        ops.append(("equal", i0 + len(a) - hi, i0 + len(a), j0 + len(b) - hi, j0 + len(b)))
+    return ops
+
+
+def _coalesce(ops):
+    """Merge neighbouring equal ops, and neighbouring changed ops into one."""
+    out: list[tuple] = []
+    for t, i1, i2, j1, j2 in ops:
+        if i1 == i2 and j1 == j2:
+            continue
+        if out and (out[-1][0] == "equal") == (t == "equal"):
+            _, pi1, _, pj1, _ = out.pop()
+            i1, j1 = pi1, pj1
+            if t != "equal":
+                t = "replace" if i2 > i1 and j2 > j1 else "delete" if i2 > i1 else "insert"
+        out.append((t, i1, i2, j1, j2))
+    return out
+
+
+def _anchored_opcodes(a, b, budget):
+    """Fallback for a core too big (or a budget too spent) for exact matching:
+    split at the lines unique to both sides, then handle each stretch alone, so
+    the work is bounded by the budget however the lines repeat. Poorer hunk
+    boundaries than exact matching; the diff is still correct."""
+    ops, i, j = [], 0, 0
+    for ai, bj in [*_unique_anchors(a, b), (len(a), len(b))]:
+        ops += _section_opcodes(a[i:ai], b[j:bj], i, j, budget)
+        if ai < len(a):
+            ops.append(("equal", ai, ai + 1, bj, bj + 1))
+        i, j = ai + 1, bj + 1
+    return _coalesce(ops)
+
+
+def _full_opcodes(a, b, budget=None):
+    """Opcodes for the whole of a and b: the common leading/trailing lines are
+    stripped (git does this, difflib does not), the core is matched, and the
+    indices are shifted back. `budget` is a one-element list holding the match
+    work left (len(core_a) * len(core_b) is spent per exactly matched file);
+    None means unlimited. Returns (opcodes, degraded): degraded when the core
+    was too big or the budget spent, so the anchored fallback ran."""
+    lo = 0
+    n = min(len(a), len(b))
+    while lo < n and a[lo] == b[lo]:
+        lo += 1
+    hi = 0
+    while hi < n - lo and a[len(a) - 1 - hi] == b[len(b) - 1 - hi]:
+        hi += 1
+    ca, cb = a[lo:len(a) - hi], b[lo:len(b) - hi]
+    cost = len(ca) * len(cb)
+    junk = (len(ca) > INPUT_MATCH_LINES or len(cb) > INPUT_MATCH_LINES
+            or (budget is not None and cost > budget[0]))
+    if junk:
+        core = _anchored_opcodes(ca, cb, budget if budget is not None else [cost])
+    else:
+        if budget is not None:
+            budget[0] -= cost
+        core = difflib.SequenceMatcher(None, ca, cb, autojunk=False).get_opcodes()
+    ops = [("equal", 0, lo, 0, lo)] if lo else []
+    ops += [(t, i1 + lo, i2 + lo, j1 + lo, j2 + lo) for t, i1, i2, j1, j2 in core]
+    if hi:
+        ops.append(("equal", len(a) - hi, len(a), len(b) - hi, len(b)))
+    return ops, junk
+
+
+def _group_opcodes(codes, n=3):
+    """difflib's get_grouped_opcodes applied to an opcode list (the stripped
+    prefix/suffix are already in it), so the result equals the full-sequence one."""
+    codes = list(codes)
+    if not codes:
+        return []
+    if codes[0][0] == "equal":
+        t, i1, i2, j1, j2 = codes[0]
+        codes[0] = (t, max(i1, i2 - n), i2, max(j1, j2 - n), j2)
+    if codes[-1][0] == "equal":
+        t, i1, i2, j1, j2 = codes[-1]
+        codes[-1] = (t, i1, min(i2, i1 + n), j1, min(j2, j1 + n))
+    groups, group = [], []
+    for t, i1, i2, j1, j2 in codes:
+        if t == "equal" and i2 - i1 > 2 * n:
+            group.append((t, i1, min(i2, i1 + n), j1, min(j2, j1 + n)))
+            groups.append(group)
+            group = []
+            i1, j1 = max(i1, i2 - n), max(j1, j2 - n)
+        group.append((t, i1, i2, j1, j2))
+    if group and not (len(group) == 1 and group[0][0] == "equal"):
+        groups.append(group)
+    return groups
+
+
+def _hunk_range(start, count):
+    """git's range format: ',1' omitted; an empty side starts at the line before."""
+    if count == 0:
+        return f"{start},0"
+    return str(start + 1) if count == 1 else f"{start + 1},{count}"
+
+
+def _emit(prefix, lines, out):
+    for ln in lines:
+        if ln.endswith("\n"):
+            out.append(prefix + ln[:-1])
+        else:
+            out.append(prefix + ln)
+            out.append("\\ No newline at end of file")
+
+
+def synthesize_file_diff(entry, budget=None):
+    """The git-shaped diff block for one validated file entry, and whether the
+    anchored fallback was used (see _full_opcodes for `budget`). An
+    added/deleted EMPTY file and a pure rename emit headers only."""
+    path, before, after = entry["path"], entry["before"], entry["after"]
+    old = entry.get("old_path") or path
+    a, b = split_lines(before or ""), split_lines(after or "")
+    out = [f"diff --git a/{old} b/{path}"]
+    if before is None:
+        out.append("new file mode 100644")
+    elif after is None:
+        out.append("deleted file mode 100644")
+    elif old != path:
+        out += [f"rename from {old}", f"rename to {path}"]
+    if a == b and (before is None or after is None or before == after):
+        return "\n".join(out) + "\n", False
+    out.append("--- /dev/null" if before is None else f"--- a/{old}")
+    out.append("+++ /dev/null" if after is None else f"+++ b/{path}")
+    ops, junk = _full_opcodes(a, b, budget)
+    for group in _group_opcodes(ops):
+        i1, i2, j1, j2 = group[0][1], group[-1][2], group[0][3], group[-1][4]
+        out.append(f"@@ -{_hunk_range(i1, i2 - i1)} +{_hunk_range(j1, j2 - j1)} @@")
+        for t, x1, x2, y1, y2 in group:
+            if t == "equal":
+                _emit(" ", a[x1:x2], out)
+                continue
+            if t in ("replace", "delete"):
+                _emit("-", a[x1:x2], out)
+            if t in ("replace", "insert"):
+                _emit("+", b[y1:y2], out)
+    return "\n".join(out) + "\n", junk
+
+
+def _input_oversize(text):
+    """True when a side is over the char, line-count or single-line caps."""
+    if len(text) > INPUT_MAX_FILE_CHARS:
+        return True
+    lines = split_lines(text)
+    return (len(lines) > INPUT_MAX_FILE_LINES
+            or any(len(ln.rstrip("\n")) > INPUT_MAX_LINE_CHARS for ln in lines))
+
+
+def build_input(doc):
+    """Triage and diff a validated --input document. Per file, in order: the
+    path rules triage() applies (lockfiles, docs, generated dirs, data), binary
+    (NUL) and oversize. A file hitting any of them is recorded in `skipped`,
+    not diffed and not in `images`; the rest are synthesized in input order
+    under one per-call match budget (INPUT_MATCH_BUDGET)."""
+    diffs, skipped, images, n_autojunk = [], [], {}, 0
+    budget = [INPUT_MATCH_BUDGET]
+    for f in doc["files"]:
+        sides = [s for s in (f["before"], f["after"]) if s is not None]
+        path_reason = path_triage_reason(f["path"])
+        extra = {}
+        if any("\0" in s for s in sides):
+            reason = path_reason or "input-binary"
+        elif any(_input_oversize(s) for s in sides):
+            if path_reason:
+                reason = path_reason
+            elif f["after"] is None:
+                # like triage(): an over-cap whole-file deletion is deliberate triage
+                reason = "whole-file-deleted>cap"
+                extra = {"change_type": "whole-file-deleted"}
+            else:
+                reason = "hunk>input-oversize"
+        else:
+            reason = None
+        if reason:
+            skipped.append({"file": f["path"], "reason": reason, "line_start": 1,
+                            "line_end": 1, **extra})
+            continue
+        text, junk = synthesize_file_diff(f, budget)
+        diffs.append(text)
+        n_autojunk += junk
+        images[f["path"]] = (f["before"], f["after"])
+    return {"diff": "".join(diffs), "head": doc["head"], "repo": doc["repo"],
+            "skipped": skipped, "images": images, "n_autojunk": n_autojunk}
+
+
+def resolve_input(bundle):
+    """--input counterpart of resolve_diff: (diff_text, head, "input"). Registers
+    the before/after texts that mode_file_images answers from."""
+    set_input_images(bundle["images"])
+    return bundle["diff"], bundle["head"], "input"
 
 
 GIT_PROBE_TIMEOUT = 30  # seconds; rev-parse is instant unless git is stuck
@@ -586,7 +1019,14 @@ def package_hunks(diff):
     awaiting_hunk = True  # m2 (r6): plain unified diffs start at `--- `
                           # with no `diff --git` line before them
     old_left = new_left = 0  # m1 (r7): remaining hunk content counts
-    for line in diff.splitlines():
+    # Split on "\n" only, never str.splitlines(): file content is attacker-
+    # controlled, and U+2028, U+0085, \x0b, \x0c, \x1c-\x1e or a lone "\r"
+    # inside a changed line must not forge a "diff --git" header. Git counts
+    # lines by "\n"; a CRLF diff keeps its old shape via the rstrip.
+    lines = diff.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for line in (ln.rstrip("\r") for ln in lines):
         if line.startswith("diff --git "):
             # M3 (r4): the `diff --git a/X b/X` header names the NEXT file —
             # flush the previous file here so no header lines (index/,
@@ -2568,6 +3008,9 @@ def git_show_or_none(repo, rev, path):
 
 
 _IMAGE_CACHE: dict = {}
+# --input mode: path -> (before, after), registered once per run by
+# resolve_input and cleared with the other per-run caches.
+_INPUT_IMAGES: dict = {}
 _MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable)
 # E1/V5: --force-window-cut run-level toggle (module state, same pattern as
 # the caches above — per-run, cleared by clear_runtime_caches). When True,
@@ -2575,6 +3018,12 @@ _MERGE_BASE_CACHE: dict = {}  # r16-m6: (repo, base_ref, head) -> sha (immutable
 # _apply_site_cutting entirely. Provides the window-only leg V5 compares
 # against a site-cut run of the SAME range.
 _FORCE_WINDOW_CUT = False
+
+
+def set_input_images(images):
+    """Register the --input before/after texts (replaces any previous map)."""
+    _INPUT_IMAGES.clear()
+    _INPUT_IMAGES.update(images)
 
 
 def clear_runtime_caches():
@@ -2585,6 +3034,7 @@ def clear_runtime_caches():
     call this between runs too."""
     global _FORCE_WINDOW_CUT
     _IMAGE_CACHE.clear()
+    _INPUT_IMAGES.clear()
     _MERGE_BASE_CACHE.clear()
     _TS_PARSE_CACHE.clear()
     _FORCE_WINDOW_CUT = False
@@ -2602,11 +3052,16 @@ def mode_file_images(repo, mode, head, path, old_file=None,
                              pre  = git show HEAD:<path>
       uncommitted            post = worktree read
                              pre  = git show :<path>
+      input                  (before, after) from the --input map; no git,
+                             `repo` is None and never touched
     `old_file` (package_hunks' rename-from field) is used for the
     pre-image when the path itself has none (renames). Missing images are
     None — the caller degrades, never dies. Cache key is the MODE-AWARE
     (mode, rev, path) triple (r2-m2): an --uncommitted post-image can
     never serve a --staged request in one process."""
+    if mode == "input":
+        return _INPUT_IMAGES.get(path, (None, None))
+
     def _fetch(repo_, rev, path_):
         if fetch is not None:
             return fetch(repo_, rev, path_)
@@ -2689,6 +3144,16 @@ def _span(h):
             "line_end": h.get("line_end", h["line"])}
 
 
+def path_triage_reason(path):
+    """triage()'s path rules: the skip reason for a lockfile, doc, generated-dir
+    or data/snapshot path, else None. Shared with build_input (--input)."""
+    if SKIP_PATTERNS.search(path) or DOC_EXT.search(path):
+        return "docs/generated/lockfile"
+    if DATA_EXT.search(path):
+        return "data/snapshot"
+    return None
+
+
 def triage(hunks, provider="jev"):
     """Deterministic skip: lockfiles, generated dirs, docs-only runs.
 
@@ -2711,11 +3176,9 @@ def triage(hunks, provider="jev"):
     kept, skipped = [], []
     for h in hunks:
         f = h["file"] or ""
-        if SKIP_PATTERNS.search(f) or DOC_EXT.search(f):
-            skipped.append({"file": f, "reason": "docs/generated/lockfile",
-                            **_span(h)})
-        elif DATA_EXT.search(f):
-            skipped.append({"file": f, "reason": "data/snapshot", **_span(h)})
+        path_reason = path_triage_reason(f)
+        if path_reason:
+            skipped.append({"file": f, "reason": path_reason, **_span(h)})
         elif provider == "laya" and h["too_large"]:
             skipped.append({"file": f, "reason": f"hunk>{MAX_HUNK_LINES} lines",
                             "change_type": h.get("change_type", "code-change"),
@@ -3913,7 +4376,11 @@ def render(reported, skipped, verdict, pr_level, jitter, meta, n_sent=None):
         if meta.get("fail_reason"):
             out.append(f"!! last error: {meta['fail_reason']}")
     out.append("")
-    if meta.get("n_hunks") == 0:
+    if meta.get("n_hunks") == 0 and skipped:
+        n_files = len({s["file"] for s in skipped})
+        out.append(f"Nothing to review: all {n_files} changed file(s) were skipped "
+                   "(see below).")
+    elif meta.get("n_hunks") == 0:
         out.append("Empty diff — nothing to review (check the range/mode).")
     elif not reported:
         held = meta.get("n_test_held")
@@ -3979,7 +4446,10 @@ def main():
     ap = argparse.ArgumentParser(prog="system-one-reviewer")
     ap.add_argument("--version", action="version",
                     version=f"%(prog)s {__version__}")
-    ap.add_argument("--repo", required=True)
+    ap.add_argument("--repo")
+    ap.add_argument("--input", metavar="FILE|-",
+                    help="review before/after file texts from a JSON document "
+                         "(file or - for stdin) instead of git")
     ap.add_argument("--range", dest="range")
     ap.add_argument("--pr", type=int)
     ap.add_argument("--staged", action="store_true")
@@ -4020,6 +4490,28 @@ def main():
                          "only, skipping site/AST/tree-sitter cutting")
     args = ap.parse_args()
 
+    git_mode = (args.range is not None or args.pr is not None
+                or args.staged or args.uncommitted)
+    if args.input is not None:
+        if args.repo is not None or git_mode:
+            ap.error("--input cannot be combined with --repo, --range, --pr, "
+                     "--staged or --uncommitted")
+    elif args.repo is None:
+        ap.error("one of --repo or --input is required")
+    if args.input is not None:
+        # Read and validate BEFORE load_api_key() and any model call; a rejected
+        # document is a caller error (exit 2, unlike the exit-1 git failures).
+        try:
+            input_doc = validate_input(load_input(args.input))
+        except InputError as e:
+            where = f" ({e.where})" if e.where else ""
+            print(f"system-one-reviewer: --input: {e}{where}", file=sys.stderr)
+            sys.exit(2)
+        warning = input_head_warning(input_doc["head"])
+        if warning:
+            print(warning, file=sys.stderr)
+        input_bundle = build_input(input_doc)
+
     global _FORCE_WINDOW_CUT
     _FORCE_WINDOW_CUT = args.force_window_cut
 
@@ -4034,13 +4526,20 @@ def main():
     else:
         api_key = load_api_key()
     ask = make_provider(provider, model, api_key)
-    diff, head, mode = resolve_diff(args.repo, args)
+    if args.input is not None:
+        diff, head, mode = resolve_input(input_bundle)
+    else:
+        diff, head, mode = resolve_diff(args.repo, args)
     hunks = package_hunks(diff)
     # r5-M4: the size gate is mechanical via the provider param. jev (the
     # default) never size-skips — oversize clusters route through the
     # Task 2/3 cutter below; laya keeps today's exact behavior.
     kept, skipped = triage(hunks, provider=provider)
     n_triaged = len(hunks) - len(kept)  # deliberate skips, NOT drops (r10 M1)
+    # --input per-file triage (binary / oversize) happened before packaging, so
+    # those files have no hunks; their records join the run's skipped list.
+    input_skipped = input_bundle["skipped"] if args.input is not None else []
+    skipped = skipped + input_skipped
 
     # AST-units plan Task 4 — BINDING pre-judge pipeline, E2-REVISED
     # (v0.9 spec E2 BEHAVIOR CHANGE: truncation moves AHEAD of expansion):
@@ -4058,7 +4557,9 @@ def main():
     #   (5) re-estimate + RE-expand (step 0: DROP ast_context, r12-M1)
     #   (6) freeze n_units_pre / n_dropped
     # Initialize n_total_top_level_clusters for banner denominator (INTENT rule 7)
-    n_total_top_level_clusters = len(hunks)
+    # An input-oversize CODE file never reached the packager but is unjudged
+    # coverage (size_skipped_code), so it belongs in the denominator too.
+    n_total_top_level_clusters = len(hunks) + len(size_skipped_code(input_skipped))
     if provider == "jev" and kept:
         # r2-M2: per-mode pre/post file images for the cutter; a missing
         # image degrades (mode_file_images returns None) — never exits.
@@ -4266,7 +4767,8 @@ def main():
          "reflex_class": f.get("reflex_class", "code"),
          "reported": f in reported}
         for f in findings if not f.get("parse_error")]
-    meta = {"repo": os.path.basename(os.path.realpath(args.repo)),
+    meta = {"repo": (input_bundle["repo"] if args.input is not None
+                     else os.path.basename(os.path.realpath(args.repo or ""))),
             "mode": mode, "head": head,
             "provider": provider, "model": model,  # M3 (r11): report/metadata
             "n_hunks": len(hunks),
@@ -4292,6 +4794,7 @@ def main():
             "total_latency_ms": total, "jev_calls": len(latencies),
             "fail_open": fail_open, "fail_reason": fail_reason,
             "n_test_held": n_test_held,
+            "n_input_autojunk": input_bundle["n_autojunk"] if args.input is not None else 0,
             "status": status}  # v0.9: honest-status signal carrier (cond 10)
 
     result = {"meta": meta, "pr_level": pr_level if not fail_open else None,
@@ -4354,6 +4857,7 @@ def main():
              "base_verdict": base_verdict,
              "n_dropped": n_dropped, "n_unjudged": n_unjudged,
              "n_size_skipped_code": n_size_skipped_code,
+             "n_input_autojunk": meta["n_input_autojunk"],
              "fail_open": fail_open, "fail_reason": fail_reason,
              "total_latency_ms": round(total, 1),
              "avg_call_ms": round(total / len(latencies), 1) if latencies else None,
