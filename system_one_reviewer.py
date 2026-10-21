@@ -127,7 +127,7 @@ DEFAULT_PACKAGING_VERSION = PACKAGING_VERSION
 # Release version, stamped by scripts/build_release.py during semantic-release
 # (tags vX.Y.Z). Distinct from PACKAGING_VERSION, which versions the scoring
 # rubric the threshold sweep gates on.
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 
 def sev_level(v):

@@ -1,3 +1,9 @@
+## [0.12.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.11.0...v0.12.0) (2026-10-21)
+
+### Features
+
+* --input mode, review before/after file images without git ([#28](https://github.com/equationalapplications/system-one-reviewer/issues/28)) ([0273385](https://github.com/equationalapplications/system-one-reviewer/commit/027338501b2b5894b03999d7877fa780dbee608e))
+
 ## [0.11.0](https://github.com/equationalapplications/system-one-reviewer/compare/v0.10.0...v0.11.0) (2026-10-20)
 
 ### Features
